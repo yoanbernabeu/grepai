@@ -73,7 +73,7 @@ Stored in `.grepai/config.yaml`:
 
 ```yaml
 embedder:
-  provider: ollama          # ollama | openai
+  provider: ollama          # ollama | lmstudio | openai
   model: nomic-embed-text
 store:
   backend: gob              # gob | postgres
@@ -90,6 +90,13 @@ chunking:
 ollama pull nomic-embed-text
 ```
 
+**LM Studio** — Local, OpenAI-compatible API:
+
+```bash
+# Start LM Studio and load an embedding model
+# Default endpoint: http://127.0.0.1:1234
+```
+
 **OpenAI** — Cloud-based:
 
 ```bash
@@ -103,7 +110,7 @@ export OPENAI_API_KEY=sk-...
 
 ## Requirements
 
-- Ollama (for local embeddings) or OpenAI API key
+- Ollama, LM Studio, or OpenAI API key (for embeddings)
 - Go 1.22+ (only for building from source)
 
 ## Contributing

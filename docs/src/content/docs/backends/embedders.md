@@ -10,6 +10,7 @@ Embedders convert text (code chunks) into vector representations that enable sem
 | Provider | Type | Pros | Cons |
 |----------|------|------|------|
 | Ollama | Local | Privacy, free, no internet | Requires local resources |
+| LM Studio | Local | Privacy, OpenAI-compatible API, GUI | Requires local resources |
 | OpenAI | Cloud | High quality, fast | Costs money, sends code to cloud |
 
 ## Ollama (Local)
@@ -63,6 +64,50 @@ curl http://localhost:11434/api/tags
 curl http://localhost:11434/api/embeddings -d '{
   "model": "nomic-embed-text",
   "prompt": "Hello world"
+}'
+```
+
+## LM Studio (Local)
+
+LM Studio provides an OpenAI-compatible API for running embedding models locally with a user-friendly GUI.
+
+### Setup
+
+1. Download and install [LM Studio](https://lmstudio.ai/)
+
+2. Start LM Studio and load an embedding model (e.g., `nomic-embed-text`)
+
+3. Enable the local server (default: http://127.0.0.1:1234)
+
+### Configuration
+
+```yaml
+embedder:
+  provider: lmstudio
+  model: text-embedding-nomic-embed-text-v1.5
+  endpoint: http://127.0.0.1:1234
+```
+
+### Available Models
+
+Any embedding model supported by LM Studio, including:
+
+| Model | Dimensions | Notes |
+|-------|------------|-------|
+| `nomic-embed-text-v1.5` | 768 | Good general purpose |
+| `bge-small-en-v1.5` | 384 | Fast, smaller |
+| `bge-large-en-v1.5` | 1024 | Higher quality |
+
+### Troubleshooting
+
+```bash
+# Check if LM Studio server is running
+curl http://127.0.0.1:1234/v1/models
+
+# Test embedding
+curl http://127.0.0.1:1234/v1/embeddings -d '{
+  "model": "text-embedding-nomic-embed-text-v1.5",
+  "input": ["Hello world"]
 }'
 ```
 

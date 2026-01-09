@@ -14,13 +14,18 @@ Run `grepai init` to create a default configuration.
 ```yaml
 # Embedder configuration
 embedder:
-  # Provider: "ollama" (local) or "openai" (cloud)
+  # Provider: "ollama" (local), "lmstudio" (local), or "openai" (cloud)
   provider: ollama
 
   # Ollama settings
   ollama:
     url: http://localhost:11434
     model: nomic-embed-text
+
+  # LM Studio settings (if using lmstudio provider)
+  lmstudio:
+    url: http://127.0.0.1:1234
+    model: text-embedding-nomic-embed-text-v1.5
 
   # OpenAI settings (if using openai provider)
   openai:
@@ -74,6 +79,20 @@ Available models:
 - `nomic-embed-text` - Good balance of speed and quality
 - `mxbai-embed-large` - Higher quality, slower
 - `all-minilm` - Fast, lower quality
+
+### LM Studio (Local)
+
+```yaml
+embedder:
+  provider: lmstudio
+  model: text-embedding-nomic-embed-text-v1.5
+  endpoint: http://127.0.0.1:1234
+```
+
+Available models (depends on what you load in LM Studio):
+- `nomic-embed-text-v1.5` - Good general purpose (768 dims)
+- `bge-small-en-v1.5` - Fast, smaller (384 dims)
+- `bge-large-en-v1.5` - Higher quality (1024 dims)
 
 ### OpenAI (Cloud)
 

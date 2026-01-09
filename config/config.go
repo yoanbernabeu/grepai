@@ -24,7 +24,7 @@ type Config struct {
 }
 
 type EmbedderConfig struct {
-	Provider string `yaml:"provider"` // ollama | openai
+	Provider string `yaml:"provider"` // ollama | lmstudio | openai
 	Model    string `yaml:"model"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	APIKey   string `yaml:"api_key,omitempty"`

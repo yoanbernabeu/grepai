@@ -66,6 +66,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
 		}
+	case "lmstudio":
+		emb = embedder.NewLMStudioEmbedder(
+			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithLMStudioModel(cfg.Embedder.Model),
+		)
 	default:
 		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}
@@ -163,6 +168,11 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		if err != nil {
 			return nil, err
 		}
+	case "lmstudio":
+		emb = embedder.NewLMStudioEmbedder(
+			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithLMStudioModel(cfg.Embedder.Model),
+		)
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", cfg.Embedder.Provider)
 	}

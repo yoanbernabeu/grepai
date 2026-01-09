@@ -78,6 +78,15 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
 		}
+	case "lmstudio":
+		lmstudioEmb := embedder.NewLMStudioEmbedder(
+			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithLMStudioModel(cfg.Embedder.Model),
+		)
+		if err := lmstudioEmb.Ping(ctx); err != nil {
+			return fmt.Errorf("cannot connect to LM Studio: %w\nMake sure LM Studio is running with the %s model loaded", err, cfg.Embedder.Model)
+		}
+		emb = lmstudioEmb
 	default:
 		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}

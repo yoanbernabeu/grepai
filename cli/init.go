@@ -31,7 +31,7 @@ This command will:
 }
 
 func init() {
-	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama or openai)")
+	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, or openai)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob or postgres)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 }
@@ -59,14 +59,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initProvider == "" {
 			fmt.Println("\nSelect embedding provider:")
 			fmt.Println("  1) ollama (local, privacy-first, requires Ollama running)")
-			fmt.Println("  2) openai (cloud, requires API key)")
+			fmt.Println("  2) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
+			fmt.Println("  3) openai (cloud, requires API key)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
 			input = strings.TrimSpace(input)
 
 			switch input {
-			case "2", "openai":
+			case "2", "lmstudio":
+				cfg.Embedder.Provider = "lmstudio"
+				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
+			case "3", "openai":
 				cfg.Embedder.Provider = "openai"
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
@@ -75,7 +80,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			cfg.Embedder.Provider = initProvider
-			if initProvider == "openai" {
+			switch initProvider {
+			case "lmstudio":
+				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
+			case "openai":
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 			}
@@ -135,10 +144,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  1. Start the indexing daemon: grepai watch")
 	fmt.Println("  2. Search your code: grepai search \"your query\"")
 
-	if cfg.Embedder.Provider == "ollama" {
+	switch cfg.Embedder.Provider {
+	case "ollama":
 		fmt.Println("\nMake sure Ollama is running with the nomic-embed-text model:")
 		fmt.Println("  ollama pull nomic-embed-text")
-	} else if cfg.Embedder.Provider == "openai" {
+	case "lmstudio":
+		fmt.Println("\nMake sure LM Studio is running with an embedding model loaded.")
+		fmt.Printf("  Model: %s\n", cfg.Embedder.Model)
+		fmt.Printf("  Endpoint: %s\n", cfg.Embedder.Endpoint)
+	case "openai":
 		fmt.Println("\nMake sure OPENAI_API_KEY is set in your environment.")
 	}
 
