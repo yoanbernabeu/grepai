@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	ConfigDir      = ".grepai"
-	ConfigFileName = "config.yaml"
-	IndexFileName  = "index.gob"
+	ConfigDir           = ".grepai"
+	ConfigFileName      = "config.yaml"
+	IndexFileName       = "index.gob"
+	SymbolIndexFileName = "symbols.gob"
 )
 
 type Config struct {
@@ -21,6 +22,7 @@ type Config struct {
 	Chunking ChunkingConfig `yaml:"chunking"`
 	Watch    WatchConfig    `yaml:"watch"`
 	Search   SearchConfig   `yaml:"search"`
+	Trace    TraceConfig    `yaml:"trace"`
 	Ignore   []string       `yaml:"ignore"`
 }
 
@@ -68,6 +70,12 @@ type ChunkingConfig struct {
 
 type WatchConfig struct {
 	DebounceMs int `yaml:"debounce_ms"`
+}
+
+type TraceConfig struct {
+	Mode             string   `yaml:"mode"`              // fast or precise
+	EnabledLanguages []string `yaml:"enabled_languages"` // File extensions to index
+	ExcludePatterns  []string `yaml:"exclude_patterns"`  // Patterns to exclude
 }
 
 func DefaultConfig() *Config {
@@ -127,6 +135,20 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
+		Trace: TraceConfig{
+			Mode: "fast",
+			EnabledLanguages: []string{
+				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
+			},
+			ExcludePatterns: []string{
+				"*_test.go",
+				"*.spec.ts",
+				"*.spec.js",
+				"*.test.ts",
+				"*.test.js",
+				"__tests__/*",
+			},
+		},
 		Ignore: []string{
 			".git",
 			".grepai",
@@ -153,6 +175,10 @@ func GetConfigPath(projectRoot string) string {
 
 func GetIndexPath(projectRoot string) string {
 	return filepath.Join(GetConfigDir(projectRoot), IndexFileName)
+}
+
+func GetSymbolIndexPath(projectRoot string) string {
+	return filepath.Join(GetConfigDir(projectRoot), SymbolIndexFileName)
 }
 
 func Load(projectRoot string) (*Config, error) {

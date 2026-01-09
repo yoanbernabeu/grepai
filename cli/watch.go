@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/yoanbernabeu/grepai/embedder"
 	"github.com/yoanbernabeu/grepai/indexer"
 	"github.com/yoanbernabeu/grepai/store"
+	"github.com/yoanbernabeu/grepai/trace"
 	"github.com/yoanbernabeu/grepai/watcher"
 )
 
@@ -119,6 +121,21 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	// Initialize indexer
 	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner)
 
+	// Initialize symbol store and extractor
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+	if err := symbolStore.Load(ctx); err != nil {
+		log.Printf("Warning: failed to load symbol index: %v", err)
+	}
+	defer symbolStore.Close()
+
+	extractor := trace.NewRegexExtractor()
+
+	// Use default trace languages if not configured
+	tracedLanguages := cfg.Trace.EnabledLanguages
+	if len(tracedLanguages) == 0 {
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php"}
+	}
+
 	// Initial scan with progress
 	fmt.Println("\nPerforming initial scan...")
 	stats, err := idx.IndexAllWithProgress(ctx, func(info indexer.ProgressInfo) {
@@ -137,6 +154,30 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	if err := st.Persist(ctx); err != nil {
 		log.Printf("Warning: failed to persist index: %v", err)
 	}
+
+	// Index symbols for traced languages
+	fmt.Println("Building symbol index...")
+	symbolCount := 0
+	files, _, _ := scanner.Scan()
+	for _, file := range files {
+		ext := strings.ToLower(filepath.Ext(file.Path))
+		if !isTracedLanguage(ext, tracedLanguages) {
+			continue
+		}
+		symbols, refs, err := extractor.ExtractAll(ctx, file.Path, file.Content)
+		if err != nil {
+			log.Printf("Warning: failed to extract symbols from %s: %v", file.Path, err)
+			continue
+		}
+		if err := symbolStore.SaveFile(ctx, file.Path, symbols, refs); err != nil {
+			log.Printf("Warning: failed to save symbols for %s: %v", file.Path, err)
+		}
+		symbolCount += len(symbols)
+	}
+	if err := symbolStore.Persist(ctx); err != nil {
+		log.Printf("Warning: failed to persist symbol index: %v", err)
+	}
+	fmt.Printf("Symbol index built: %d symbols extracted\n", symbolCount)
 
 	// Initialize watcher
 	w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
@@ -163,20 +204,26 @@ func runWatch(cmd *cobra.Command, args []string) error {
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index on shutdown: %v", err)
 			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index on shutdown: %v", err)
+			}
 			return nil
 
 		case <-persistTicker.C:
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index: %v", err)
 			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index: %v", err)
+			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, event)
 		}
 	}
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, event watcher.FileEvent) {
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, enabledLanguages []string, event watcher.FileEvent) {
 	log.Printf("[%s] %s", event.Type, event.Path)
 
 	switch event.Type {
@@ -197,13 +244,40 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		}
 		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
 
+		// Extract symbols if language is supported
+		ext := strings.ToLower(filepath.Ext(event.Path))
+		if isTracedLanguage(ext, enabledLanguages) {
+			symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+			if err != nil {
+				log.Printf("Failed to extract symbols from %s: %v", event.Path, err)
+			} else if err := symbolStore.SaveFile(ctx, fileInfo.Path, symbols, refs); err != nil {
+				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
+			} else {
+				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
+			}
+		}
+
 	case watcher.EventDelete, watcher.EventRename:
 		if err := idx.RemoveFile(ctx, event.Path); err != nil {
 			log.Printf("Failed to remove %s from index: %v", event.Path, err)
 			return
 		}
+		// Also remove from symbol index
+		if err := symbolStore.DeleteFile(ctx, event.Path); err != nil {
+			log.Printf("Failed to remove symbols for %s: %v", event.Path, err)
+		}
 		log.Printf("Removed %s from index", event.Path)
 	}
+}
+
+// isTracedLanguage checks if a file extension is in the enabled languages list.
+func isTracedLanguage(ext string, enabledLanguages []string) bool {
+	for _, lang := range enabledLanguages {
+		if ext == lang {
+			return true
+		}
+	}
+	return false
 }
 
 // printProgress displays a progress bar for indexing
