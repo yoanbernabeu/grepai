@@ -101,8 +101,8 @@ var tsPatterns = &LanguagePatterns{
 		// function name<T>(params): ReturnType
 		regexp.MustCompile(`(?m)(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*<[^>]*>\s*\(`),
 	),
-	Methods:  jsPatterns.Methods,
-	Classes:  jsPatterns.Classes,
+	Methods: jsPatterns.Methods,
+	Classes: jsPatterns.Classes,
 	Interfaces: []*regexp.Regexp{
 		// interface InterfaceName
 		regexp.MustCompile(`(?m)(?:export\s+)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:<[^>]*>)?\s*(?:extends\s+[^{]+)?\{`),

@@ -138,14 +138,14 @@ func (e *TreeSitterExtractor) extractGoSymbol(node *sitter.Node, nodeType string
 				}
 			}
 			*symbols = append(*symbols, Symbol{
-				Name:      name,
-				Kind:      KindMethod,
-				File:      filePath,
-				Line:      int(node.StartPoint().Row) + 1,
-				EndLine:   int(node.EndPoint().Row) + 1,
-				Receiver:  receiver,
-				Exported:  isExported(name, "go"),
-				Language:  "go",
+				Name:     name,
+				Kind:     KindMethod,
+				File:     filePath,
+				Line:     int(node.StartPoint().Row) + 1,
+				EndLine:  int(node.EndPoint().Row) + 1,
+				Receiver: receiver,
+				Exported: isExported(name, "go"),
+				Language: "go",
 			})
 		}
 
