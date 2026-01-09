@@ -38,8 +38,14 @@ make test
 # Run tests with coverage
 make test-cover
 
+# Format code with gofmt
+make fmt
+
 # Lint with golangci-lint
 make lint
+
+# Run ALL checks before committing (recommended)
+make pre-commit
 
 # Build and run
 make run
@@ -50,6 +56,22 @@ make build-all
 # Generate CLI documentation
 make docs-generate
 ```
+
+## Before Committing
+
+Always run the pre-commit checks before pushing your changes:
+
+```bash
+make pre-commit
+```
+
+This single command will:
+1. **Format** all Go files with `gofmt`
+2. **Vet** - detect common errors with `go vet`
+3. **Lint** - run comprehensive checks with `golangci-lint`
+4. **Test** - run all tests with race detection
+
+If all checks pass, you're ready to commit!
 
 ## Project Structure
 
@@ -175,10 +197,9 @@ git checkout -b feat/my-feature
 
 2. Make your changes and commit
 
-3. Run tests and linting:
+3. Run pre-commit checks:
 ```bash
-make test
-make lint
+make pre-commit
 ```
 
 4. Push and create a PR:

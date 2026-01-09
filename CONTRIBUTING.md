@@ -54,8 +54,24 @@ We use golangci-lint for code quality:
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # Run linter
-golangci-lint run
+make lint
 ```
+
+### Before Committing
+
+Always run the pre-commit checks before pushing your changes:
+
+```bash
+make pre-commit
+```
+
+This single command will:
+1. **Format** all Go files with `gofmt`
+2. **Vet** - detect common errors with `go vet`
+3. **Lint** - run comprehensive checks with `golangci-lint`
+4. **Test** - run all tests with race detection
+
+If all checks pass, you're ready to commit!
 
 ### Code Style
 

@@ -1,4 +1,4 @@
-.PHONY: build install test clean lint run docs docs-generate docs-build docs-dev
+.PHONY: build install test clean lint run docs docs-generate docs-build docs-dev fmt pre-commit
 
 BINARY_NAME=grepai
 VERSION?=0.1.0
@@ -53,3 +53,14 @@ docs-build: docs-generate
 
 docs-dev: docs-generate
 	cd docs && npm install && npm run dev
+
+# Code formatting
+fmt:
+	gofmt -w .
+
+# Pre-commit checks: format, vet, lint, and test
+pre-commit: fmt
+	go vet ./...
+	golangci-lint run ./...
+	go test -race ./...
+	@echo "✓ All checks passed! Ready to commit."
