@@ -48,11 +48,27 @@ grepai search "error handling" # Search semantically
 | `grepai init`            | Initialize grepai in current directory |
 | `grepai watch`           | Start real-time file watcher daemon    |
 | `grepai search <query>`  | Search codebase with natural language  |
+| `grepai trace <cmd>`     | Analyze call graph (callers/callees)   |
 | `grepai status`          | Browse index state interactively       |
 | `grepai agent-setup`     | Configure AI agents integration        |
 
 ```bash
 grepai search "authentication" -n 5  # Limit results (default: 10)
+```
+
+### Call Graph Analysis
+
+Find function relationships in your codebase:
+
+```bash
+grepai trace callers "Login"           # Who calls Login?
+grepai trace callees "HandleRequest"   # What does HandleRequest call?
+grepai trace graph "ProcessOrder" --depth 3  # Full call graph
+```
+
+Output as JSON for AI agents:
+```bash
+grepai trace callers "Login" --json
 ```
 
 ## AI Agent Integration
@@ -83,6 +99,8 @@ chunking:
 search:
   boost:
     enabled: true           # Structural boosting for better relevance
+trace:
+  mode: fast                # fast (regex) | precise (tree-sitter)
 ```
 
 ### Search Boost (enabled by default)
