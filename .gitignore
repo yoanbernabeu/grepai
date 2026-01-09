@@ -1,5 +1,5 @@
 # Binaries
-grepai
+/grepai
 *.exe
 *.exe~
 *.dll
