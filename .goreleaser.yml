@@ -78,15 +78,12 @@ release:
 
     **Full Changelog**: https://github.com/yoanbernabeu/grepai/compare/{{ .PreviousTag }}...{{ .Tag }}
 
-brews:
-  - repository:
-      owner: yoanbernabeu
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    skip_upload: auto
-    directory: Formula
-    homepage: https://github.com/yoanbernabeu/grepai
-    description: "Privacy-first semantic code search CLI"
-    license: MIT
-    test: |
-      system "#{bin}/grepai", "version"
+# Homebrew tap can be added later when homebrew-tap repo is created
+# brews:
+#   - repository:
+#       owner: yoanbernabeu
+#       name: homebrew-tap
+#     directory: Formula
+#     homepage: https://github.com/yoanbernabeu/grepai
+#     description: "Privacy-first semantic code search CLI"
+#     license: MIT
