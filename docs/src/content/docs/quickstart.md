@@ -45,6 +45,9 @@ grepai search "REST API routes"
 
 # Limit results
 grepai search "database queries" --limit 10
+
+# JSON output for AI agents
+grepai search "authentication" --json
 ```
 
 ## 4. Check Index Status

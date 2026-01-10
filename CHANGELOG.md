@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - C++ (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx`) - functions, methods, classes, structs, enums
 - **Default ignore patterns** for Zig and Rust build directories: `target`, `.zig-cache`, `zig-out`
 
+## [0.6.0] - 2026-01-10
+
+### Added
+- **Search JSON Output**: New `--json`/`-j` flag for `grepai search` command
+  - Machine-readable JSON output optimized for AI agents
+  - Excludes internal fields (vector, hash, updated_at) to minimize token usage
+  - Error handling outputs JSON format when flag is used
+  - Closes #13
+
 ## [0.5.0] - 2026-01-10
 
 ### Added
@@ -81,7 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/yoanbernabeu/grepai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yoanbernabeu/grepai/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yoanbernabeu/grepai/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yoanbernabeu/grepai/compare/v0.2.0...v0.3.0

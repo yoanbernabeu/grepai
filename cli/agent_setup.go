@@ -40,6 +40,9 @@ grepai search "user authentication flow"
 grepai search "error handling middleware"
 grepai search "database connection pool"
 grepai search "API request validation"
+
+# JSON output for programmatic use (recommended for AI agents)
+grepai search "authentication flow" --json
 ` + "```" + `
 
 ### Query Tips
