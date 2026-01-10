@@ -36,9 +36,10 @@ Or download from [Releases](https://github.com/yoanbernabeu/grepai/releases).
 ### Quick Start
 
 ```bash
-grepai init                    # Initialize in your project
-grepai watch                   # Start background indexing daemon
-grepai search "error handling" # Search semantically
+grepai init                        # Initialize in your project
+grepai watch                       # Start background indexing daemon
+grepai search "error handling"     # Search semantically
+grepai trace callers "Login"       # Find who calls a function
 ```
 
 ## Commands

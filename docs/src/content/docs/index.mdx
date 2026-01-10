@@ -44,8 +44,8 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
     `grep`: `"func.*Login"` → exact matches only.
     `grepai`: `"user authentication flow"` → conceptually related code.
   </Card>
-  <Card title="Fewer searches, better context" icon="rocket">
-    AI agents get relevant code in one query instead of multiple grep attempts. Save tokens, ship faster.
+  <Card title="Call Graph Tracing" icon="graph">
+    Find callers and callees of any function. Build dependency graphs. Supports Go, JS/TS, Python, PHP.
   </Card>
   <Card title="100% Local" icon="laptop">
     Runs entirely on your machine with Ollama. Your code never leaves your laptop.
@@ -83,6 +83,13 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
 
    ```bash
    grepai search "user authentication flow"
+   ```
+
+5. **Trace function calls**
+
+   ```bash
+   grepai trace callers "Login"    # Who calls this?
+   grepai trace callees "Handler"  # What does it call?
    ```
 
 </Steps>
@@ -183,14 +190,14 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
     href="/grepai/installation/"
   />
   <LinkCard
+    title="Call Graph Tracing"
+    description="Find callers, callees, and build dependency graphs."
+    href="/grepai/trace/"
+  />
+  <LinkCard
     title="Configuration"
     description="Customize chunking, backends, and search options."
     href="/grepai/configuration/"
-  />
-  <LinkCard
-    title="Search Options"
-    description="Boost relevance and enable hybrid search."
-    href="/grepai/search-boost/"
   />
   <LinkCard
     title="AI Agent Setup"
