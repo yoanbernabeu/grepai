@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	defaultLMStudioEndpoint   = "http://127.0.0.1:1234"
-	defaultLMStudioModel      = "text-embedding-nomic-embed-text-v1.5"
-	lmStudioNomicDimensions   = 768
+	defaultLMStudioEndpoint = "http://127.0.0.1:1234"
+	defaultLMStudioModel    = "text-embedding-nomic-embed-text-v1.5"
+	lmStudioNomicDimensions = 768
 )
 
 type LMStudioEmbedder struct {
