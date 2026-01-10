@@ -55,6 +55,7 @@ grepai trace callers "Login"       # Find who calls a function
 
 ```bash
 grepai search "authentication" -n 5  # Limit results (default: 10)
+grepai search "authentication" --json  # JSON output for AI agents
 ```
 
 ### Call Graph Analysis

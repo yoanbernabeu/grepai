@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -15,7 +16,17 @@ import (
 
 var (
 	searchLimit int
+	searchJSON  bool
 )
+
+// SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
+type SearchResultJSON struct {
+	FilePath  string  `json:"file_path"`
+	StartLine int     `json:"start_line"`
+	EndLine   int     `json:"end_line"`
+	Score     float32 `json:"score"`
+	Content   string  `json:"content"`
+}
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
@@ -32,6 +43,7 @@ The search will:
 
 func init() {
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 10, "Maximum number of results to return")
+	searchCmd.Flags().BoolVarP(&searchJSON, "json", "j", false, "Output results in JSON format (for AI agents)")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -104,7 +116,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Search with boosting
 	results, err := searcher.Search(ctx, query, searchLimit)
 	if err != nil {
+		if searchJSON {
+			return outputSearchError(err)
+		}
 		return fmt.Errorf("search failed: %w", err)
+	}
+
+	// JSON output mode
+	if searchJSON {
+		return outputSearchJSON(results)
 	}
 
 	if len(results) == 0 {
@@ -139,6 +159,32 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
+	return nil
+}
+
+// outputSearchJSON outputs results in JSON format for AI agents
+func outputSearchJSON(results []store.SearchResult) error {
+	jsonResults := make([]SearchResultJSON, len(results))
+	for i, r := range results {
+		jsonResults[i] = SearchResultJSON{
+			FilePath:  r.Chunk.FilePath,
+			StartLine: r.Chunk.StartLine,
+			EndLine:   r.Chunk.EndLine,
+			Score:     r.Score,
+			Content:   r.Chunk.Content,
+		}
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(jsonResults)
+}
+
+// outputSearchError outputs an error in JSON format
+func outputSearchError(err error) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(map[string]string{"error": err.Error()})
 	return nil
 }
 
