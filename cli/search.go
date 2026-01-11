@@ -90,6 +90,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		emb, err = embedder.NewOpenAIEmbedder(
 			embedder.WithOpenAIModel(cfg.Embedder.Model),
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
+			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
