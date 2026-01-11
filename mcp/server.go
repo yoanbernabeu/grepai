@@ -422,6 +422,7 @@ func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
 		return embedder.NewOpenAIEmbedder(
 			embedder.WithOpenAIModel(cfg.Embedder.Model),
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
+			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
 		)
 	case "lmstudio":
 		return embedder.NewLMStudioEmbedder(

@@ -44,7 +44,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			start_line INTEGER NOT NULL,
 			end_line INTEGER NOT NULL,
 			content TEXT NOT NULL,
-			vector vector(768),
+			vector vector(1536),
 			hash TEXT NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,

@@ -26,8 +26,9 @@ type OpenAIEmbedder struct {
 }
 
 type openAIEmbedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+	Model      string   `json:"model"`
+	Input      []string `json:"input"`
+	Dimensions int      `json:"dimensions,omitempty"`
 }
 
 type openAIEmbedResponse struct {
@@ -108,8 +109,9 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	}
 
 	reqBody := openAIEmbedRequest{
-		Model: e.model,
-		Input: texts,
+		Model:      e.model,
+		Input:      texts,
+		Dimensions: e.dimensions,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
