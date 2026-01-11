@@ -92,6 +92,8 @@ Available models:
 - `nomic-embed-text` - Good balance of speed and quality
 - `mxbai-embed-large` - Higher quality, slower
 - `all-minilm` - Fast, lower quality
+- `qwen3-embedding:0.6b` - State-of-the-art, multilingual (including programming languages)
+- `embeddinggemma` - Google's model optimized for efficiency
 
 ### LM Studio (Local)
 

@@ -53,6 +53,8 @@ embedder:
 | `nomic-embed-text` | 768 | Fast | Good |
 | `mxbai-embed-large` | 1024 | Medium | Better |
 | `all-minilm` | 384 | Very Fast | Basic |
+| `qwen3-embedding:0.6b` | 1024 | Medium | Excellent |
+| `embeddinggemma` | 768 | Very Fast | Better |
 
 ### Troubleshooting
 
