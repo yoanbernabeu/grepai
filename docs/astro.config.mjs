@@ -26,14 +26,14 @@ export default defineConfig({
             { label: 'Semantic Search', link: '/search-guide/' },
             { label: 'File Watching', link: '/watch-guide/' },
             { label: 'Call Graph Analysis', link: '/trace/' },
+            { label: 'Search Boost', link: '/search-boost/' },
+            { label: 'Hybrid Search', link: '/hybrid-search/' },
           ],
         },
         {
           label: 'Configuration',
           items: [
             { label: 'Config File', link: '/configuration/' },
-            { label: 'Search Boost', link: '/search-boost/' },
-            { label: 'Hybrid Search', link: '/hybrid-search/' },
           ],
         },
         {

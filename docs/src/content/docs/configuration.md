@@ -12,38 +12,28 @@ Run `grepai init` to create a default configuration.
 ## Full Configuration Reference
 
 ```yaml
+# Config file version
+version: 1
+
 # Embedder configuration
 embedder:
   # Provider: "ollama" (local), "lmstudio" (local), or "openai" (cloud)
   provider: ollama
-
-  # Ollama settings
-  ollama:
-    url: http://localhost:11434
-    model: nomic-embed-text
-
-  # LM Studio settings (if using lmstudio provider)
-  lmstudio:
-    url: http://127.0.0.1:1234
-    model: text-embedding-nomic-embed-text-v1.5
-
-  # OpenAI settings (if using openai provider)
-  openai:
-    api_key: ${OPENAI_API_KEY}  # Use environment variable
-    model: text-embedding-3-small
+  # Model name (depends on provider)
+  model: nomic-embed-text
+  # Endpoint URL (depends on provider)
+  endpoint: http://localhost:11434
+  # API key (for OpenAI provider, use environment variable)
+  api_key: ${OPENAI_API_KEY}
 
 # Vector store configuration
 store:
   # Backend: "gob" (file-based) or "postgres" (PostgreSQL with pgvector)
   backend: gob
 
-  # GOB settings
-  gob:
-    path: .grepai/index.gob
-
   # PostgreSQL settings (if using postgres backend)
   postgres:
-    connection_string: postgres://user:pass@localhost:5432/grepai
+    dsn: postgres://user:pass@localhost:5432/grepai
 
 # Chunking configuration
 chunking:
@@ -52,18 +42,38 @@ chunking:
   # Overlap between chunks (for context continuity)
   overlap: 50
 
-# Scanner configuration
-scanner:
-  # Patterns to ignore (in addition to .gitignore)
-  ignore:
-    - "*.min.js"
-    - "*.min.css"
-    - "vendor/"
-    - "node_modules/"
-    - ".git/"
-    - "target/"
-    - ".zig-cache/"
-    - "zig-out/"
+# File watching configuration
+watch:
+  # Debounce delay in milliseconds
+  debounce_ms: 500
+
+# Call graph tracing configuration
+trace:
+  # Extraction mode: "fast" (regex) or "precise" (tree-sitter)
+  mode: fast
+  # File extensions to index for symbols
+  enabled_languages:
+    - .go
+    - .js
+    - .ts
+    - .jsx
+    - .tsx
+    - .py
+    - .php
+  # Patterns to exclude from symbol indexing
+  exclude_patterns:
+    - "*_test.go"
+    - "*.spec.ts"
+
+# Patterns to ignore (in addition to .gitignore)
+ignore:
+  - ".git"
+  - ".grepai"
+  - "node_modules"
+  - "vendor"
+  - "target"
+  - ".zig-cache"
+  - "zig-out"
 ```
 
 ## Embedder Options
@@ -118,8 +128,6 @@ Available models:
 ```yaml
 store:
   backend: gob
-  gob:
-    path: .grepai/index.gob
 ```
 
 Best for:
@@ -127,13 +135,15 @@ Best for:
 - Quick setup
 - No external dependencies
 
+The index is stored automatically in `.grepai/index.gob`.
+
 ### PostgreSQL with pgvector
 
 ```yaml
 store:
   backend: postgres
   postgres:
-    connection_string: postgres://user:pass@localhost:5432/grepai
+    dsn: postgres://user:pass@localhost:5432/grepai
 ```
 
 Best for:

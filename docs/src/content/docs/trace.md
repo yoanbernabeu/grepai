@@ -67,6 +67,10 @@ grepai trace callers "MyFunction" --mode precise
 | JavaScript | `.js`, `.jsx` | Excellent |
 | Python | `.py` | Good |
 | PHP | `.php` | Good |
+| C | `.c`, `.h` | Good |
+| C++ | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx` | Good |
+| Zig | `.zig` | Good |
+| Rust | `.rs` | Good |
 
 ### JSON Output
 
