@@ -8,6 +8,7 @@ export default defineConfig({
     starlight({
       title: 'grepai',
       description: 'Privacy-first semantic code search CLI',
+      customCss: ['./src/styles/homepage.css'],
       social: {
         github: 'https://github.com/yoanbernabeu/grepai',
       },

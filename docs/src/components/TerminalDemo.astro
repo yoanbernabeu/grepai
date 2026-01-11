@@ -1,0 +1,178 @@
+---
+const scenes = [
+  {
+    title: "semantic search",
+    command: 'grepai search "user authentication flow"',
+    output: `<span style="color: var(--hp-terminal-green);">Found 5 results</span> (0.12s)
+
+<span class="terminal-file">auth/handler.go</span>:<span class="terminal-line-number">42</span> <span class="terminal-score">(0.89)</span>
+<span style="color: var(--sl-color-gray-3);">  func (h *Handler) Login(ctx context.Context, creds Credentials) (*Token, error)</span>
+
+<span class="terminal-file">middleware/jwt.go</span>:<span class="terminal-line-number">18</span> <span class="terminal-score">(0.85)</span>
+<span style="color: var(--sl-color-gray-3);">  func ValidateToken(token string) (*Claims, error)</span>
+
+<span class="terminal-file">services/user.go</span>:<span class="terminal-line-number">127</span> <span class="terminal-score">(0.82)</span>
+<span style="color: var(--sl-color-gray-3);">  func (s *Service) Authenticate(email, password string) (*User, error)</span>`
+  },
+  {
+    title: "JSON output",
+    command: 'grepai search "error handling" --json',
+    output: `<span style="color: var(--sl-color-gray-3);">[
+  {
+    <span style="color: var(--hp-terminal-blue);">"file"</span>: <span style="color: var(--hp-terminal-green);">"pkg/errors/handler.go"</span>,
+    <span style="color: var(--hp-terminal-blue);">"line"</span>: <span style="color: var(--hp-terminal-yellow);">23</span>,
+    <span style="color: var(--hp-terminal-blue);">"score"</span>: <span style="color: var(--hp-terminal-yellow);">0.91</span>,
+    <span style="color: var(--hp-terminal-blue);">"preview"</span>: <span style="color: var(--hp-terminal-green);">"func HandleError(err error) Response"</span>
+  },
+  {
+    <span style="color: var(--hp-terminal-blue);">"file"</span>: <span style="color: var(--hp-terminal-green);">"internal/api/middleware.go"</span>,
+    <span style="color: var(--hp-terminal-blue);">"line"</span>: <span style="color: var(--hp-terminal-yellow);">45</span>,
+    <span style="color: var(--hp-terminal-blue);">"score"</span>: <span style="color: var(--hp-terminal-yellow);">0.87</span>
+  }
+]</span>`
+  },
+  {
+    title: "trace callers",
+    command: 'grepai trace callers "HandleRequest"',
+    output: `<span style="color: var(--hp-terminal-green);">Found 4 callers</span> of HandleRequest
+
+<span class="terminal-file">main.go</span>:<span class="terminal-line-number">52</span>
+<span style="color: var(--sl-color-gray-3);">  └─ main()</span>
+
+<span class="terminal-file">server/router.go</span>:<span class="terminal-line-number">78</span>
+<span style="color: var(--sl-color-gray-3);">  └─ SetupRoutes()</span>
+
+<span class="terminal-file">server/router.go</span>:<span class="terminal-line-number">112</span>
+<span style="color: var(--sl-color-gray-3);">  └─ RegisterHandler()</span>
+
+<span class="terminal-file">tests/handler_test.go</span>:<span class="terminal-line-number">34</span>
+<span style="color: var(--sl-color-gray-3);">  └─ TestHandleRequest()</span>`
+  },
+  {
+    title: "trace callees",
+    command: 'grepai trace callees "ProcessOrder"',
+    output: `<span style="color: var(--hp-terminal-green);">ProcessOrder</span> calls 3 functions
+
+<span style="color: var(--hp-terminal-purple);">→</span> <span class="terminal-file">ValidateOrder</span> <span style="color: var(--sl-color-gray-3);">orders/validation.go:15</span>
+<span style="color: var(--hp-terminal-purple);">→</span> <span class="terminal-file">CalculateTotal</span> <span style="color: var(--sl-color-gray-3);">orders/pricing.go:42</span>
+<span style="color: var(--hp-terminal-purple);">→</span> <span class="terminal-file">SaveToDatabase</span> <span style="color: var(--sl-color-gray-3);">orders/repository.go:28</span>`
+  },
+  {
+    title: "watch mode",
+    command: 'grepai watch',
+    output: `<span style="color: var(--hp-terminal-green);">✓</span> Indexed <span style="color: var(--hp-terminal-yellow);">1,247</span> files in 3.2s
+<span style="color: var(--hp-terminal-green);">✓</span> Watching for changes...
+
+<span style="color: var(--hp-terminal-blue);">[15:42:01]</span> Changed: src/api/handler.go
+<span style="color: var(--hp-terminal-green);">✓</span> Re-indexed 1 file (0.1s)
+
+<span style="color: var(--hp-terminal-blue);">[15:42:15]</span> Added: src/api/middleware.go
+<span style="color: var(--hp-terminal-green);">✓</span> Indexed 1 new file (0.1s)`
+  },
+  {
+    title: "agent setup",
+    command: 'grepai agent-setup cursor',
+    output: `<span style="color: var(--hp-terminal-green);">✓</span> Detected: Cursor IDE
+
+<span style="color: var(--hp-terminal-yellow);">→</span> Adding grepai to .cursor/rules...
+<span style="color: var(--hp-terminal-green);">✓</span> Configuration added
+
+<span style="color: var(--hp-terminal-yellow);">→</span> Verifying installation...
+<span style="color: var(--hp-terminal-green);">✓</span> grepai is ready to use with Cursor!
+
+<span style="color: var(--sl-color-gray-3);">Your AI agent can now use:</span>
+  <span style="color: var(--hp-terminal-purple);">•</span> grepai search "query"
+  <span style="color: var(--hp-terminal-purple);">•</span> grepai trace callers "symbol"
+  <span style="color: var(--hp-terminal-purple);">•</span> grepai trace callees "symbol"`
+  }
+];
+---
+
+<div class="terminal-demo">
+  <div class="terminal-header">
+    <div class="terminal-dots">
+      <span class="terminal-dot red"></span>
+      <span class="terminal-dot yellow"></span>
+      <span class="terminal-dot green"></span>
+    </div>
+    <span class="terminal-title" id="terminal-title">grepai — {scenes[0].title}</span>
+  </div>
+  <div class="terminal-body" id="terminal-body">
+    <div class="terminal-content">
+      <div class="terminal-line">
+        <span class="terminal-prompt">$</span> <span class="terminal-command" id="terminal-command"></span><span class="terminal-cursor" id="typing-cursor"></span>
+      </div>
+      <div class="terminal-output" id="terminal-output"></div>
+    </div>
+  </div>
+</div>
+
+<script define:vars={{ scenes }}>
+  const TYPING_SPEED = 40;
+  const OUTPUT_DELAY = 300;
+  const SCENE_DURATION = 5000;
+
+  let currentScene = 0;
+  let isTyping = false;
+
+  const titleEl = document.getElementById('terminal-title');
+  const commandEl = document.getElementById('terminal-command');
+  const outputEl = document.getElementById('terminal-output');
+  const cursorEl = document.getElementById('typing-cursor');
+
+  async function typeText(element, text) {
+    isTyping = true;
+    element.textContent = '';
+    for (let i = 0; i < text.length; i++) {
+      element.textContent += text[i];
+      await new Promise(r => setTimeout(r, TYPING_SPEED));
+    }
+    isTyping = false;
+  }
+
+  async function showOutput(html) {
+    outputEl.style.opacity = '0';
+    outputEl.innerHTML = '<br/>' + html;
+    await new Promise(r => setTimeout(r, 50));
+    outputEl.style.opacity = '1';
+  }
+
+  async function playScene(index) {
+    const scene = scenes[index];
+
+    // Update title
+    titleEl.textContent = `grepai — ${scene.title}`;
+
+    // Clear previous
+    commandEl.textContent = '';
+    outputEl.innerHTML = '';
+    outputEl.style.opacity = '1';
+    cursorEl.style.display = 'inline-block';
+
+    // Type command
+    await typeText(commandEl, scene.command);
+
+    // Hide cursor, show output
+    cursorEl.style.display = 'none';
+    await new Promise(r => setTimeout(r, OUTPUT_DELAY));
+    await showOutput(scene.output);
+
+    // Wait then next scene
+    await new Promise(r => setTimeout(r, SCENE_DURATION));
+
+    // Next scene
+    currentScene = (currentScene + 1) % scenes.length;
+    playScene(currentScene);
+  }
+
+  // Start animation
+  playScene(0);
+</script>
+
+<style>
+  .terminal-output {
+    transition: opacity 0.3s ease;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+</style>

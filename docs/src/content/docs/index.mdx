@@ -2,50 +2,29 @@
 title: grepai
 description: Privacy-first semantic code search CLI
 template: splash
-hero:
-  title: grep on steroids
-  tagline: Give your AI coding agents semantic code search. Find relevant code instantly, save tokens, ship faster.
-  image:
-    html: |
-      <svg xmlns="http://www.w3.org/2000/svg" width="280" height="280" viewBox="0 0 24 24" fill="none" stroke="url(#gradient)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <defs>
-          <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#818cf8"/>
-            <stop offset="100%" style="stop-color:#c084fc"/>
-          </linearGradient>
-        </defs>
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.3-4.3"/>
-        <path d="M11 8a3 3 0 0 0-3 3"/>
-        <path d="M8 6h.01"/>
-        <path d="M14 6h.01"/>
-        <path d="M6 14h.01"/>
-        <path d="M14 14h.01"/>
-      </svg>
-  actions:
-    - text: Get Started
-      link: /grepai/getting-started/
-      icon: right-arrow
-      variant: primary
-    - text: View on GitHub
-      link: https://github.com/yoanbernabeu/grepai
-      icon: external
-      variant: secondary
 ---
 
 import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/starlight/components';
+import HeroAnimated from '../../components/HeroAnimated.astro';
+import TerminalDemo from '../../components/TerminalDemo.astro';
+
+<HeroAnimated
+  title="grep on steroids"
+  tagline="Give your AI coding agents semantic code search. Find relevant code instantly, save tokens, ship faster."
+/>
+
+<TerminalDemo />
+
+---
 
 ## Why grepai?
 
-`grep` was built in 1973 for exact text matching. Modern AI agents need semantic understanding.
-
-<CardGrid stagger>
-  <Card title="Semantic vs Exact" icon="magnifier">
-    `grep`: `"func.*Login"` → exact matches only.
-    `grepai`: `"user authentication flow"` → conceptually related code.
+<CardGrid>
+  <Card title="Semantic Search" icon="magnifier">
+    Ask in plain English. grepai understands code meaning, not just text patterns.
   </Card>
-  <Card title="Call Graph Tracing" icon="graph">
-    Find callers and callees of any function. Build dependency graphs. Supports Go, JS/TS, Python, PHP.
+  <Card title="Call Graph Tracing" icon="random">
+    Find callers and callees of any function. Build dependency graphs. Supports Go, JS/TS, Python, PHP, C/C++, Rust, Zig.
   </Card>
   <Card title="100% Local" icon="laptop">
     Runs entirely on your machine with Ollama. Your code never leaves your laptop.
@@ -53,8 +32,11 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
   <Card title="AI Agent Ready" icon="puzzle">
     First-class integration with Cursor, Windsurf, Claude Code, Gemini CLI, and more.
   </Card>
-  <Card title="MCP Server" icon="setting">
+  <Card title="MCP Server" icon="server">
     Run as a native MCP server. AI agents discover grepai as a first-class tool automatically.
+  </Card>
+  <Card title="Real-time Indexing" icon="approve-check">
+    File watcher keeps your index up-to-date as you code. No manual re-indexing needed.
   </Card>
 </CardGrid>
 
@@ -165,7 +147,7 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
         enabled: true
     ```
 
-    <a href="/grepai/search-boost/">Learn more →</a>
+    <a href="/grepai/search-boost/">Learn more</a>
   </Card>
   <Card title="Hybrid Search" icon="random">
     <Badge text="Optional" variant="note" size="small" />
@@ -178,7 +160,7 @@ import { Card, CardGrid, LinkCard, Steps, Tabs, TabItem, Badge } from '@astrojs/
         enabled: true
     ```
 
-    <a href="/grepai/hybrid-search/">Learn more →</a>
+    <a href="/grepai/hybrid-search/">Learn more</a>
   </Card>
 </CardGrid>
 

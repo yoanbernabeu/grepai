@@ -1,0 +1,295 @@
+/* ========================================
+   Homepage Custom Styles - grepai
+   Only Hero + Terminal Demo
+   ======================================== */
+
+/* Hide default Starlight title container on splash page */
+.content-panel:has(> .sl-container > h1#_top:only-child) {
+  display: none !important;
+}
+
+/* CSS Variables for homepage */
+:root {
+  --hp-gradient-start: #818cf8;
+  --hp-gradient-mid: #a78bfa;
+  --hp-gradient-end: #c084fc;
+  --hp-glow-color: rgba(129, 140, 248, 0.4);
+  --hp-card-bg: rgba(255, 255, 255, 0.05);
+  --hp-card-border: rgba(255, 255, 255, 0.1);
+  --hp-terminal-bg: #1e1e2e;
+  --hp-terminal-header: #313244;
+  --hp-terminal-green: #a6e3a1;
+  --hp-terminal-yellow: #f9e2af;
+  --hp-terminal-red: #f38ba8;
+  --hp-terminal-blue: #89b4fa;
+  --hp-terminal-purple: #cba6f7;
+}
+
+/* ========================================
+   Keyframe Animations
+   ======================================== */
+
+@keyframes gradientFlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes glow {
+  0%, 100% { filter: drop-shadow(0 0 10px var(--hp-glow-color)); }
+  50% { filter: drop-shadow(0 0 25px var(--hp-glow-color)) drop-shadow(0 0 40px var(--hp-glow-color)); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ========================================
+   Hero Section Styles
+   ======================================== */
+
+.hero-animated {
+  text-align: center;
+  padding: 2rem 2rem 4rem;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero-animated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse at center, var(--hp-glow-color) 0%, transparent 70%);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.hero-icon {
+  animation: glow 3s ease-in-out infinite, float 6s ease-in-out infinite;
+  margin-bottom: 2rem;
+}
+
+.hero-title {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--hp-gradient-start), var(--hp-gradient-mid), var(--hp-gradient-end));
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gradientFlow 4s ease infinite;
+  margin: 0 0 1rem;
+  line-height: 1.1;
+}
+
+.hero-tagline {
+  font-size: clamp(1.1rem, 2.5vw, 1.4rem);
+  color: var(--sl-color-gray-2);
+  max-width: 700px;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+.hero-badges {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.8rem;
+  background: var(--hp-card-bg);
+  border: 1px solid var(--hp-card-border);
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  color: var(--sl-color-gray-2);
+  backdrop-filter: blur(10px);
+}
+
+.hero-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.hero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.75rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+.hero-btn-primary {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.hero-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(99, 102, 241, 0.6);
+  background: linear-gradient(135deg, #4338ca, #6d28d9);
+}
+
+.hero-btn-secondary {
+  background: var(--hp-card-bg);
+  border: 1px solid var(--hp-card-border);
+  color: var(--sl-color-text);
+  backdrop-filter: blur(10px);
+}
+
+.hero-btn-secondary:hover {
+  background: var(--hp-card-border);
+  transform: translateY(-2px);
+}
+
+/* ========================================
+   Terminal Demo Styles
+   ======================================== */
+
+.terminal-demo {
+  max-width: 800px;
+  margin: 0 auto 4rem;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.8s ease-out;
+}
+
+.terminal-header {
+  background: var(--hp-terminal-header);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-dots {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.terminal-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.terminal-dot.red { background: var(--hp-terminal-red); }
+.terminal-dot.yellow { background: var(--hp-terminal-yellow); }
+.terminal-dot.green { background: var(--hp-terminal-green); }
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--sl-color-gray-3);
+  font-family: monospace;
+}
+
+.terminal-body {
+  background: var(--hp-terminal-bg);
+  padding: 1.5rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  height: 450px;
+  overflow: hidden;
+}
+
+.terminal-line {
+  opacity: 0;
+  animation: fadeIn 0.3s ease forwards;
+}
+
+.terminal-prompt {
+  color: var(--hp-terminal-green);
+}
+
+.terminal-command {
+  color: var(--hp-terminal-blue);
+}
+
+.terminal-result {
+  color: var(--sl-color-gray-2);
+  padding-left: 0;
+  margin-top: 0.5rem;
+}
+
+.terminal-file {
+  color: var(--hp-terminal-purple);
+}
+
+.terminal-line-number {
+  color: var(--hp-terminal-yellow);
+}
+
+.terminal-score {
+  color: var(--hp-terminal-green);
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 18px;
+  background: var(--hp-terminal-green);
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+/* ========================================
+   Responsive Adjustments
+   ======================================== */
+
+@media (max-width: 640px) {
+  .hero-animated {
+    padding: 1rem 1rem 3rem;
+  }
+
+  .terminal-body {
+    font-size: 0.7rem;
+    padding: 1rem;
+    height: 280px;
+  }
+}
