@@ -35,18 +35,13 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 
 ### Claude Code
 
-Add to `~/.claude/settings.json`:
+Use the `claude mcp add` command to register grepai as an MCP server:
 
-```json
-{
-  "mcpServers": {
-    "grepai": {
-      "command": "grepai",
-      "args": ["mcp-serve"]
-    }
-  }
-}
+```bash
+claude mcp add grepai -- grepai mcp-serve
 ```
+
+This automatically configures grepai in your Claude Code settings.
 
 ### Cursor
 

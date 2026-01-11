@@ -22,15 +22,8 @@ The server communicates via stdio and exposes the following tools:
   - grepai_trace_graph: Build a call graph around a symbol
   - grepai_index_status: Check index health and statistics
 
-Configuration for Claude Code (~/.claude/settings.json):
-  {
-    "mcpServers": {
-      "grepai": {
-        "command": "grepai",
-        "args": ["mcp-serve"]
-      }
-    }
-  }
+Configuration for Claude Code:
+  claude mcp add grepai -- grepai mcp-serve
 
 Configuration for Cursor (.cursor/mcp.json):
   {
