@@ -52,11 +52,34 @@ grepai search "authentication flow" --json
 - **Be specific**: "JWT token validation" better than "token"
 - Results include: file path, line numbers, relevance score, code preview
 
+### Call Graph Tracing
+
+Use ` + "`grepai trace`" + ` to understand function relationships:
+- Finding all callers of a function before modifying it
+- Understanding what functions are called by a given function
+- Visualizing the complete call graph around a symbol
+
+#### Trace Commands
+
+**IMPORTANT: Always use ` + "`--json`" + ` flag for optimal AI agent integration.**
+
+` + "```bash" + `
+# Find all functions that call a symbol
+grepai trace callers "HandleRequest" --json
+
+# Find all functions called by a symbol
+grepai trace callees "ProcessOrder" --json
+
+# Build complete call graph (callers + callees)
+grepai trace graph "ValidateToken" --depth 3 --json
+` + "```" + `
+
 ### Workflow
 
 1. Start with ` + "`grepai search`" + ` to find relevant code
-2. Use ` + "`Read`" + ` tool to examine files from results
-3. Only use Grep for exact string searches if needed
+2. Use ` + "`grepai trace`" + ` to understand function relationships
+3. Use ` + "`Read`" + ` tool to examine files from results
+4. Only use Grep for exact string searches if needed
 
 `
 
