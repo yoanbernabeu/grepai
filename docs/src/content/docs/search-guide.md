@@ -27,8 +27,8 @@ grepai search "user authentication flow"
 # Limit results
 grepai search "error handling" --limit 5
 
-# JSON output for AI agents
-grepai search "database queries" --json
+# JSON output for AI agents (--compact saves ~80% tokens)
+grepai search "database queries" --json --compact
 ```
 
 ### How It Works
@@ -76,7 +76,8 @@ func AuthMiddleware() gin.HandlerFunc {
 For AI agents and scripts, use the `--json` flag:
 
 ```bash
-grepai search "authentication" --json
+grepai search "authentication" --json           # Full JSON output
+grepai search "authentication" --json --compact # Minimal JSON (no content field)
 ```
 
 Output format:
@@ -147,8 +148,8 @@ grepai search "REST API route handlers"
 Provide code context to AI agents:
 
 ```bash
-# Get JSON for AI processing
-grepai search "payment processing" --json --limit 5
+# Get compact JSON for AI processing (~80% fewer tokens)
+grepai search "payment processing" --json --compact --limit 5
 ```
 
 ### Commands Reference

@@ -214,7 +214,7 @@ For CI environments, run a one-time index:
 ```bash
 grepai watch &
 sleep 60  # Wait for initial indexing
-grepai search "security vulnerabilities" --json
+grepai search "security vulnerabilities" --json --compact
 ```
 
 ### Commands Reference
