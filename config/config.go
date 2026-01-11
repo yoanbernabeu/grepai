@@ -139,6 +139,8 @@ func DefaultConfig() *Config {
 			Mode: "fast",
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
+				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+				".rs", ".zig",
 			},
 			ExcludePatterns: []string{
 				"*_test.go",

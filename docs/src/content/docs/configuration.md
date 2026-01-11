@@ -60,6 +60,14 @@ trace:
     - .tsx
     - .py
     - .php
+    - .c
+    - .h
+    - .cpp
+    - .hpp
+    - .cc
+    - .cxx
+    - .rs
+    - .zig
   # Patterns to exclude from symbol indexing
   exclude_patterns:
     - "*_test.go"

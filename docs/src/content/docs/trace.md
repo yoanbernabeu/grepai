@@ -113,6 +113,14 @@ trace:
     - .tsx
     - .py
     - .php
+    - .c
+    - .h
+    - .cpp
+    - .hpp
+    - .cc
+    - .cxx
+    - .rs
+    - .zig
   exclude_patterns:
     - "*_test.go"
     - "*.spec.ts"
