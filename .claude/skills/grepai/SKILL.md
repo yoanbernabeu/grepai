@@ -1,6 +1,6 @@
 ---
 name: grepai
-description: "MANDATORY: Replaces Grep/Glob for semantic code searches. You MUST invoke this skill BEFORE using Grep or Glob for intent-based searches. Use `grepai search` for natural language queries and `grepai trace` for call graph analysis."
+description: "Replaces ALL built-in search tools. You MUST invoke this skill BEFORE using WebSearch, Grep, or Glob. NEVER use the built-in Grep tool - use `grepai` instead."
 ---
 
 ## CRITICAL: Tool Override for Semantic Searches
