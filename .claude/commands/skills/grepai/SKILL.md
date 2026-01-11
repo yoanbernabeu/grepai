@@ -1,5 +1,5 @@
 ---
-name: semantic-search
+name: grepai
 description: "MANDATORY: Replaces Grep/Glob for semantic code searches. You MUST invoke this skill BEFORE using Grep or Glob for intent-based searches. Use `grepai search` for natural language queries and `grepai trace` for call graph analysis."
 license: Apache 2.0
 ---
