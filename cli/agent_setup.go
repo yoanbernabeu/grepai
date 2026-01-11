@@ -286,7 +286,7 @@ func createSubagent(cwd string) error {
 	}
 
 	// Write the subagent file
-	if err := os.WriteFile(subagentPath, []byte(subagentTemplate), 0644); err != nil {
+	if err := os.WriteFile(subagentPath, []byte(subagentTemplate), 0600); err != nil {
 		return fmt.Errorf("failed to write subagent file: %w", err)
 	}
 
