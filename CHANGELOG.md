@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-01-11
+
+### Added
+- **Agent Setup Trace Instructions**: Updated `grepai agent-setup` to include trace command documentation (#16)
+  - Added "Call Graph Tracing" section with `trace callers`, `trace callees`, `trace graph` examples
+  - All trace examples include `--json` flag for optimal AI agent integration
+  - Updated workflow to include trace as step 2 for understanding function relationships
+
 ## [0.7.0] - 2026-01-10
 
 ### Added
@@ -92,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/yoanbernabeu/grepai/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/yoanbernabeu/grepai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yoanbernabeu/grepai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yoanbernabeu/grepai/compare/v0.4.0...v0.5.0
