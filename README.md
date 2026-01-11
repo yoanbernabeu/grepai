@@ -113,6 +113,21 @@ Available MCP tools:
 - `grepai_trace_graph` — Build call graph
 - `grepai_index_status` — Check index health
 
+### Claude Code Subagent
+
+For enhanced exploration capabilities in Claude Code, create a specialized subagent:
+
+```bash
+grepai agent-setup --with-subagent
+```
+
+This creates `.claude/agents/deep-explore.md` with:
+- Semantic search via `grepai search`
+- Call graph tracing via `grepai trace`
+- Workflow guidance for code exploration
+
+Claude Code automatically uses this agent for deep codebase exploration tasks.
+
 ## Configuration
 
 Stored in `.grepai/config.yaml`:

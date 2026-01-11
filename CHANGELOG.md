@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Code Subagent**: New `--with-subagent` flag for `grepai agent-setup` (#17)
+  - Creates `.claude/agents/deep-explore.md` for Claude Code
+  - Provides a specialized exploration agent with grepai search and trace access
+  - Uses `model: inherit` to match user's current model
+  - Subagents operate in isolated context, ensuring grepai tools are available during exploration
+
 ## [0.8.1] - 2026-01-11
 
 ### Documentation

@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var withSubagent bool
+
 const agentInstructions = `
 ## grepai - Semantic Code Search
 
@@ -85,6 +87,69 @@ grepai trace graph "ValidateToken" --depth 3 --json
 
 const agentMarker = "## grepai - Semantic Code Search"
 
+const subagentTemplate = `---
+name: deep-explore
+description: Deep codebase exploration using grepai semantic search and call graph tracing. Use this agent for understanding code architecture, finding implementations by intent, analyzing function relationships, and exploring unfamiliar code areas.
+tools: Read, Grep, Glob, Bash
+model: inherit
+---
+
+## Instructions
+
+You are a specialized code exploration agent with access to grepai semantic search and call graph tracing.
+
+### Primary Tools
+
+#### 1. Semantic Search: ` + "`grepai search`" + `
+
+Use this to find code by intent and meaning:
+
+` + "```bash" + `
+# Use English queries for best results
+grepai search "authentication flow"
+grepai search "error handling middleware"
+grepai search "database connection management"
+` + "```" + `
+
+#### 2. Call Graph Tracing: ` + "`grepai trace`" + `
+
+Use this to understand function relationships and code flow:
+
+` + "```bash" + `
+# Find all functions that call a symbol
+grepai trace callers "HandleRequest"
+
+# Find all functions called by a symbol
+grepai trace callees "ProcessOrder"
+
+# Build complete call graph
+grepai trace graph "ValidateToken" --depth 3
+` + "```" + `
+
+Use ` + "`grepai trace`" + ` when you need to:
+- Find all callers of a function
+- Understand the call hierarchy
+- Analyze the impact of changes to a function
+- Map dependencies between components
+
+### When to use standard tools
+
+Only fall back to Grep/Glob when:
+- You need exact text matching (variable names, imports)
+- grepai is not available or returns errors
+- You need file path patterns
+
+### Workflow
+
+1. Start with ` + "`grepai search`" + ` to find relevant code semantically
+2. Use ` + "`grepai trace`" + ` to understand function relationships and call graphs
+3. Use ` + "`Read`" + ` to examine promising files in detail
+4. Use Grep only for exact string searches if needed
+5. Synthesize findings into a clear summary
+`
+
+const subagentMarker = "name: deep-explore"
+
 var agentSetupCmd = &cobra.Command{
 	Use:   "agent-setup",
 	Short: "Configure AI agents to use grepai",
@@ -93,8 +158,17 @@ var agentSetupCmd = &cobra.Command{
 This command will:
 - Detect agent configuration files (.cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md, AGENTS.md)
 - Append instructions for using grepai search
-- Ensure idempotence (won't add duplicate instructions)`,
+- Ensure idempotence (won't add duplicate instructions)
+
+With --with-subagent flag:
+- Creates .claude/agents/deep-explore.md for Claude Code
+- Provides a specialized exploration agent with grepai access`,
 	RunE: runAgentSetup,
+}
+
+func init() {
+	agentSetupCmd.Flags().BoolVar(&withSubagent, "with-subagent", false,
+		"Create Claude Code deep-explore subagent in .claude/agents/")
 }
 
 func runAgentSetup(cmd *cobra.Command, args []string) error {
@@ -168,7 +242,12 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 		modified++
 	}
 
-	if !found {
+	if modified > 0 {
+		fmt.Printf("\nUpdated %d file(s).\n", modified)
+	} else if found {
+		fmt.Println("\nAll files already configured.")
+	} else if !withSubagent {
+		// Only show "no files found" message if not creating subagent
 		fmt.Println("No agent configuration files found.")
 		fmt.Println("\nSupported files:")
 		for _, file := range agentFiles {
@@ -176,14 +255,41 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println("\nCreate one of these files and run 'grepai agent-setup' again,")
 		fmt.Println("or manually add instructions for using 'grepai search'.")
-		return nil
 	}
 
-	if modified > 0 {
-		fmt.Printf("\nUpdated %d file(s).\n", modified)
-	} else {
-		fmt.Println("\nAll files already configured.")
+	// Create subagent if flag is set
+	if withSubagent {
+		if err := createSubagent(cwd); err != nil {
+			fmt.Printf("Warning: could not create subagent: %v\n", err)
+		}
 	}
 
+	return nil
+}
+
+func createSubagent(cwd string) error {
+	// Define paths
+	agentsDir := filepath.Join(cwd, ".claude", "agents")
+	subagentPath := filepath.Join(agentsDir, "deep-explore.md")
+
+	// Check if subagent already exists and contains marker
+	if content, err := os.ReadFile(subagentPath); err == nil {
+		if strings.Contains(string(content), subagentMarker) {
+			fmt.Printf("Subagent already exists: %s\n", subagentPath)
+			return nil
+		}
+	}
+
+	// Create .claude/agents/ directory if it doesn't exist
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create agents directory: %w", err)
+	}
+
+	// Write the subagent file
+	if err := os.WriteFile(subagentPath, []byte(subagentTemplate), 0644); err != nil {
+		return fmt.Errorf("failed to write subagent file: %w", err)
+	}
+
+	fmt.Printf("Created subagent: %s\n", subagentPath)
 	return nil
 }
