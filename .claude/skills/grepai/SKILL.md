@@ -51,8 +51,8 @@ grepai search "error handling middleware"
 grepai search "database connection pooling"
 grepai search "API request validation"
 
-# JSON output for programmatic use (recommended)
-grepai search "authentication flow" --json
+# JSON output for AI agents (--compact saves ~80% tokens)
+grepai search "authentication flow" --json --compact
 
 # Limit results
 grepai search "error handling" -n 5

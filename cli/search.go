@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	searchLimit int
-	searchJSON  bool
+	searchLimit   int
+	searchJSON    bool
+	searchCompact bool
 )
 
 // SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
@@ -26,6 +27,14 @@ type SearchResultJSON struct {
 	EndLine   int     `json:"end_line"`
 	Score     float32 `json:"score"`
 	Content   string  `json:"content"`
+}
+
+// SearchResultCompactJSON is a minimal struct for compact JSON output (no content field)
+type SearchResultCompactJSON struct {
+	FilePath  string  `json:"file_path"`
+	StartLine int     `json:"start_line"`
+	EndLine   int     `json:"end_line"`
+	Score     float32 `json:"score"`
 }
 
 var searchCmd = &cobra.Command{
@@ -44,11 +53,17 @@ The search will:
 func init() {
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 10, "Maximum number of results to return")
 	searchCmd.Flags().BoolVarP(&searchJSON, "json", "j", false, "Output results in JSON format (for AI agents)")
+	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal JSON without content (requires --json)")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
 	ctx := context.Background()
+
+	// Validate flag combination
+	if searchCompact && !searchJSON {
+		return fmt.Errorf("--compact flag requires --json flag")
+	}
 
 	// Find project root
 	projectRoot, err := config.FindProjectRoot()
@@ -124,6 +139,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// JSON output mode
 	if searchJSON {
+		if searchCompact {
+			return outputSearchCompactJSON(results)
+		}
 		return outputSearchJSON(results)
 	}
 
@@ -172,6 +190,23 @@ func outputSearchJSON(results []store.SearchResult) error {
 			EndLine:   r.Chunk.EndLine,
 			Score:     r.Score,
 			Content:   r.Chunk.Content,
+		}
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(jsonResults)
+}
+
+// outputSearchCompactJSON outputs results in minimal JSON format (without content)
+func outputSearchCompactJSON(results []store.SearchResult) error {
+	jsonResults := make([]SearchResultCompactJSON, len(results))
+	for i, r := range results {
+		jsonResults[i] = SearchResultCompactJSON{
+			FilePath:  r.Chunk.FilePath,
+			StartLine: r.Chunk.StartLine,
+			EndLine:   r.Chunk.EndLine,
+			Score:     r.Score,
 		}
 	}
 

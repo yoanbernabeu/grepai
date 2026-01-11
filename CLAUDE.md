@@ -131,8 +131,8 @@ grepai search "error handling middleware"
 grepai search "database connection pool"
 grepai search "API request validation"
 
-# JSON output for programmatic use (recommended for AI agents)
-grepai search "authentication flow" --json
+# JSON output for AI agents (--compact saves ~80% tokens by omitting content)
+grepai search "authentication flow" --json --compact
 ```
 
 ### Query Tips

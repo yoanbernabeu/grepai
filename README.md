@@ -54,8 +54,9 @@ grepai trace callers "Login"       # Find who calls a function
 | `grepai agent-setup`     | Configure AI agents integration        |
 
 ```bash
-grepai search "authentication" -n 5  # Limit results (default: 10)
-grepai search "authentication" --json  # JSON output for AI agents
+grepai search "authentication" -n 5       # Limit results (default: 10)
+grepai search "authentication" --json     # JSON output for AI agents
+grepai search "authentication" --json -c  # Compact JSON (~80% fewer tokens)
 ```
 
 ### Call Graph Analysis
