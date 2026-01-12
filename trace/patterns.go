@@ -30,22 +30,23 @@ func SupportedExtensions() []string {
 }
 
 var languagePatterns = map[string]*LanguagePatterns{
-	".go":  goPatterns,
-	".js":  jsPatterns,
-	".ts":  tsPatterns,
-	".jsx": jsxPatterns,
-	".tsx": tsxPatterns,
-	".py":  pythonPatterns,
-	".php": phpPatterns,
-	".c":   cPatterns,
-	".h":   cPatterns,
-	".zig": zigPatterns,
-	".rs":  rustPatterns,
-	".cpp": cppPatterns,
-	".hpp": cppPatterns,
-	".cc":  cppPatterns,
-	".cxx": cppPatterns,
-	".hxx": cppPatterns,
+	".go":   goPatterns,
+	".js":   jsPatterns,
+	".ts":   tsPatterns,
+	".jsx":  jsxPatterns,
+	".tsx":  tsxPatterns,
+	".py":   pythonPatterns,
+	".php":  phpPatterns,
+	".c":    cPatterns,
+	".h":    cPatterns,
+	".zig":  zigPatterns,
+	".rs":   rustPatterns,
+	".cpp":  cppPatterns,
+	".hpp":  cppPatterns,
+	".cc":   cppPatterns,
+	".cxx":  cppPatterns,
+	".hxx":  cppPatterns,
+	".java": javaPatterns,
 }
 
 // Go patterns
@@ -257,6 +258,22 @@ var languageKeywords = map[string]map[string]bool{
 		"vec": true, "Box": true, "Rc": true, "Arc": true, "Some": true, "None": true,
 		"Ok": true, "Err": true, "println": true, "print": true, "format": true,
 	},
+	"java": {
+		// Control flow
+		"if": true, "else": true, "for": true, "while": true, "do": true,
+		"switch": true, "case": true, "default": true, "break": true, "continue": true,
+		"return": true, "throw": true, "try": true, "catch": true, "finally": true,
+		// Object creation/checking
+		"new": true, "instanceof": true, "this": true, "super": true,
+		// Assertions and synchronization
+		"assert": true, "synchronized": true,
+		// Common built-in methods (to filter out noise)
+		"println": true, "print": true, "printf": true,
+		"valueOf": true, "toString": true, "equals": true, "hashCode": true,
+		"length": true, "size": true, "get": true, "set": true, "add": true, "remove": true,
+		"isEmpty": true, "contains": true, "containsKey": true, "containsValue": true,
+		"put": true, "clear": true, "toArray": true,
+	},
 }
 
 // C patterns
@@ -381,6 +398,52 @@ var cppPatterns = &LanguagePatterns{
 	},
 	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 	MethodCall:   regexp.MustCompile(`(?:->|\.|\:\:)([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+}
+
+// Java patterns
+var javaPatterns = &LanguagePatterns{
+	Extension: ".java",
+	Language:  "java",
+	// Note: Java has no standalone functions - all are methods within classes
+	Functions: []*regexp.Regexp{},
+	Methods: []*regexp.Regexp{
+		// Standard method: [modifiers] returnType methodName(params) [throws] {
+		// Handles: public, protected, private, static, final, abstract, synchronized, native, strictfp
+		// Handles generic return types like List<String>, Map<K,V>
+		regexp.MustCompile(`(?m)^\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?(?:final\s+)?(?:abstract\s+)?(?:synchronized\s+)?(?:native\s+)?(?:strictfp\s+)?(?:<[^>]+>\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]\s]*\s+([a-z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z_][A-Za-z0-9_,\s]*)?\s*\{`),
+		// Constructor: [modifiers] ClassName(params) [throws] {
+		regexp.MustCompile(`(?m)^\s+(?:(?:public|protected|private)\s+)?([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z_][A-Za-z0-9_,\s]*)?\s*\{`),
+		// Abstract method (no body): [modifiers] returnType methodName(params);
+		regexp.MustCompile(`(?m)^\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?(?:abstract\s+)?(?:<[^>]+>\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]\s]*\s+([a-z][A-Za-z0-9_]*)\s*\([^)]*\)\s*;`),
+		// Interface default method: default returnType methodName(params) {
+		regexp.MustCompile(`(?m)^\s+default\s+(?:<[^>]+>\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]\s]*\s+([a-z][A-Za-z0-9_]*)\s*\([^)]*\)\s*\{`),
+	},
+	Classes: []*regexp.Regexp{
+		// class ClassName [extends ...] [implements ...] {
+		// Handles: public, abstract, final, strictfp, sealed, non-sealed modifiers
+		// Handles generics: class Container<T> or class Pair<K, V>
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:abstract\s+)?(?:final\s+)?(?:sealed\s+)?(?:non-sealed\s+)?(?:strictfp\s+)?class\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s+extends\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?(?:\s+implements\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?(?:\s+permits\s+[A-Za-z_][A-Za-z0-9_,\s]*)?\s*\{`),
+		// Inner/nested class (indented)
+		regexp.MustCompile(`(?m)^\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?(?:abstract\s+)?(?:final\s+)?(?:sealed\s+)?(?:non-sealed\s+)?class\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s+extends\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?(?:\s+implements\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?\s*\{`),
+		// Enum: [public] enum EnumName [implements ...] {
+		regexp.MustCompile(`(?m)^(?:public\s+)?enum\s+([A-Z][A-Za-z0-9_]*)(?:\s+implements\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?\s*\{`),
+		// Record (Java 14+): [public] record RecordName(params) [implements ...] {
+		regexp.MustCompile(`(?m)^(?:public\s+)?record\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?\s*\([^)]*\)(?:\s+implements\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?\s*\{`),
+	},
+	Interfaces: []*regexp.Regexp{
+		// interface InterfaceName [extends ...] {
+		// Handles generics: interface Comparable<T>
+		// Handles sealed interfaces (Java 17+)
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:sealed\s+)?interface\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s+extends\s+[A-Za-z_][A-Za-z0-9_<>,\s]*)?(?:\s+permits\s+[A-Za-z_][A-Za-z0-9_,\s]*)?\s*\{`),
+		// @interface (annotation type): [public] @interface AnnotationName {
+		regexp.MustCompile(`(?m)^(?:public\s+)?@interface\s+([A-Z][A-Za-z0-9_]*)\s*\{`),
+	},
+	Types: []*regexp.Regexp{
+		// Inner enum (indented)
+		regexp.MustCompile(`(?m)^\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?enum\s+([A-Z][A-Za-z0-9_]*)\s*\{`),
+	},
+	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 }
 
 // IsKeyword checks if a name is a language keyword.

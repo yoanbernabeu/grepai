@@ -10,22 +10,23 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 	langs := extractor.SupportedLanguages()
 
 	expected := map[string]bool{
-		".go":  true,
-		".js":  true,
-		".ts":  true,
-		".jsx": true,
-		".tsx": true,
-		".py":  true,
-		".php": true,
-		".c":   true,
-		".h":   true,
-		".zig": true,
-		".rs":  true,
-		".cpp": true,
-		".hpp": true,
-		".cc":  true,
-		".cxx": true,
-		".hxx": true,
+		".go":   true,
+		".js":   true,
+		".ts":   true,
+		".jsx":  true,
+		".tsx":  true,
+		".py":   true,
+		".php":  true,
+		".c":    true,
+		".h":    true,
+		".zig":  true,
+		".rs":   true,
+		".cpp":  true,
+		".hpp":  true,
+		".cc":   true,
+		".cxx":  true,
+		".hxx":  true,
+		".java": true,
 	}
 
 	for _, lang := range langs {
@@ -376,6 +377,216 @@ void print_result(int value) {
 	}
 }
 
+func TestRegexExtractor_ExtractSymbols_Java(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `package com.example.app;
+
+import java.util.List;
+import java.util.Map;
+import java.io.IOException;
+
+/**
+ * Main application class demonstrating various Java constructs.
+ */
+public class Application extends BaseApp implements Runnable {
+
+    private String name;
+    private static int counter = 0;
+
+    // Constructor
+    public Application(String name) {
+        this.name = name;
+    }
+
+    // Static method
+    public static Application create(String name) {
+        return new Application(name);
+    }
+
+    // Instance method with generics
+    public List<String> getItems(Map<String, Integer> filter) {
+        return null;
+    }
+
+    // Synchronized method
+    public synchronized void process() {
+        counter++;
+    }
+
+    // Method with throws clause
+    public void load() throws IOException {
+        // implementation
+    }
+
+    // Final method
+    public final void complete() {
+        System.out.println("Complete");
+    }
+
+    // Override from Runnable
+    @Override
+    public void run() {
+        process();
+    }
+
+    // Inner class
+    private static class Helper {
+        public void assist() {
+            // helper method
+        }
+    }
+
+    // Inner enum
+    public enum Status {
+        PENDING,
+        ACTIVE,
+        COMPLETED;
+
+        public boolean isActive() {
+            return this == ACTIVE;
+        }
+    }
+}
+
+// Interface with generics
+public interface Repository<T> {
+
+    T findById(Long id);
+
+    List<T> findAll();
+
+    default void log(String message) {
+        System.out.println(message);
+    }
+}
+
+// Abstract class
+public abstract class BaseService {
+
+    public abstract void execute();
+
+    protected void init() {
+        // initialization
+    }
+}
+
+// Annotation type
+public @interface Deprecated {
+}
+
+// Enum at top level
+public enum Priority {
+    LOW,
+    MEDIUM,
+    HIGH
+}
+
+// Record (Java 14+)
+public record Point(int x, int y) {
+
+    public int distanceFromOrigin() {
+        return (int) Math.sqrt(x * x + y * y);
+    }
+}
+
+// Generic class
+public class Container<T> {
+
+    private T value;
+
+    public T getValue() {
+        return value;
+    }
+
+    public void setValue(T value) {
+        this.value = value;
+    }
+}
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "Application.java", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundMethods := make(map[string]bool)
+	foundClasses := make(map[string]bool)
+	foundInterfaces := make(map[string]bool)
+	foundTypes := make(map[string]bool)
+
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		case KindClass:
+			foundClasses[sym.Name] = true
+		case KindInterface:
+			foundInterfaces[sym.Name] = true
+		case KindType:
+			foundTypes[sym.Name] = true
+		}
+	}
+
+	// Test methods (including constructors)
+	expectedMethods := []string{
+		"Application",        // constructor
+		"create",             // static method
+		"getItems",           // method with generics
+		"process",            // synchronized method
+		"load",               // method with throws
+		"complete",           // final method
+		"run",                // override method
+		"assist",             // inner class method
+		"isActive",           // enum method
+		"findById",           // interface method
+		"findAll",            // interface method
+		"log",                // default method
+		"execute",            // abstract method
+		"init",               // protected method
+		"distanceFromOrigin", // record method
+		"getValue",           // generic class method
+		"setValue",           // generic class method
+	}
+	for _, name := range expectedMethods {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+
+	// Test classes (including enums and records)
+	expectedClasses := []string{
+		"Application", // main class
+		"Helper",      // inner class
+		"BaseService", // abstract class
+		"Priority",    // top-level enum
+		"Point",       // record
+		"Container",   // generic class
+	}
+	for _, name := range expectedClasses {
+		if !foundClasses[name] {
+			t.Errorf("missing class: %s", name)
+		}
+	}
+
+	// Test interfaces (including annotations)
+	expectedInterfaces := []string{
+		"Repository", // generic interface
+		"Deprecated", // annotation type
+	}
+	for _, name := range expectedInterfaces {
+		if !foundInterfaces[name] {
+			t.Errorf("missing interface: %s", name)
+		}
+	}
+
+	// Test inner enum as type
+	if !foundTypes["Status"] {
+		t.Error("missing inner enum type: Status")
+	}
+}
+
 func TestRegexExtractor_ExtractReferences(t *testing.T) {
 	extractor := NewRegexExtractor()
 	ctx := context.Background()
@@ -423,6 +634,11 @@ func TestIsKeyword(t *testing.T) {
 		{"if", "cpp", true},
 		{"static_cast", "cpp", true},
 		{"myFunc", "cpp", false},
+		{"if", "java", true},
+		{"new", "java", true},
+		{"instanceof", "java", true},
+		{"println", "java", true},
+		{"myMethod", "java", false},
 	}
 
 	for _, tt := range tests {

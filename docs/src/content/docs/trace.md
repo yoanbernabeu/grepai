@@ -12,7 +12,7 @@ description: Analyze function relationships with grepai trace
 - **Find callers**: Discover which functions call a specific symbol
 - **Find callees**: See what functions a symbol calls
 - **Build call graphs**: Visualize call relationships with configurable depth
-- **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP
+- **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP, Java, C/C++, Rust, Zig
 - **Two extraction modes**: Fast (regex) and Precise (tree-sitter AST)
 - **JSON output**: Perfect for AI agents and automation
 
@@ -67,6 +67,7 @@ grepai trace callers "MyFunction" --mode precise
 | JavaScript | `.js`, `.jsx` | Excellent |
 | Python | `.py` | Good |
 | PHP | `.php` | Good |
+| Java | `.java` | Good |
 | C | `.c`, `.h` | Good |
 | C++ | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx` | Good |
 | Zig | `.zig` | Good |
@@ -113,6 +114,7 @@ trace:
     - .tsx
     - .py
     - .php
+    - .java
     - .c
     - .h
     - .cpp

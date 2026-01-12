@@ -146,7 +146,7 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	// Use default trace languages if not configured
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java"}
 	}
 
 	// Initial scan with progress
