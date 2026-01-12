@@ -52,12 +52,29 @@ grepai trace callers "Login"       # Find who calls a function
 | `grepai trace <cmd>`     | Analyze call graph (callers/callees)   |
 | `grepai status`          | Browse index state interactively       |
 | `grepai agent-setup`     | Configure AI agents integration        |
+| `grepai update`          | Update grepai to the latest version    |
 
 ```bash
 grepai search "authentication" -n 5       # Limit results (default: 10)
 grepai search "authentication" --json     # JSON output for AI agents
 grepai search "authentication" --json -c  # Compact JSON (~80% fewer tokens)
 ```
+
+### Self-Update
+
+Keep grepai up to date:
+
+```bash
+grepai update --check    # Check for available updates
+grepai update            # Download and install latest version
+grepai update --force    # Force update even if already on latest
+```
+
+The update command:
+- Fetches the latest release from GitHub
+- Verifies checksum integrity
+- Replaces the binary automatically
+- Works on all supported platforms (Linux, macOS, Windows)
 
 ### Call Graph Analysis
 

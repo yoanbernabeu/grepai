@@ -60,6 +60,24 @@ grepai version
 curl http://localhost:11434/api/tags
 ```
 
+## Updating
+
+Keep grepai up to date with the built-in update command:
+
+```bash
+# Check for available updates
+grepai update --check
+
+# Download and install the latest version
+grepai update
+```
+
+The update command will:
+- Fetch the latest release from GitHub
+- Download the appropriate binary for your platform
+- Verify checksum integrity
+- Replace the current binary automatically
+
 ## Next Steps
 
 - [Quick Start](/grepai/quickstart/) - Initialize and start using grepai

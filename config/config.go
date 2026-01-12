@@ -23,7 +23,13 @@ type Config struct {
 	Watch    WatchConfig    `yaml:"watch"`
 	Search   SearchConfig   `yaml:"search"`
 	Trace    TraceConfig    `yaml:"trace"`
+	Update   UpdateConfig   `yaml:"update"`
 	Ignore   []string       `yaml:"ignore"`
+}
+
+// UpdateConfig holds auto-update settings
+type UpdateConfig struct {
+	CheckOnStartup bool `yaml:"check_on_startup"` // Check for updates when running commands
 }
 
 type SearchConfig struct {
@@ -152,6 +158,9 @@ func DefaultConfig() *Config {
 				"*.test.js",
 				"__tests__/*",
 			},
+		},
+		Update: UpdateConfig{
+			CheckOnStartup: false, // Opt-in by default for privacy
 		},
 		Ignore: []string{
 			".git",
