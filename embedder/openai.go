@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	defaultOpenAIEndpoint  = "https://api.openai.com/v1"
-	defaultOpenAIModel     = "text-embedding-3-small"
+	defaultOpenAIEndpoint         = "https://api.openai.com/v1"
+	defaultOpenAIModel            = "text-embedding-3-small"
 	defaultOpenAI3SmallDimensions = 1536
 )
 

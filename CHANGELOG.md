@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Custom OpenAI Endpoint**: Fixed `embedder.endpoint` config not being used for OpenAI provider (#35)
+  - Enables Azure OpenAI and Microsoft Foundry support
+  - Custom endpoints now correctly passed to the OpenAI embedder
+
+### Added
+
+- **Configurable Vector Dimensions**: New `embedder.dimensions` config option (#35)
+  - Allows specifying vector dimensions per embedding model
+  - PostgreSQL vector column automatically resizes to match configured dimensions
+  - Backward compatible: old configs without `dimensions` use sensible defaults per provider
+
 ## [0.10.0] - 2026-01-11
 
 ### Added

@@ -41,9 +41,9 @@ ollama pull nomic-embed-text
 ```yaml
 embedder:
   provider: ollama
-  ollama:
-    url: http://localhost:11434
-    model: nomic-embed-text
+  model: nomic-embed-text
+  endpoint: http://localhost:11434
+  dimensions: 768
 ```
 
 ### Available Models
@@ -129,9 +129,22 @@ export OPENAI_API_KEY=sk-...
 ```yaml
 embedder:
   provider: openai
-  openai:
-    api_key: ${OPENAI_API_KEY}
-    model: text-embedding-3-small
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  dimensions: 1536
+```
+
+### Azure OpenAI / Microsoft Foundry
+
+For Azure OpenAI or other OpenAI-compatible providers, use a custom endpoint:
+
+```yaml
+embedder:
+  provider: openai
+  model: text-embedding-ada-002
+  endpoint: https://YOUR-RESOURCE.openai.azure.com/v1
+  api_key: ${AZURE_OPENAI_API_KEY}
+  dimensions: 1536
 ```
 
 ### Available Models

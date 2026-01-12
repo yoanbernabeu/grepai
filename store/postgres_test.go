@@ -13,8 +13,9 @@ func TestPostgresStore_DimensionsField(t *testing.T) {
 		dimensions: 768,
 	}
 
-	if store.dimensions != 768 {
-		t.Errorf("expected dimensions 768, got %d", store.dimensions)
+	// Use both fields to avoid unusedwrite warning
+	if store.dimensions != 768 || store.projectID != "test-project" {
+		t.Errorf("expected dimensions 768 and projectID 'test-project', got %d and %s", store.dimensions, store.projectID)
 	}
 
 	// Test different dimension values
@@ -33,8 +34,12 @@ func TestPostgresStore_DimensionsField(t *testing.T) {
 				projectID:  "test",
 				dimensions: tt.dimensions,
 			}
-			if s.dimensions != tt.dimensions {
-				t.Errorf("expected dimensions %d, got %d", tt.dimensions, s.dimensions)
+			// Verify both fields are accessible and correct
+			if got := s.dimensions; got != tt.dimensions {
+				t.Errorf("expected dimensions %d, got %d", tt.dimensions, got)
+			}
+			if s.projectID != "test" {
+				t.Errorf("expected projectID 'test', got %s", s.projectID)
 			}
 		})
 	}
@@ -57,8 +62,12 @@ func TestPostgresStore_ProjectID(t *testing.T) {
 				projectID:  tt.projectID,
 				dimensions: 768,
 			}
-			if s.projectID != tt.projectID {
-				t.Errorf("expected projectID %s, got %s", tt.projectID, s.projectID)
+			// Verify both fields are accessible and correct
+			if got := s.projectID; got != tt.projectID {
+				t.Errorf("expected projectID %s, got %s", tt.projectID, got)
+			}
+			if s.dimensions != 768 {
+				t.Errorf("expected dimensions 768, got %d", s.dimensions)
 			}
 		})
 	}

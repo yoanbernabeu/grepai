@@ -137,6 +137,8 @@ Stored in `.grepai/config.yaml`:
 embedder:
   provider: ollama          # ollama | lmstudio | openai
   model: nomic-embed-text
+  endpoint: http://localhost:11434  # Custom endpoint (for Azure OpenAI, etc.)
+  dimensions: 768           # Vector dimensions (depends on model)
 store:
   backend: gob              # gob | postgres
 chunking:
@@ -148,6 +150,8 @@ search:
 trace:
   mode: fast                # fast (regex) | precise (tree-sitter)
 ```
+
+> **Note**: Old configs without `endpoint` or `dimensions` are automatically updated with sensible defaults.
 
 ### Search Boost (enabled by default)
 

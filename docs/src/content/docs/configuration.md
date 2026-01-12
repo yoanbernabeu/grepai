@@ -21,10 +21,12 @@ embedder:
   provider: ollama
   # Model name (depends on provider)
   model: nomic-embed-text
-  # Endpoint URL (depends on provider)
+  # Endpoint URL (depends on provider, supports Azure OpenAI)
   endpoint: http://localhost:11434
   # API key (for OpenAI provider, use environment variable)
   api_key: ${OPENAI_API_KEY}
+  # Vector dimensions (depends on model, auto-detected if not set)
+  dimensions: 768
 
 # Vector store configuration
 store:
@@ -91,9 +93,9 @@ ignore:
 ```yaml
 embedder:
   provider: ollama
-  ollama:
-    url: http://localhost:11434
-    model: nomic-embed-text
+  model: nomic-embed-text
+  endpoint: http://localhost:11434
+  dimensions: 768
 ```
 
 Available models:
@@ -122,14 +124,27 @@ Available models (depends on what you load in LM Studio):
 ```yaml
 embedder:
   provider: openai
-  openai:
-    api_key: ${OPENAI_API_KEY}
-    model: text-embedding-3-small
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  dimensions: 1536
 ```
 
 Available models:
-- `text-embedding-3-small` - Fast, cost-effective
-- `text-embedding-3-large` - Higher quality
+- `text-embedding-3-small` - 1536 dimensions, fast, cost-effective
+- `text-embedding-3-large` - 3072 dimensions, higher quality
+
+### Azure OpenAI / Microsoft Foundry
+
+Use a custom endpoint for Azure OpenAI or other OpenAI-compatible providers:
+
+```yaml
+embedder:
+  provider: openai
+  model: text-embedding-ada-002
+  endpoint: https://YOUR-RESOURCE.openai.azure.com/v1
+  api_key: ${AZURE_OPENAI_API_KEY}
+  dimensions: 1536
+```
 
 ## Storage Options
 

@@ -48,10 +48,10 @@ type BoostRule struct {
 }
 
 type EmbedderConfig struct {
-	Provider string `yaml:"provider"` // ollama | lmstudio | openai
-	Model    string `yaml:"model"`
-	Endpoint string `yaml:"endpoint,omitempty"`
-	APIKey   string `yaml:"api_key,omitempty"`
+	Provider   string `yaml:"provider"` // ollama | lmstudio | openai
+	Model      string `yaml:"model"`
+	Endpoint   string `yaml:"endpoint,omitempty"`
+	APIKey     string `yaml:"api_key,omitempty"`
 	Dimensions int    `yaml:"dimensions,omitempty"`
 }
 
@@ -83,9 +83,9 @@ func DefaultConfig() *Config {
 	return &Config{
 		Version: 1,
 		Embedder: EmbedderConfig{
-			Provider: "ollama",
-			Model:    "nomic-embed-text",
-			Endpoint: "http://localhost:11434",
+			Provider:   "ollama",
+			Model:      "nomic-embed-text",
+			Endpoint:   "http://localhost:11434",
 			Dimensions: 768,
 		},
 		Store: StoreConfig{
@@ -201,7 +201,57 @@ func Load(projectRoot string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Apply defaults for missing values (backward compatibility)
+	cfg.applyDefaults()
+
 	return &cfg, nil
+}
+
+// applyDefaults fills in missing configuration values with sensible defaults.
+// This ensures backward compatibility with older config files that may not
+// have newer fields like dimensions or endpoint.
+func (c *Config) applyDefaults() {
+	defaults := DefaultConfig()
+
+	// Embedder defaults
+	if c.Embedder.Endpoint == "" {
+		switch c.Embedder.Provider {
+		case "ollama":
+			c.Embedder.Endpoint = "http://localhost:11434"
+		case "lmstudio":
+			c.Embedder.Endpoint = "http://127.0.0.1:1234"
+		case "openai":
+			c.Embedder.Endpoint = "https://api.openai.com/v1"
+		default:
+			c.Embedder.Endpoint = defaults.Embedder.Endpoint
+		}
+	}
+
+	if c.Embedder.Dimensions == 0 {
+		switch c.Embedder.Provider {
+		case "ollama":
+			c.Embedder.Dimensions = 768 // nomic-embed-text default
+		case "lmstudio":
+			c.Embedder.Dimensions = 768 // nomic default
+		case "openai":
+			c.Embedder.Dimensions = 1536 // text-embedding-3-small default
+		default:
+			c.Embedder.Dimensions = defaults.Embedder.Dimensions
+		}
+	}
+
+	// Chunking defaults
+	if c.Chunking.Size == 0 {
+		c.Chunking.Size = defaults.Chunking.Size
+	}
+	if c.Chunking.Overlap == 0 {
+		c.Chunking.Overlap = defaults.Chunking.Overlap
+	}
+
+	// Watch defaults
+	if c.Watch.DebounceMs == 0 {
+		c.Watch.DebounceMs = defaults.Watch.DebounceMs
+	}
 }
 
 func (c *Config) Save(projectRoot string) error {

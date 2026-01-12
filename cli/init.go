@@ -16,9 +16,10 @@ var (
 	initBackend        string
 	initNonInteractive bool
 )
-const(
-	openAI3SmallDimensions = 1536
-	lmStudioEmbeddingDimensions   = 768
+
+const (
+	openAI3SmallDimensions      = 1536
+	lmStudioEmbeddingDimensions = 768
 )
 
 var initCmd = &cobra.Command{
