@@ -248,6 +248,7 @@ func TestScanner_RespectsGitignore(t *testing.T) {
 	}
 
 	// Should only find src/main.go
+	expectedPath := filepath.Join("src", "main.go")
 	if len(files) != 1 {
 		t.Errorf("expected 1 file, got %d", len(files))
 		for _, f := range files {
@@ -255,7 +256,149 @@ func TestScanner_RespectsGitignore(t *testing.T) {
 		}
 	}
 
-	if len(files) > 0 && files[0].Path != "src/main.go" {
-		t.Errorf("expected src/main.go, got %s", files[0].Path)
+	if len(files) > 0 && files[0].Path != expectedPath {
+		t.Errorf("expected %s, got %s", expectedPath, files[0].Path)
+	}
+}
+
+func TestIgnoreMatcher_NestedGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create root .gitignore
+	rootGitignore := `*.log
+build/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(rootGitignore), 0644); err != nil {
+		t.Fatalf("failed to create root .gitignore: %v", err)
+	}
+
+	// Create src directory with its own .gitignore
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	srcGitignore := `*.tmp
+generated/
+`
+	if err := os.WriteFile(filepath.Join(srcDir, ".gitignore"), []byte(srcGitignore), 0644); err != nil {
+		t.Fatalf("failed to create src/.gitignore: %v", err)
+	}
+
+	// Create docs directory with its own .gitignore
+	docsDir := filepath.Join(tmpDir, "docs")
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		t.Fatalf("failed to create docs dir: %v", err)
+	}
+	docsGitignore := `_draft/
+`
+	if err := os.WriteFile(filepath.Join(docsDir, ".gitignore"), []byte(docsGitignore), 0644); err != nil {
+		t.Fatalf("failed to create docs/.gitignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		// Root .gitignore patterns apply everywhere
+		{"debug.log", true, "root pattern *.log in root"},
+		{"src/app.log", true, "root pattern *.log in src"},
+		{"docs/notes.log", true, "root pattern *.log in docs"},
+		{"build", true, "root pattern build/ directory"},
+		{"build/app.go", true, "root pattern build/ content"},
+
+		// src/.gitignore patterns only apply in src/
+		{"src/temp.tmp", true, "src pattern *.tmp in src"},
+		{"src/generated", true, "src pattern generated/ in src"},
+		{"src/generated/code.go", true, "src pattern generated/ content"},
+		{"temp.tmp", false, "src pattern *.tmp should NOT apply in root"},
+		{"docs/temp.tmp", false, "src pattern *.tmp should NOT apply in docs"},
+
+		// docs/.gitignore patterns only apply in docs/
+		{"docs/_draft", true, "docs pattern _draft/ in docs"},
+		{"docs/_draft/article.md", true, "docs pattern _draft/ content"},
+		{"_draft", false, "docs pattern _draft/ should NOT apply in root"},
+		{"src/_draft", false, "docs pattern _draft/ should NOT apply in src"},
+
+		// Files that should NOT be ignored
+		{"src/main.go", false, "regular go file in src"},
+		{"docs/README.md", false, "regular md file in docs"},
+		{"main.go", false, "regular go file in root"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestScanner_RespectsNestedGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create root .gitignore
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("*.log\n"), 0644); err != nil {
+		t.Fatalf("failed to create root .gitignore: %v", err)
+	}
+
+	// Create src directory with its own .gitignore
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, ".gitignore"), []byte("generated/\n"), 0644); err != nil {
+		t.Fatalf("failed to create src/.gitignore: %v", err)
+	}
+
+	// Create files that should be indexed
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main"), 0644); err != nil {
+		t.Fatalf("failed to create main.go: %v", err)
+	}
+
+	// Create files that should be ignored by root .gitignore
+	if err := os.WriteFile(filepath.Join(tmpDir, "debug.log"), []byte("log"), 0644); err != nil {
+		t.Fatalf("failed to create debug.log: %v", err)
+	}
+
+	// Create files that should be ignored by nested .gitignore
+	generatedDir := filepath.Join(srcDir, "generated")
+	if err := os.MkdirAll(generatedDir, 0755); err != nil {
+		t.Fatalf("failed to create generated dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(generatedDir, "code.go"), []byte("package generated"), 0644); err != nil {
+		t.Fatalf("failed to create generated/code.go: %v", err)
+	}
+
+	// Create scanner
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, matcher)
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	// Should only find src/main.go (not debug.log or src/generated/code.go)
+	if len(files) != 1 {
+		t.Errorf("expected 1 file, got %d", len(files))
+		for _, f := range files {
+			t.Logf("  found: %s", f.Path)
+		}
+	}
+
+	expectedPath := filepath.Join("src", "main.go")
+	if len(files) > 0 && files[0].Path != expectedPath {
+		t.Errorf("expected %s, got %s", expectedPath, files[0].Path)
 	}
 }

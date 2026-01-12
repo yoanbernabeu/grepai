@@ -9,36 +9,88 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
+// nestedMatcher holds a gitignore matcher and its base directory
+type nestedMatcher struct {
+	matcher *ignore.GitIgnore
+	baseDir string // relative path from project root (empty for root .gitignore)
+}
+
 type IgnoreMatcher struct {
-	matchers  []*ignore.GitIgnore
-	extraDirs []string
+	projectRoot    string
+	nestedMatchers []nestedMatcher
+	extraDirs      []string
 }
 
 func NewIgnoreMatcher(projectRoot string, extraIgnore []string) (*IgnoreMatcher, error) {
 	m := &IgnoreMatcher{
-		extraDirs: extraIgnore,
+		projectRoot: projectRoot,
+		extraDirs:   extraIgnore,
 	}
 
-	// Load .gitignore if it exists
-	gitignorePath := filepath.Join(projectRoot, ".gitignore")
-	if _, err := os.Stat(gitignorePath); err == nil {
-		gi, err := ignore.CompileIgnoreFile(gitignorePath)
+	// Walk the project to find all .gitignore files
+	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil, err
+			return nil // Skip inaccessible paths
 		}
-		m.matchers = append(m.matchers, gi)
+
+		// Skip directories that should be ignored by default
+		if info.IsDir() {
+			base := filepath.Base(path)
+			for _, dir := range extraIgnore {
+				if base == dir {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+
+		// Only process .gitignore files
+		if filepath.Base(path) != ".gitignore" {
+			return nil
+		}
+
+		gi, err := ignore.CompileIgnoreFile(path)
+		if err != nil {
+			return nil // Skip invalid .gitignore files
+		}
+
+		// Get relative base directory
+		relPath, err := filepath.Rel(projectRoot, filepath.Dir(path))
+		if err != nil {
+			return nil
+		}
+		if relPath == "." {
+			relPath = ""
+		}
+
+		m.nestedMatchers = append(m.nestedMatchers, nestedMatcher{
+			matcher: gi,
+			baseDir: relPath,
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	// Add extra ignore patterns
+	// Add extra ignore patterns as a root-level matcher
 	if len(extraIgnore) > 0 {
 		gi := ignore.CompileIgnoreLines(extraIgnore...)
-		m.matchers = append(m.matchers, gi)
+		m.nestedMatchers = append(m.nestedMatchers, nestedMatcher{
+			matcher: gi,
+			baseDir: "",
+		})
 	}
 
 	return m, nil
 }
 
 func (m *IgnoreMatcher) ShouldIgnore(path string) bool {
+	// Normalize path separators for cross-platform compatibility
+	normalizedPath := filepath.ToSlash(path)
+
 	// Check extra directories first (exact match for efficiency)
 	base := filepath.Base(path)
 	for _, dir := range m.extraDirs {
@@ -47,14 +99,28 @@ func (m *IgnoreMatcher) ShouldIgnore(path string) bool {
 		}
 	}
 
-	// Check gitignore patterns
-	for _, matcher := range m.matchers {
-		if matcher.MatchesPath(path) {
+	// Check nested gitignore patterns
+	for _, nm := range m.nestedMatchers {
+		// Determine the relative path from this matcher's base directory
+		var relPath string
+		if nm.baseDir == "" {
+			// Root-level matcher applies to all paths
+			relPath = normalizedPath
+		} else {
+			// Nested matcher only applies to paths within its directory
+			normalizedBase := filepath.ToSlash(nm.baseDir)
+			if !strings.HasPrefix(normalizedPath, normalizedBase+"/") && normalizedPath != normalizedBase {
+				continue // This matcher doesn't apply to this path
+			}
+			// Get path relative to the matcher's base directory
+			relPath = strings.TrimPrefix(normalizedPath, normalizedBase+"/")
+		}
+
+		if nm.matcher.MatchesPath(relPath) {
 			return true
 		}
 		// Also check with trailing slash to match directory patterns like "build/"
-		// This ensures patterns ending with "/" properly match directory names
-		if matcher.MatchesPath(path + "/") {
+		if nm.matcher.MatchesPath(relPath + "/") {
 			return true
 		}
 	}
