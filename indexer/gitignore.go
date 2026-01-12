@@ -52,6 +52,11 @@ func (m *IgnoreMatcher) ShouldIgnore(path string) bool {
 		if matcher.MatchesPath(path) {
 			return true
 		}
+		// Also check with trailing slash to match directory patterns like "build/"
+		// This ensures patterns ending with "/" properly match directory names
+		if matcher.MatchesPath(path + "/") {
+			return true
+		}
 	}
 
 	return false
