@@ -11,19 +11,21 @@ import (
 )
 
 type PostgresStore struct {
-	pool      *pgxpool.Pool
-	projectID string
+	pool       *pgxpool.Pool
+	projectID  string
+	dimensions int
 }
 
-func NewPostgresStore(ctx context.Context, dsn string, projectID string) (*PostgresStore, error) {
+func NewPostgresStore(ctx context.Context, dsn string, projectID string, vectorDimensions int) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 	}
 
 	store := &PostgresStore{
-		pool:      pool,
-		projectID: projectID,
+		pool:       pool,
+		projectID:  projectID,
+		dimensions: vectorDimensions,
 	}
 
 	if err := store.ensureSchema(ctx); err != nil {
@@ -44,7 +46,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			start_line INTEGER NOT NULL,
 			end_line INTEGER NOT NULL,
 			content TEXT NOT NULL,
-			vector vector(1536),
+			vector vector(768),
 			hash TEXT NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
@@ -58,6 +60,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			chunk_ids TEXT[] NOT NULL,
 			PRIMARY KEY (project_id, path)
 		)`,
+		buildEnsureVectorSQL(s.dimensions),
 	}
 
 	for _, query := range queries {
@@ -335,4 +338,28 @@ func (s *PostgresStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	}
 
 	return chunks, rows.Err()
+}
+
+// buildEnsureVectorSQL returns a SQL block that alters the "chunks.vector" column
+// only if its current dimension differs from the specified one.
+func buildEnsureVectorSQL(dim int) string {
+	return fmt.Sprintf(`
+DO $$
+DECLARE
+	current_length int;
+BEGIN
+	SELECT atttypmod - 4
+	INTO current_length
+	FROM pg_attribute
+	WHERE attrelid = 'chunks'::regclass
+	  AND attname = 'vector';
+
+	IF current_length IS DISTINCT FROM %d THEN
+		RAISE NOTICE 'Altering vector size from %% to %d', current_length;
+		EXECUTE 'ALTER TABLE chunks ALTER COLUMN vector TYPE vector(%d)';
+	ELSE
+		RAISE NOTICE 'Vector size already %d, skipping ALTER';
+	END IF;
+END$$;
+`, dim, dim, dim, dim)
 }

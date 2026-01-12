@@ -84,6 +84,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		emb = embedder.NewOllamaEmbedder(
 			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithOllamaModel(cfg.Embedder.Model),
+			embedder.WithOllamaDimensions(cfg.Embedder.Dimensions),
 		)
 	case "openai":
 		var err error
@@ -91,6 +92,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			embedder.WithOpenAIModel(cfg.Embedder.Model),
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithOpenAIDimensions(cfg.Embedder.Dimensions),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
@@ -99,6 +101,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		emb = embedder.NewLMStudioEmbedder(
 			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithLMStudioModel(cfg.Embedder.Model),
+			embedder.WithLMStudioDimensions(cfg.Embedder.Dimensions),
 		)
 	default:
 		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
@@ -117,7 +120,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot)
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.Dimensions)
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
@@ -268,7 +271,7 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot)
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.Dimensions)
 		if err != nil {
 			return nil, err
 		}

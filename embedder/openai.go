@@ -14,7 +14,7 @@ import (
 const (
 	defaultOpenAIEndpoint  = "https://api.openai.com/v1"
 	defaultOpenAIModel     = "text-embedding-3-small"
-	openAI3SmallDimensions = 1536
+	defaultOpenAI3SmallDimensions = 1536
 )
 
 type OpenAIEmbedder struct {
@@ -68,12 +68,17 @@ func WithOpenAIKey(key string) OpenAIOption {
 		e.apiKey = key
 	}
 }
+func WithOpenAIDimensions(dimensions int) OpenAIOption {
+	return func(e *OpenAIEmbedder) {
+		e.dimensions = dimensions
+	}
+}
 
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
 		endpoint:   defaultOpenAIEndpoint,
 		model:      defaultOpenAIModel,
-		dimensions: openAI3SmallDimensions,
+		dimensions: defaultOpenAI3SmallDimensions,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},

@@ -55,6 +55,11 @@ func WithLMStudioModel(model string) LMStudioOption {
 		e.model = model
 	}
 }
+func WithLMStudioDimensions(dimensions int) LMStudioOption {
+	return func(e *LMStudioEmbedder) {
+		e.dimensions = dimensions
+	}
+}
 
 func NewLMStudioEmbedder(opts ...LMStudioOption) *LMStudioEmbedder {
 	e := &LMStudioEmbedder{

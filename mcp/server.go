@@ -417,17 +417,20 @@ func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
 		return embedder.NewOllamaEmbedder(
 			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithOllamaModel(cfg.Embedder.Model),
+			embedder.WithOllamaDimensions(cfg.Embedder.Dimensions),
 		), nil
 	case "openai":
 		return embedder.NewOpenAIEmbedder(
 			embedder.WithOpenAIModel(cfg.Embedder.Model),
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithOpenAIDimensions(cfg.Embedder.Dimensions),
 		)
 	case "lmstudio":
 		return embedder.NewLMStudioEmbedder(
 			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithLMStudioModel(cfg.Embedder.Model),
+			embedder.WithLMStudioDimensions(cfg.Embedder.Dimensions),
 		), nil
 	default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
@@ -445,7 +448,7 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 		}
 		return gobStore, nil
 	case "postgres":
-		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, s.projectRoot)
+		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, s.projectRoot, cfg.Embedder.Dimensions)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
 	}

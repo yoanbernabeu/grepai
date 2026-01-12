@@ -52,6 +52,7 @@ type EmbedderConfig struct {
 	Model    string `yaml:"model"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	APIKey   string `yaml:"api_key,omitempty"`
+	Dimensions int    `yaml:"dimensions,omitempty"`
 }
 
 type StoreConfig struct {
@@ -85,6 +86,7 @@ func DefaultConfig() *Config {
 			Provider: "ollama",
 			Model:    "nomic-embed-text",
 			Endpoint: "http://localhost:11434",
+			Dimensions: 768,
 		},
 		Store: StoreConfig{
 			Backend: "gob",

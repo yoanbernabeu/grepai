@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+const (
+	endpoints  = "https://api.grepai.com/v1"
+	dimensions = 1536
+)
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -19,6 +24,10 @@ func TestDefaultConfig(t *testing.T) {
 
 	if cfg.Embedder.Model != "nomic-embed-text" {
 		t.Errorf("expected model nomic-embed-text, got %s", cfg.Embedder.Model)
+	}
+
+	if cfg.Embedder.Dimensions != 768 {
+		t.Errorf("expected dimensions 768, got %d", cfg.Embedder.Dimensions)
 	}
 
 	if cfg.Store.Backend != "gob" {
@@ -43,6 +52,8 @@ func TestConfigSaveAndLoad(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Embedder.Provider = "openai"
+	cfg.Embedder.Dimensions = dimensions
+	cfg.Embedder.Endpoint = endpoints
 	cfg.Store.Backend = "postgres"
 
 	err := cfg.Save(tmpDir)
@@ -66,8 +77,15 @@ func TestConfigSaveAndLoad(t *testing.T) {
 		t.Errorf("expected provider openai, got %s", loaded.Embedder.Provider)
 	}
 
+	if loaded.Embedder.Dimensions != dimensions {
+		t.Errorf("expected dimensions %d, got %d", dimensions, loaded.Embedder.Dimensions)
+	}
+
 	if loaded.Store.Backend != "postgres" {
 		t.Errorf("expected backend postgres, got %s", loaded.Store.Backend)
+	}
+	if loaded.Embedder.Endpoint != endpoints {
+		t.Errorf("expected endpoint %s, got %s", endpoints, loaded.Embedder.Endpoint)
 	}
 }
 

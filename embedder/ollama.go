@@ -45,6 +45,11 @@ func WithOllamaModel(model string) OllamaOption {
 		e.model = model
 	}
 }
+func WithOllamaDimensions(dimensions int) OllamaOption {
+	return func(e *OllamaEmbedder) {
+		e.dimensions = dimensions
+	}
+}
 
 func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 	e := &OllamaEmbedder{
