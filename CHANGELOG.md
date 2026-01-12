@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - PostgreSQL vector column automatically resizes to match configured dimensions
   - Backward compatible: old configs without `dimensions` use sensible defaults per provider
 
+## [0.11.0] - 2026-01-12
+
+### Added
+
+- **Nested `.gitignore` Support**: Each subdirectory can now have its own `.gitignore` file (#40)
+  - Patterns in nested `.gitignore` files apply only to their directory and subdirectories
+  - Matches git's native behavior for hierarchical ignore rules
+  - Example: `src/.gitignore` with `generated/` only ignores `src/generated/`, not `docs/generated/`
+
+### Fixed
+
+- **Directory Pattern Matching**: Patterns with trailing slash (e.g., `build/`) now correctly match the directory itself
+  - Previously only matched contents inside the directory
+  - Now triggers `filepath.SkipDir` for better performance on large repositories
+  - Significantly improves indexing speed when ignoring `node_modules/`, `vendor/`, etc.
+
 ## [0.10.0] - 2026-01-11
 
 ### Added
@@ -159,7 +175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/yoanbernabeu/grepai/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/yoanbernabeu/grepai/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yoanbernabeu/grepai/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/yoanbernabeu/grepai/compare/v0.8.0...v0.8.1
