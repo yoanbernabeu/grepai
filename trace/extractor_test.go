@@ -27,6 +27,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".cxx":  true,
 		".hxx":  true,
 		".java": true,
+		".cs":   true,
 	}
 
 	for _, lang := range langs {
@@ -584,6 +585,104 @@ public class Container<T> {
 	// Test inner enum as type
 	if !foundTypes["Status"] {
 		t.Error("missing inner enum type: Status")
+	}
+}
+
+func TestRegexExtractor_ExtractSymbols_CSharp(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `using System;
+using System.Collections.Generic;
+
+namespace Sample.App;
+
+public interface IRepository<T>
+{
+    T GetById(Guid id);
+    IEnumerable<T> GetAll();
+}
+
+public record User(Guid Id, string Name)
+{
+    public string DisplayName() => $"{Name}";
+}
+
+public abstract class BaseService
+{
+    protected abstract void Execute();
+}
+
+public class UserService : BaseService
+{
+    private readonly IRepository<User> _repo;
+
+    public UserService(IRepository<User> repo)
+    {
+        _repo = repo;
+    }
+
+    public override void Execute()
+    {
+        var user = new User(Guid.NewGuid(), "Ada");
+        Console.WriteLine(user.DisplayName());
+        _repo.GetById(user.Id);
+    }
+
+    public IEnumerable<User> GetUsers() => _repo.GetAll();
+}
+
+public readonly struct Result<T>
+{
+    public T Value { get; }
+    public Result(T value) => Value = value;
+}
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "UserService.cs", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundMethods := make(map[string]bool)
+	foundClasses := make(map[string]bool)
+	foundInterfaces := make(map[string]bool)
+
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		case KindClass:
+			foundClasses[sym.Name] = true
+		case KindInterface:
+			foundInterfaces[sym.Name] = true
+		}
+	}
+
+	expectedMethods := []string{
+		"GetById",
+		"GetAll",
+		"DisplayName",
+		"UserService",
+		"Execute",
+		"GetUsers",
+		"Result",
+	}
+	for _, name := range expectedMethods {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+
+	expectedClasses := []string{"User", "BaseService", "UserService", "Result"}
+	for _, name := range expectedClasses {
+		if !foundClasses[name] {
+			t.Errorf("missing class: %s", name)
+		}
+	}
+
+	if !foundInterfaces["IRepository"] {
+		t.Error("missing interface: IRepository")
 	}
 }
 

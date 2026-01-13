@@ -47,6 +47,7 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".cxx":  cppPatterns,
 	".hxx":  cppPatterns,
 	".java": javaPatterns,
+	".cs":   csharpPatterns,
 }
 
 // Go patterns
@@ -274,6 +275,15 @@ var languageKeywords = map[string]map[string]bool{
 		"isEmpty": true, "contains": true, "containsKey": true, "containsValue": true,
 		"put": true, "clear": true, "toArray": true,
 	},
+	"csharp": {
+		"if": true, "else": true, "for": true, "foreach": true, "while": true,
+		"do": true, "switch": true, "case": true, "default": true, "break": true,
+		"continue": true, "return": true, "throw": true, "try": true, "catch": true,
+		"finally": true, "new": true, "nameof": true, "typeof": true, "using": true,
+		"get": true, "set": true, "init": true, "value": true, "await": true,
+		"yield": true, "lock": true, "this": true, "base": true,
+		"add": true, "remove": true, "toString": true, "equals": true, "getHashCode": true,
+	},
 }
 
 // C patterns
@@ -444,6 +454,33 @@ var javaPatterns = &LanguagePatterns{
 	},
 	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+}
+
+// C# patterns
+var csharpPatterns = &LanguagePatterns{
+	Extension: ".cs",
+	Language:  "csharp",
+	Functions: []*regexp.Regexp{},
+	Methods: []*regexp.Regexp{
+		// Method with return type and modifiers
+		regexp.MustCompile(`(?m)^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|async|extern|new|unsafe|partial)\s+)*[A-Za-z_][A-Za-z0-9_<>,\[\]\s\?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{)]*\)\s*(?:where\s+[^\r\n{;]+)?\s*(?:\{|;|=>)`),
+		// Constructor (no return type)
+		regexp.MustCompile(`(?m)^\s*(?:(?:public|private|protected|internal|static|extern|unsafe|partial)\s+)*([A-Z][A-Za-z0-9_]*)\s*\([^;{)]*\)\s*(?:\{|;|=>)`),
+	},
+	Classes: []*regexp.Regexp{
+		// class ClassName ...
+		regexp.MustCompile(`(?m)^(?:\s*(?:public|private|protected|internal)?\s*(?:abstract|sealed|static|partial)?\s*)class\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s*:\s*[^\{]+)?\s*\{`),
+		// struct StructName ...
+		regexp.MustCompile(`(?m)^(?:\s*(?:public|private|protected|internal)?\s*(?:readonly|ref|partial)?\s*)struct\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s*:\s*[^\{]+)?\s*\{`),
+		// record RecordName ... or record struct RecordName ...
+		regexp.MustCompile(`(?m)^(?:\s*(?:public|private|protected|internal)?\s*(?:sealed|abstract|partial)?\s*)record\s+(?:class\s+|struct\s+)?([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s*\([^\)]*\))?(?:\s*:\s*[^\{]+)?\s*\{`),
+	},
+	Interfaces: []*regexp.Regexp{
+		// interface InterfaceName ...
+		regexp.MustCompile(`(?m)^(?:\s*(?:public|private|protected|internal)?\s*(?:partial)?\s*)interface\s+([A-Z][A-Za-z0-9_]*)(?:<[^>]*>)?(?:\s*:\s*[^\{]+)?\s*\{`),
+	},
+	FunctionCall: regexp.MustCompile(`\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(`),
+	MethodCall:   regexp.MustCompile(`(?:\.|\?\.|::)\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(`),
 }
 
 // IsKeyword checks if a name is a language keyword.
