@@ -11,7 +11,6 @@ require (
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/smacker/go-tree-sitter/csharp v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -55,3 +54,6 @@ require (
 
 // Exclude the separate javascript submodule to use the one from the main module
 exclude github.com/smacker/go-tree-sitter/javascript v0.0.1
+
+// Exclude the separate csharp submodule to use the one from the main module
+exclude github.com/smacker/go-tree-sitter/csharp v0.0.0-20240827094217-dd81d9e9be82
