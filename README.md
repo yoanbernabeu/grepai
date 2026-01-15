@@ -60,6 +60,26 @@ grepai search "authentication" --json     # JSON output for AI agents
 grepai search "authentication" --json -c  # Compact JSON (~80% fewer tokens)
 ```
 
+### Background Daemon
+
+Run the watcher as a background process:
+
+```bash
+grepai watch --background    # Start in background
+grepai watch --status        # Check if running
+grepai watch --stop          # Stop gracefully
+```
+
+Logs are stored in OS-specific directories:
+
+| Platform | Log Directory |
+|----------|---------------|
+| Linux    | `~/.local/state/grepai/logs/` |
+| macOS    | `~/Library/Logs/grepai/` |
+| Windows  | `%LOCALAPPDATA%\grepai\logs\` |
+
+Override with `--log-dir /custom/path`.
+
 ### Self-Update
 
 Keep grepai up to date:

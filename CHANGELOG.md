@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Background Daemon Mode**: New flags for `grepai watch` to run as a background process
+  - `grepai watch --background`: Start watcher as a detached daemon
+  - `grepai watch --status`: Check if background watcher is running (shows PID and log location)
+  - `grepai watch --stop`: Gracefully stop the background watcher (with 30s timeout)
+  - `--log-dir`: Override default log directory
+  - OS-specific default log directories:
+    - Linux: `~/.local/state/grepai/logs/` (or `$XDG_STATE_HOME`)
+    - macOS: `~/Library/Logs/grepai/`
+    - Windows: `%LOCALAPPDATA%\grepai\logs\`
+  - PID file management with file locking to prevent race conditions
+  - Automatic stale PID detection and cleanup
+  - Ready signaling: parent waits for child to fully initialize before returning
+  - Graceful shutdown with index persistence on SIGINT/SIGTERM
+- **New `daemon` package**: Cross-platform process lifecycle management
+  - Platform-specific implementations for Unix and Windows
+  - File locking (flock on Unix, LockFileEx on Windows)
+  - Process detection and signal handling
+
 ## [0.15.0] - 2026-01-14
 
 ### Added
