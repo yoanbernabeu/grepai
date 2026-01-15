@@ -78,7 +78,13 @@ Logs are stored in OS-specific directories:
 | macOS    | `~/Library/Logs/grepai/` |
 | Windows  | `%LOCALAPPDATA%\grepai\logs\` |
 
-Override with `--log-dir /custom/path`.
+Use `--log-dir /custom/path` to override (must be passed to all commands):
+
+```bash
+grepai watch --background --log-dir /custom/path    # Start in background
+grepai watch --status --log-dir /custom/path        # Check if running
+grepai watch --stop --log-dir /custom/path          # Stop gracefully
+```
 
 ### Self-Update
 
