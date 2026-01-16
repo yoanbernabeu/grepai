@@ -2,12 +2,31 @@ package indexer
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
+
+// expandTilde replaces a leading ~ with the user's home directory.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return homeDir
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(homeDir, path[2:])
+	}
+	return path
+}
 
 // nestedMatcher holds a gitignore matcher and its base directory
 type nestedMatcher struct {
@@ -21,10 +40,28 @@ type IgnoreMatcher struct {
 	extraDirs      []string
 }
 
-func NewIgnoreMatcher(projectRoot string, extraIgnore []string) (*IgnoreMatcher, error) {
+func NewIgnoreMatcher(projectRoot string, extraIgnore []string, externalGitignore string) (*IgnoreMatcher, error) {
 	m := &IgnoreMatcher{
 		projectRoot: projectRoot,
 		extraDirs:   extraIgnore,
+	}
+
+	// Load external gitignore file if specified
+	if externalGitignore != "" {
+		expandedPath := expandTilde(externalGitignore)
+		gi, err := ignore.CompileIgnoreFile(expandedPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("Warning: external gitignore file not found: %s", expandedPath)
+			} else {
+				log.Printf("Warning: failed to load external gitignore: %v", err)
+			}
+		} else {
+			m.nestedMatchers = append(m.nestedMatchers, nestedMatcher{
+				matcher: gi,
+				baseDir: "", // External gitignore applies from root
+			})
+		}
 	}
 
 	// Walk the project to find all .gitignore files

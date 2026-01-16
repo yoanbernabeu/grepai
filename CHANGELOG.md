@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - File locking (flock on Unix, LockFileEx on Windows)
   - Process detection and signal handling
 
+## [0.15.1] - 2026-01-16
+
+### Added
+
+- **External Gitignore Support**: New `external_gitignore` configuration option to specify a path to an external gitignore file (e.g., `~/.config/git/ignore`) (#50)
+  - Supports `~` expansion for home directory paths
+  - External patterns are respected during indexing alongside project-level `.gitignore` files
+  - If the file doesn't exist, a warning is logged but indexing continues normally
+
 ## [0.15.0] - 2026-01-14
 
 ### Added
@@ -248,7 +257,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/yoanbernabeu/grepai/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/yoanbernabeu/grepai/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/yoanbernabeu/grepai/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/yoanbernabeu/grepai/compare/v0.12.0...v0.13.0

@@ -29,7 +29,7 @@ secret.txt
 		t.Fatalf("failed to create .gitignore: %v", err)
 	}
 
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestIgnoreMatcher_ExtraPatterns(t *testing.T) {
 	// No .gitignore file, only extra patterns
 	extraPatterns := []string{".git", ".grepai", "node_modules", "__pycache__"}
 
-	matcher, err := NewIgnoreMatcher(tmpDir, extraPatterns)
+	matcher, err := NewIgnoreMatcher(tmpDir, extraPatterns, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestIgnoreMatcher_CombinedPatterns(t *testing.T) {
 	// Extra patterns from config
 	extraPatterns := []string{".git", "vendor"}
 
-	matcher, err := NewIgnoreMatcher(tmpDir, extraPatterns)
+	matcher, err := NewIgnoreMatcher(tmpDir, extraPatterns, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestIgnoreMatcher_NoGitignore(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// No .gitignore, no extra patterns
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestIgnoreMatcher_DirectoryPatternWithTrailingSlash(t *testing.T) {
 		t.Fatalf("failed to create .gitignore: %v", err)
 	}
 
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestScanner_RespectsGitignore(t *testing.T) {
 	}
 
 	// Create scanner
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -295,7 +295,7 @@ generated/
 		t.Fatalf("failed to create docs/.gitignore: %v", err)
 	}
 
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestScanner_RespectsNestedGitignore(t *testing.T) {
 	}
 
 	// Create scanner
-	matcher, err := NewIgnoreMatcher(tmpDir, []string{})
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
@@ -400,5 +400,158 @@ func TestScanner_RespectsNestedGitignore(t *testing.T) {
 	expectedPath := filepath.Join("src", "main.go")
 	if len(files) > 0 && files[0].Path != expectedPath {
 		t.Errorf("expected %s, got %s", expectedPath, files[0].Path)
+	}
+}
+
+func TestExpandTilde(t *testing.T) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("could not get home directory: %v", err)
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+		desc     string
+	}{
+		{"~/foo/bar", filepath.Join(homeDir, "foo/bar"), "tilde with path"},
+		{"~", homeDir, "tilde only"},
+		{"/absolute/path", "/absolute/path", "absolute path unchanged"},
+		{"relative/path", "relative/path", "relative path unchanged"},
+		{"", "", "empty string unchanged"},
+		{"~username/path", "~username/path", "tilde with username unchanged"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := expandTilde(tt.input)
+			if result != tt.expected {
+				t.Errorf("expandTilde(%q) = %q, expected %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIgnoreMatcher_ExternalGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create external gitignore file
+	externalGitignore := filepath.Join(tmpDir, "external-gitignore")
+	externalContent := `*.external
+external-dir/
+`
+	if err := os.WriteFile(externalGitignore, []byte(externalContent), 0644); err != nil {
+		t.Fatalf("failed to create external gitignore: %v", err)
+	}
+
+	// Create project directory
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Create project .gitignore
+	projectGitignore := `*.log
+build/
+`
+	if err := os.WriteFile(filepath.Join(projectDir, ".gitignore"), []byte(projectGitignore), 0644); err != nil {
+		t.Fatalf("failed to create project .gitignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(projectDir, []string{}, externalGitignore)
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		// From external gitignore
+		{"file.external", true, "external pattern *.external"},
+		{"external-dir", true, "external pattern external-dir/"},
+		{"external-dir/file.go", true, "external pattern external-dir/ content"},
+
+		// From project .gitignore
+		{"debug.log", true, "project pattern *.log"},
+		{"build", true, "project pattern build/"},
+		{"build/app.go", true, "project pattern build/ content"},
+
+		// Not ignored
+		{"main.go", false, "regular go file"},
+		{"src/app.go", false, "go file in src"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIgnoreMatcher_ExternalGitignore_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create project directory
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Create project .gitignore
+	if err := os.WriteFile(filepath.Join(projectDir, ".gitignore"), []byte("*.log\n"), 0644); err != nil {
+		t.Fatalf("failed to create project .gitignore: %v", err)
+	}
+
+	// External gitignore path that doesn't exist
+	nonExistentPath := filepath.Join(tmpDir, "non-existent-gitignore")
+
+	// Should not fail, just log a warning
+	matcher, err := NewIgnoreMatcher(projectDir, []string{}, nonExistentPath)
+	if err != nil {
+		t.Fatalf("NewIgnoreMatcher should not fail with non-existent external gitignore: %v", err)
+	}
+
+	// Project .gitignore patterns should still work
+	if !matcher.ShouldIgnore("debug.log") {
+		t.Error("ShouldIgnore(\"debug.log\") = false, expected true")
+	}
+
+	// Non-ignored files should not be affected
+	if matcher.ShouldIgnore("main.go") {
+		t.Error("ShouldIgnore(\"main.go\") = true, expected false")
+	}
+}
+
+func TestIgnoreMatcher_ExternalGitignore_WithTilde(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create project directory
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Test with a path that would have tilde (but we can't actually test ~ expansion
+	// without creating files in user's home, so we test that it handles the path correctly)
+	// The expandTilde function is tested separately in TestExpandTilde
+
+	// Using a non-tilde path for the actual test
+	externalGitignore := filepath.Join(tmpDir, "gitignore-config")
+	if err := os.WriteFile(externalGitignore, []byte("*.ignored\n"), 0644); err != nil {
+		t.Fatalf("failed to create external gitignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(projectDir, []string{}, externalGitignore)
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	if !matcher.ShouldIgnore("test.ignored") {
+		t.Error("ShouldIgnore(\"test.ignored\") = false, expected true")
 	}
 }

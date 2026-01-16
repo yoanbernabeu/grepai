@@ -479,7 +479,7 @@ func runWatchForeground() error {
 	defer st.Close()
 
 	// Initialize ignore matcher
-	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore)
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
 	if err != nil {
 		return fmt.Errorf("failed to initialize ignore matcher: %w", err)
 	}
