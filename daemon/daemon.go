@@ -62,6 +62,11 @@ const (
 	readyFileName = "grepai-watch.ready"
 )
 
+// lockFileHandle holds the open lock file so we can close it explicitly.
+// The lock is held for the lifetime of the process (released by the OS on exit),
+// but ReleasePIDLock() allows explicit release for clean shutdown or tests.
+var lockFileHandle *os.File
+
 // GetDefaultLogDir returns the OS-specific default log directory.
 //
 // Platform-specific defaults:
@@ -143,9 +148,23 @@ func WritePIDFile(logDir string) error {
 
 	// Keep lock file open and locked for the lifetime of this process.
 	// The OS will automatically release the lock when the process exits.
-	// We intentionally don't close lockFh here.
+	// Store the handle so ReleasePIDLock() can close it explicitly if needed.
+	lockFileHandle = lockFh
 
 	return nil
+}
+
+// ReleasePIDLock explicitly releases the PID lock file handle.
+// This is useful for clean shutdown or in tests where the temp directory
+// needs to be cleaned up while the process is still running.
+// On Windows, files cannot be deleted while open, so this must be called
+// before RemovePIDFile() in the same process.
+// Safe to call multiple times or if no lock was acquired.
+func ReleasePIDLock() {
+	if lockFileHandle != nil {
+		lockFileHandle.Close()
+		lockFileHandle = nil
+	}
 }
 
 // ReadPIDFile reads the process ID from the PID file in the given logDir.

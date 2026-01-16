@@ -47,6 +47,7 @@ func TestGetDefaultLogDir(t *testing.T) {
 
 func TestWriteAndReadPIDFile(t *testing.T) {
 	logDir := t.TempDir()
+	t.Cleanup(ReleasePIDLock) // Release lock before temp dir cleanup (required on Windows)
 
 	// Write PID file
 	if err := WritePIDFile(logDir); err != nil {
@@ -104,6 +105,7 @@ func TestReadPIDFile_InvalidContent(t *testing.T) {
 
 func TestRemovePIDFile(t *testing.T) {
 	logDir := t.TempDir()
+	t.Cleanup(ReleasePIDLock) // Release lock before temp dir cleanup (required on Windows)
 
 	// Write PID file
 	if err := WritePIDFile(logDir); err != nil {
@@ -153,6 +155,7 @@ func TestIsProcessRunning(t *testing.T) {
 
 func TestPIDFileLifecycle(t *testing.T) {
 	logDir := t.TempDir()
+	t.Cleanup(ReleasePIDLock) // Release lock before temp dir cleanup (required on Windows)
 
 	// Initially, no PID file
 	pid, err := ReadPIDFile(logDir)
@@ -199,6 +202,7 @@ func TestPIDFileLifecycle(t *testing.T) {
 
 func TestConcurrentPIDAccess(t *testing.T) {
 	logDir := t.TempDir()
+	t.Cleanup(ReleasePIDLock) // Release lock before temp dir cleanup (required on Windows)
 
 	// Write initial PID
 	if err := WritePIDFile(logDir); err != nil {
@@ -232,6 +236,7 @@ func TestConcurrentPIDAccess(t *testing.T) {
 
 func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
 	logDir := t.TempDir()
+	t.Cleanup(ReleasePIDLock) // Release lock before temp dir cleanup (required on Windows)
 
 	// Write PID file (which creates lock file)
 	if err := WritePIDFile(logDir); err != nil {
