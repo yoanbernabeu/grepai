@@ -16,15 +16,16 @@ const (
 )
 
 type Config struct {
-	Version  int            `yaml:"version"`
-	Embedder EmbedderConfig `yaml:"embedder"`
-	Store    StoreConfig    `yaml:"store"`
-	Chunking ChunkingConfig `yaml:"chunking"`
-	Watch    WatchConfig    `yaml:"watch"`
-	Search   SearchConfig   `yaml:"search"`
-	Trace    TraceConfig    `yaml:"trace"`
-	Update   UpdateConfig   `yaml:"update"`
-	Ignore   []string       `yaml:"ignore"`
+	Version           int            `yaml:"version"`
+	Embedder          EmbedderConfig `yaml:"embedder"`
+	Store             StoreConfig    `yaml:"store"`
+	Chunking          ChunkingConfig `yaml:"chunking"`
+	Watch             WatchConfig    `yaml:"watch"`
+	Search            SearchConfig   `yaml:"search"`
+	Trace             TraceConfig    `yaml:"trace"`
+	Update            UpdateConfig   `yaml:"update"`
+	Ignore            []string       `yaml:"ignore"`
+	ExternalGitignore string         `yaml:"external_gitignore,omitempty"`
 }
 
 // UpdateConfig holds auto-update settings

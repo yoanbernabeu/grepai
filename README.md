@@ -166,6 +166,7 @@ search:
     enabled: true           # Structural boosting for better relevance
 trace:
   mode: fast                # fast (regex) | precise (tree-sitter)
+external_gitignore: ""      # Path to external gitignore (e.g., ~/.config/git/ignore)
 ```
 
 > **Note**: Old configs without `endpoint` or `dimensions` are automatically updated with sensible defaults.

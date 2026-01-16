@@ -84,6 +84,10 @@ ignore:
   - "target"
   - ".zig-cache"
   - "zig-out"
+
+# Path to an external gitignore file (e.g., global gitignore)
+# Supports ~ expansion for home directory
+external_gitignore: "~/.config/git/ignore"
 ```
 
 ## Embedder Options
@@ -227,6 +231,24 @@ search:
 ```
 
 See [Hybrid Search](/grepai/hybrid-search/) for full documentation.
+
+## External Gitignore
+
+You can specify an external gitignore file (such as your global Git ignore file) to be respected during indexing:
+
+```yaml
+external_gitignore: "~/.config/git/ignore"
+```
+
+This is useful for ignoring files globally configured in Git (e.g., IDE files, OS-specific files).
+
+Common locations for global gitignore:
+- `~/.config/git/ignore` (XDG standard)
+- `~/.gitignore_global` (older convention)
+
+The tilde (`~`) is automatically expanded to your home directory.
+
+If the file doesn't exist, grepai will log a warning and continue without it.
 
 ## Environment Variables
 
