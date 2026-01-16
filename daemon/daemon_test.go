@@ -46,6 +46,7 @@ func TestGetDefaultLogDir(t *testing.T) {
 }
 
 func TestWriteAndReadPIDFile(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write PID file
@@ -103,6 +104,7 @@ func TestReadPIDFile_InvalidContent(t *testing.T) {
 }
 
 func TestRemovePIDFile(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write PID file
@@ -152,6 +154,7 @@ func TestIsProcessRunning(t *testing.T) {
 }
 
 func TestPIDFileLifecycle(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Initially, no PID file
@@ -198,6 +201,7 @@ func TestPIDFileLifecycle(t *testing.T) {
 }
 
 func TestConcurrentPIDAccess(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write initial PID
