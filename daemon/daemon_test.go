@@ -231,6 +231,7 @@ func TestConcurrentPIDAccess(t *testing.T) {
 }
 
 func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write PID file (which creates lock file)
@@ -263,7 +264,14 @@ func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
 	}
 }
 
-// Helper function
+// Helper functions
+
+func skipIfWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: cannot delete locked files")
+	}
+}
+
 func contains(s, substr string) bool {
 	return strings.Contains(filepath.ToSlash(s), substr)
 }

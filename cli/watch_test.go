@@ -3,11 +3,18 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/yoanbernabeu/grepai/daemon"
 )
+
+func skipIfWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: cannot delete locked files")
+	}
+}
 
 func TestShowWatchStatus_NotRunning(t *testing.T) {
 	logDir := t.TempDir()
@@ -23,6 +30,7 @@ func TestShowWatchStatus_NotRunning(t *testing.T) {
 }
 
 func TestShowWatchStatus_Running(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write PID file with current process
@@ -95,6 +103,7 @@ func TestStopWatchDaemon_StalePID(t *testing.T) {
 }
 
 func TestStartBackgroundWatch_AlreadyRunning(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Write PID file with current process (simulating already running)
@@ -137,6 +146,7 @@ func TestStartBackgroundWatch_CleansStalePID(t *testing.T) {
 }
 
 func TestRunWatch_CheckAlreadyRunning(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Set custom log dir for testing
@@ -178,6 +188,7 @@ func TestLogDirectoryDefaults(t *testing.T) {
 }
 
 func TestPIDFileLifecycleInWatch(t *testing.T) {
+	skipIfWindows(t)
 	logDir := t.TempDir()
 
 	// Initially no PID file
@@ -219,6 +230,7 @@ func TestPIDFileLifecycleInWatch(t *testing.T) {
 }
 
 func TestCustomLogDirectory(t *testing.T) {
+	skipIfWindows(t)
 	customDir := filepath.Join(t.TempDir(), "custom-logs")
 
 	// Set custom log dir
