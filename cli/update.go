@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -78,6 +80,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	})
 	if err != nil {
+		// Check for permission error and display user-friendly message
+		if isPermissionError(err) {
+			execPath, _ := os.Executable()
+			dir := filepath.Dir(execPath)
+			return fmt.Errorf("permission denied - cannot write to %s\n\nRun with sudo: sudo grepai update", dir)
+		}
 		return fmt.Errorf("update failed: %w", err)
 	}
 
@@ -97,4 +105,14 @@ func progressBar(percent, width int) string {
 		filled = 0
 	}
 	return strings.Repeat("#", filled) + strings.Repeat("-", width-filled)
+}
+
+func isPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "permission denied") ||
+		strings.Contains(errStr, "no write permission") ||
+		strings.Contains(errStr, "access denied")
 }
