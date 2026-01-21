@@ -35,7 +35,8 @@ var watchCmd = &cobra.Command{
 
 The watcher will:
 - Perform an initial scan comparing disk state with existing index
-- Remove obsolete entries and index new files
+- Skip unchanged files by comparing modification times (ModTime) for faster subsequent launches
+- Index modified and new files
 - Monitor filesystem events (create, modify, delete, rename)
 - Apply debouncing (500ms) to batch rapid changes
 - Handle atomic updates to avoid duplicate vectors
@@ -293,7 +294,9 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 	}
 }
 
-func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, isBackgroundChild bool) error {
+const configWriteThrottle = 30 * time.Second
+
+func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool) error {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -307,6 +310,9 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	// Periodic persist ticker
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
+
+	// Config write throttling - only write every 30 seconds at most
+	var lastConfigWrite time.Time
 
 	// Event loop
 	for {
@@ -334,12 +340,12 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
 		}
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, isBackgroundChild bool) error {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, isBackgroundChild bool) (*indexer.IndexStats, error) {
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -360,7 +366,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 	}
 
 	if err != nil {
-		return fmt.Errorf("initial indexing failed: %w", err)
+		return nil, fmt.Errorf("initial indexing failed: %w", err)
 	}
 
 	if !isBackgroundChild {
@@ -403,7 +409,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		log.Printf("Symbol index built: %d symbols extracted", symbolCount)
 	}
 
-	return nil
+	return stats, nil
 }
 
 func runWatchForeground() error {
@@ -491,7 +497,7 @@ func runWatchForeground() error {
 	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
 
 	// Initialize indexer
-	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner)
+	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
 
 	// Initialize symbol store and extractor
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
@@ -509,8 +515,17 @@ func runWatchForeground() error {
 	}
 
 	// Run initial scan and build symbol index
-	if err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild); err != nil {
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
+	if err != nil {
 		return err
+	}
+
+	// Update lastIndexTime in config if files were indexed
+	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
+		cfg.Watch.LastIndexTime = time.Now()
+		if err := cfg.Save(projectRoot); err != nil {
+			log.Printf("Warning: failed to save config: %v", err)
+		}
 	}
 
 	// Save index after initial scan
@@ -526,7 +541,7 @@ func runWatchForeground() error {
 		// Ensure ready file is cleaned up on exit
 		defer func() {
 			if err := daemon.RemoveReadyFile(logDir); err != nil {
-				log.Printf("Warning: failed to remove ready file: %v", err)
+				log.Printf("Warning: failed to remove ready file on exit: %v", err)
 			}
 		}()
 	}
@@ -543,10 +558,10 @@ func runWatchForeground() error {
 	}
 
 	// Run the watch event loop
-	return runWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, isBackgroundChild)
+	return runWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg, isBackgroundChild)
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, enabledLanguages []string, event watcher.FileEvent) {
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, event watcher.FileEvent) {
 	log.Printf("[%s] %s", event.Type, event.Path)
 
 	switch event.Type {
@@ -566,6 +581,16 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			return
 		}
 		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
+
+		// Update last_index_time with throttling (only write if 30 seconds have passed)
+		now := time.Now()
+		if now.Sub(*lastConfigWrite) >= configWriteThrottle {
+			cfg.Watch.LastIndexTime = now
+			if err := cfg.Save(projectRoot); err != nil {
+				log.Printf("Warning: failed to save config: %v", err)
+			}
+			*lastConfigWrite = now
+		}
 
 		// Extract symbols if language is supported
 		ext := strings.ToLower(filepath.Ext(event.Path))
