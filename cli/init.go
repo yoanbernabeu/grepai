@@ -104,6 +104,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			fmt.Println("\nSelect storage backend:")
 			fmt.Println("  1) gob (local file, recommended for most projects)")
 			fmt.Println("  2) postgres (pgvector, for large monorepos or shared index)")
+			fmt.Println("  3) qdrant (Docker-based vector database)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
@@ -115,6 +116,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 				fmt.Print("PostgreSQL DSN: ")
 				dsn, _ := reader.ReadString('\n')
 				cfg.Store.Postgres.DSN = strings.TrimSpace(dsn)
+			case "3", "qdrant":
+				cfg.Store.Backend = "qdrant"
+				fmt.Print("Qdrant endpoint [http://localhost:6333]: ")
+				endpoint, _ := reader.ReadString('\n')
+				endpoint = strings.TrimSpace(endpoint)
+				if endpoint == "" {
+					endpoint = "http://localhost:6333"
+				}
+				cfg.Store.Qdrant.Endpoint = endpoint
+
+				fmt.Print("Collection name (optional, defaults to sanitized project path): ")
+				collection, _ := reader.ReadString('\n')
+				cfg.Store.Qdrant.Collection = strings.TrimSpace(collection)
+
+				fmt.Print("API key (optional, for Qdrant Cloud): ")
+				apiKey, _ := reader.ReadString('\n')
+				cfg.Store.Qdrant.APIKey = strings.TrimSpace(apiKey)
 			default:
 				cfg.Store.Backend = "gob"
 			}
