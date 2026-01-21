@@ -104,6 +104,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			fmt.Println("\nSelect storage backend:")
 			fmt.Println("  1) gob (local file, recommended for most projects)")
 			fmt.Println("  2) postgres (pgvector, for large monorepos or shared index)")
+			fmt.Println("  3) qdrant (Docker-based vector database)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
@@ -115,6 +116,42 @@ func runInit(cmd *cobra.Command, args []string) error {
 				fmt.Print("PostgreSQL DSN: ")
 				dsn, _ := reader.ReadString('\n')
 				cfg.Store.Postgres.DSN = strings.TrimSpace(dsn)
+			case "3", "qdrant":
+				cfg.Store.Backend = "qdrant"
+				fmt.Print("Qdrant endpoint [localhost]: ")
+				endpoint, _ := reader.ReadString('\n')
+				endpoint = strings.TrimSpace(endpoint)
+				if endpoint == "" {
+					endpoint = "localhost"
+				}
+				cfg.Store.Qdrant.Endpoint = endpoint
+
+				fmt.Print("Qdrant port [6333]: ")
+				port, _ := reader.ReadString('\n')
+				port = strings.TrimSpace(port)
+				if port == "" {
+					cfg.Store.Qdrant.Port = 6334
+				} else {
+					var portInt int
+					_, err := fmt.Sscanf(port, "%d", &portInt)
+					if err != nil {
+						return fmt.Errorf("invalid port number: %w", err)
+					}
+					cfg.Store.Qdrant.Port = portInt
+				}
+
+				fmt.Print("Use TLS? (y/n) [n]: ")
+				useTLS, _ := reader.ReadString('\n')
+				useTLS = strings.TrimSpace(strings.ToLower(useTLS))
+				cfg.Store.Qdrant.UseTLS = useTLS == "y" || useTLS == "yes"
+
+				fmt.Print("Collection name (optional, defaults to sanitized project path): ")
+				collection, _ := reader.ReadString('\n')
+				cfg.Store.Qdrant.Collection = strings.TrimSpace(collection)
+
+				fmt.Print("API key (optional, for Qdrant Cloud): ")
+				apiKey, _ := reader.ReadString('\n')
+				cfg.Store.Qdrant.APIKey = strings.TrimSpace(apiKey)
 			default:
 				cfg.Store.Backend = "gob"
 			}

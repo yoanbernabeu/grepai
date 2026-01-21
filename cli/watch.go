@@ -288,6 +288,12 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 		return gobStore, nil
 	case "postgres":
 		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.Dimensions)
+	case "qdrant":
+		collectionName := cfg.Store.Qdrant.Collection
+		if collectionName == "" {
+			collectionName = store.SanitizeCollectionName(projectRoot)
+		}
+		return store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.Dimensions)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
 	}
