@@ -1,0 +1,126 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Header from '../components/global/Header.astro';
+import Footer from '../components/global/Footer.astro';
+import TableOfContents from '../components/docs/TableOfContents.astro';
+import CopyCodeButton from '../components/global/CopyCodeButton.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  pubDate: Date;
+  updatedDate?: Date;
+  author: string;
+  tags?: string[];
+  image?: string;
+  headings?: { depth: number; slug: string; text: string }[];
+}
+
+const { title, description, pubDate, updatedDate, author, tags = [], image, headings = [] } = Astro.props;
+
+const formattedPubDate = pubDate.toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+
+const formattedUpdatedDate = updatedDate?.toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+---
+
+<BaseLayout title={title} description={description} type="article">
+  <Header />
+
+  <div class="flex-1 flex justify-center">
+    <!-- Main content -->
+    <main class="flex-1 min-w-0 max-w-4xl">
+      <div class="px-6 py-12">
+        <!-- Back to blog -->
+        <a
+          href="/grepai/blog/"
+          class="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-8"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 18-6-6 6-6"/>
+          </svg>
+          Back to blog
+        </a>
+
+        <article class="prose prose-invert max-w-none" data-pagefind-body>
+          <!-- Article header -->
+          <header class="mb-10 not-prose">
+            {tags.length > 0 && (
+              <div class="flex flex-wrap gap-2 mb-4">
+                {tags.map((tag) => (
+                  <span class="px-3 py-1 text-xs font-medium bg-accent/10 text-accent rounded-full">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <h1 class="text-4xl font-extrabold gradient-text mb-4">{title}</h1>
+            <p class="text-xl text-gray-400 mb-6">{description}</p>
+
+            <div class="flex items-center gap-4 text-sm text-gray-500">
+              <span class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+                {author}
+              </span>
+              <span class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+                  <line x1="16" x2="16" y1="2" y2="6"/>
+                  <line x1="8" x2="8" y1="2" y2="6"/>
+                  <line x1="3" x2="21" y1="10" y2="10"/>
+                </svg>
+                {formattedPubDate}
+              </span>
+              {formattedUpdatedDate && (
+                <span class="text-gray-600">
+                  (Updated: {formattedUpdatedDate})
+                </span>
+              )}
+            </div>
+          </header>
+
+          <!-- Article content -->
+          <slot />
+        </article>
+
+        <!-- Back to blog (bottom) -->
+        <div class="mt-12 pt-8 border-t border-glass-border">
+          <a
+            href="/grepai/blog/"
+            class="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m15 18-6-6 6-6"/>
+            </svg>
+            Back to blog
+          </a>
+        </div>
+      </div>
+    </main>
+
+    <!-- Table of Contents -->
+    {headings.length > 0 && (
+      <aside class="hidden xl:block w-64 flex-shrink-0">
+        <div class="fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-8 px-4">
+          <TableOfContents headings={headings} />
+        </div>
+      </aside>
+    )}
+  </div>
+
+  <Footer />
+
+  <!-- Copy code button functionality -->
+  <CopyCodeButton />
+</BaseLayout>
