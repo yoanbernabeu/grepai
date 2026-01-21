@@ -63,12 +63,19 @@ type EmbedderConfig struct {
 }
 
 type StoreConfig struct {
-	Backend  string         `yaml:"backend"` // gob | postgres
+	Backend  string         `yaml:"backend"` // gob | postgres | qdrant
 	Postgres PostgresConfig `yaml:"postgres,omitempty"`
+	Qdrant   QdrantConfig   `yaml:"qdrant,omitempty"`
 }
 
 type PostgresConfig struct {
 	DSN string `yaml:"dsn"`
+}
+
+type QdrantConfig struct {
+	Endpoint   string `yaml:"endpoint"`             // e.g., "http://localhost:6333"
+	Collection string `yaml:"collection,omitempty"` // Optional, defaults from project path
+	APIKey     string `yaml:"api_key,omitempty"`    // Optional, for Qdrant Cloud
 }
 
 type ChunkingConfig struct {
