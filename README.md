@@ -257,12 +257,7 @@ export OPENAI_API_KEY=sk-...
 
 Run Qdrant locally:
 ```bash
-docker-compose -f docker-compose.example.yml up -d
-```
-
-Or pull the image directly:
-```bash
-docker run -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant:latest
+docker-compose -f docker-compose-qdrant..yml up -d
 ```
 
 Initialize with Qdrant:
@@ -275,9 +270,32 @@ Configuration example:
 store:
   backend: qdrant
   qdrant:
-    endpoint: "http://localhost:6333"
-    collection: "myproject"  # optional
-    api_key: ""           # optional (for Qdrant Cloud)
+    endpoint: "localhost"  # or "localhost" (scheme auto-detected from use_tls)
+    port: 6334                 # gRPC port (default: 6334)
+    use_tls: false               # Enable TLS (required for Qdrant Cloud)
+    collection: "myproject"       # optional
+    api_key: ""                 # optional (for Qdrant Cloud)
+```
+
+**Local Qdrant:**
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "localhost"
+    port: 6334
+    use_tls: false
+```
+
+**Qdrant Cloud:**
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "your-cluster.qdrant.io"
+    port: 443
+    use_tls: true
+    api_key: "your-api-key"
 ```
 
 Note: Collection names are automatically sanitized from the project path (replaces `/` with `_`). If no collection is specified, the sanitized project path is used.
