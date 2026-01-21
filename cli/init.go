@@ -118,13 +118,32 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Store.Postgres.DSN = strings.TrimSpace(dsn)
 			case "3", "qdrant":
 				cfg.Store.Backend = "qdrant"
-				fmt.Print("Qdrant endpoint [http://localhost:6333]: ")
+				fmt.Print("Qdrant endpoint [localhost]: ")
 				endpoint, _ := reader.ReadString('\n')
 				endpoint = strings.TrimSpace(endpoint)
 				if endpoint == "" {
-					endpoint = "http://localhost:6333"
+					endpoint = "localhost"
 				}
 				cfg.Store.Qdrant.Endpoint = endpoint
+
+				fmt.Print("Qdrant port [6333]: ")
+				port, _ := reader.ReadString('\n')
+				port = strings.TrimSpace(port)
+				if port == "" {
+					cfg.Store.Qdrant.Port = 6334
+				} else {
+					var portInt int
+					_, err := fmt.Sscanf(port, "%d", &portInt)
+					if err != nil {
+						return fmt.Errorf("invalid port number: %w", err)
+					}
+					cfg.Store.Qdrant.Port = portInt
+				}
+
+				fmt.Print("Use TLS? (y/n) [n]: ")
+				useTLS, _ := reader.ReadString('\n')
+				useTLS = strings.TrimSpace(strings.ToLower(useTLS))
+				cfg.Store.Qdrant.UseTLS = useTLS == "y" || useTLS == "yes"
 
 				fmt.Print("Collection name (optional, defaults to sanitized project path): ")
 				collection, _ := reader.ReadString('\n')

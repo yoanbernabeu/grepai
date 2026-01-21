@@ -293,7 +293,7 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 		if collectionName == "" {
 			collectionName = store.SanitizeCollectionName(projectRoot)
 		}
-		return store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.Dimensions)
+		return store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.Dimensions)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
 	}

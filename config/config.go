@@ -73,9 +73,11 @@ type PostgresConfig struct {
 }
 
 type QdrantConfig struct {
-	Endpoint   string `yaml:"endpoint"`             // e.g., "http://localhost:6333"
+	Endpoint   string `yaml:"endpoint"`             // e.g., "http://localhost" or "localhost"
+	Port       int    `yaml:"port,omitempty"`       // e.g., 6333
 	Collection string `yaml:"collection,omitempty"` // Optional, defaults from project path
 	APIKey     string `yaml:"api_key,omitempty"`    // Optional, for Qdrant Cloud
+	UseTLS     bool   `yaml:"use_tls,omitempty"`    // Enable TLS (for Qdrant Cloud)
 }
 
 type ChunkingConfig struct {
@@ -268,6 +270,11 @@ func (c *Config) applyDefaults() {
 	// Watch defaults
 	if c.Watch.DebounceMs == 0 {
 		c.Watch.DebounceMs = defaults.Watch.DebounceMs
+	}
+
+	// Qdrant defaults
+	if c.Store.Backend == "qdrant" && c.Store.Qdrant.Port <= 0 {
+		c.Store.Qdrant.Port = 6334
 	}
 }
 
