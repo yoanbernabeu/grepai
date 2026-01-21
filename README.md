@@ -253,6 +253,34 @@ export OPENAI_API_KEY=sk-...
 
 - **GOB (Default)**: File-based, zero config
 - **PostgreSQL + pgvector**: For large monorepos
+- **Qdrant**: Docker-based vector database
+
+Run Qdrant locally:
+```bash
+docker-compose -f docker-compose.example.yml up -d
+```
+
+Or pull the image directly:
+```bash
+docker run -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant:latest
+```
+
+Initialize with Qdrant:
+```bash
+grepai init --backend qdrant
+```
+
+Configuration example:
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "http://localhost:6333"
+    collection: "myproject"  # optional
+    api_key: ""           # optional (for Qdrant Cloud)
+```
+
+Note: Collection names are automatically sanitized from the project path (replaces `/` with `_`). If no collection is specified, the sanitized project path is used.
 
 ## Requirements
 
