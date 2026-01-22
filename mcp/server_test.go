@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
 )
 
@@ -84,5 +85,43 @@ func TestServerCreateStore_UnknownBackend(t *testing.T) {
 	expected := "unknown storage backend: unknown-backend"
 	if err.Error() != expected {
 		t.Errorf("expected error message %s, got %s", expected, err.Error())
+	}
+}
+
+// TestRegisterTools_IndexStatusSchema verifies that the grepai_index_status tool
+// is registered with a non-empty schema (regression for empty schema error).
+func TestRegisterTools_IndexStatusSchema(t *testing.T) {
+	s := &Server{
+		projectRoot: "/tmp/test-project",
+	}
+
+	// initialize minimal MCP server like NewServer would
+	s.mcpServer = server.NewMCPServer("grepai-test", "1.0.0")
+
+	s.registerTools()
+
+	tools := s.mcpServer.ListTools()
+	indexStatus, ok := tools["grepai_index_status"]
+	if !ok {
+		t.Fatalf("grepai_index_status tool not registered")
+	}
+
+	schema := indexStatus.Tool.InputSchema
+	if schema.Type != "object" {
+		t.Fatalf("expected schema type object, got %q", schema.Type)
+	}
+
+	prop, ok := schema.Properties["verbose"]
+	if !ok {
+		t.Fatalf("expected verbose property in schema")
+	}
+
+	propMap, ok := prop.(map[string]any)
+	if !ok {
+		t.Fatalf("verbose property is not an object, got %T", prop)
+	}
+
+	if propMap["type"] != "boolean" {
+		t.Fatalf("expected verbose type boolean, got %v", propMap["type"])
 	}
 }

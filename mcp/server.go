@@ -110,11 +110,9 @@ func (s *Server) registerTools() {
 	s.mcpServer.AddTool(traceGraphTool, s.handleTraceGraph)
 
 	// grepai_index_status tool
-	indexStatusSchema := json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
-	indexStatusTool := mcp.NewToolWithRawSchema(
-		"grepai_index_status",
-		"Check the health and status of the grepai index. Returns statistics about indexed files, chunks, and configuration.",
-		indexStatusSchema,
+	indexStatusTool := mcp.NewTool("grepai_index_status",
+		mcp.WithDescription("Check the health and status of the grepai index. Returns statistics about indexed files, chunks, and configuration."),
+		mcp.WithBoolean("verbose", mcp.Description("Include additional debug details when available (optional).")),
 	)
 	s.mcpServer.AddTool(indexStatusTool, s.handleIndexStatus)
 }
