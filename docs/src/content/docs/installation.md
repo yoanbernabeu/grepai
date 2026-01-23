@@ -32,6 +32,14 @@ make build
 sudo mv ./bin/grepai /usr/local/bin/
 ```
 
+## Install on Windows (PowerShell)
+
+Run the following command in your PowerShell terminal to install `grepai` automatically:
+
+```powershell
+powershell -ExecutionPolicy ByPass -Command "iwr -useb '[https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1](https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1)' | iex"
+```
+
 ## Install Ollama (Recommended)
 
 For privacy-first local embeddings, install Ollama:

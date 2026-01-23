@@ -36,6 +36,14 @@ curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh 
 
 Or download from [Releases](https://github.com/yoanbernabeu/grepai/releases).
 
+### Windows (PowerShell)
+
+Run the following command in your PowerShell terminal to install `grepai` automatically:
+
+```powershell
+powershell -ExecutionPolicy ByPass -Command "iwr -useb '[https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1](https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1)' | iex"
+```
+
 ### Quick Start
 
 ```bash
