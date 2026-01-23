@@ -114,11 +114,21 @@ embedder:
 ```
 
 Available models:
-- `nomic-embed-text` - Good balance of speed and quality
-- `mxbai-embed-large` - Higher quality, slower
-- `all-minilm` - Fast, lower quality
-- `qwen3-embedding:0.6b` - State-of-the-art, multilingual (including programming languages)
-- `embeddinggemma` - Google's model optimized for efficiency
+- `nomic-embed-text` - Fast, good quality (768 dims, English)
+- `nomic-embed-text-v2-moe` - **Multilingual** (~100 languages, 768 dims)
+- `bge-m3` - **Multilingual**, excellent quality (1024 dims)
+- `mxbai-embed-large` - Higher quality, slower (1024 dims)
+- `all-minilm` - Very fast, lower quality (384 dims)
+
+**For multilingual codebases** (comments in Korean, French, etc.):
+
+```yaml
+embedder:
+  provider: ollama
+  model: nomic-embed-text-v2-moe  # Supports ~100 languages
+  endpoint: http://localhost:11434
+  dimensions: 768
+```
 
 ### LM Studio (Local)
 

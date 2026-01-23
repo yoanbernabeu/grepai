@@ -48,13 +48,30 @@ embedder:
 
 ### Available Models
 
-| Model | Dimensions | Speed | Quality |
-|-------|------------|-------|---------|
-| `nomic-embed-text` | 768 | Fast | Good |
-| `mxbai-embed-large` | 1024 | Medium | Better |
-| `all-minilm` | 384 | Very Fast | Basic |
-| `qwen3-embedding:0.6b` | 1024 | Medium | Excellent |
-| `embeddinggemma` | 768 | Very Fast | Better |
+| Model | Dimensions | Speed | Quality | Languages |
+|-------|------------|-------|---------|-----------|
+| `nomic-embed-text` | 768 | Fast | Good | English |
+| `nomic-embed-text-v2-moe` | 768 | Fast | Better | ~100 languages |
+| `bge-m3` | 1024 | Medium | Excellent | ~100 languages |
+| `mxbai-embed-large` | 1024 | Medium | Better | English |
+| `all-minilm` | 384 | Very Fast | Basic | English |
+
+### Multilingual Support
+
+The default model `nomic-embed-text` is optimized for English. For non-English codebases or mixed-language projects (Korean, Chinese, French, etc.), use a multilingual model.
+
+**Recommended:** `nomic-embed-text-v2-moe` — same dimensions (768) as the default, making it a drop-in replacement.
+
+```bash
+ollama pull nomic-embed-text-v2-moe
+```
+
+```yaml
+embedder:
+  provider: ollama
+  model: nomic-embed-text-v2-moe
+  dimensions: 768
+```
 
 ### Troubleshooting
 
@@ -160,6 +177,42 @@ For a typical codebase:
 - 10,000 lines of code ≈ 50,000 tokens
 - Initial index: ~$0.001 with `text-embedding-3-small`
 - Ongoing updates: negligible
+
+## Changing Embedding Models
+
+You can use any embedding model available on your provider. Two parameters matter:
+
+| Parameter    | Description                                       |
+|--------------|---------------------------------------------------|
+| `model`      | The exact model name as expected by the provider  |
+| `dimensions` | The vector size produced by the model             |
+
+### Finding Model Dimensions
+
+Each embedding model produces vectors of a fixed size. Using incorrect dimensions causes errors or poor results.
+
+**For Ollama:**
+
+```bash
+curl -s http://localhost:11434/api/embeddings \
+  -d '{"model": "MODEL_NAME", "prompt": "test"}' | jq '.embedding | length'
+```
+
+**For LM Studio:**
+
+```bash
+curl -s http://127.0.0.1:1234/v1/embeddings \
+  -d '{"model": "MODEL_NAME", "input": ["test"]}' | jq '.data[0].embedding | length'
+```
+
+### Re-indexing After Model Change
+
+**Important:** Embeddings from different models are incompatible. After changing models, you must re-index:
+
+```bash
+rm -rf .grepai/index.gob .grepai/symbols.gob
+grepai watch
+```
 
 ## Adding a New Embedder
 
