@@ -30,12 +30,20 @@ embedder:
 
 # Vector store configuration
 store:
-  # Backend: "gob" (file-based) or "postgres" (PostgreSQL with pgvector)
+  # Backend: "gob" (file-based), "postgres" (PostgreSQL with pgvector), or "qdrant"
   backend: gob
 
   # PostgreSQL settings (if using postgres backend)
   postgres:
     dsn: postgres://user:pass@localhost:5432/grepai
+
+  # Qdrant settings (if using qdrant backend)
+  qdrant:
+    endpoint: localhost
+    port: 6334
+    use_tls: false
+    collection: ""  # Optional, defaults to sanitized project path
+    api_key: ""     # Optional, for Qdrant Cloud
 
 # Chunking configuration
 chunking:
@@ -184,6 +192,29 @@ Setup:
 ```sql
 CREATE EXTENSION vector;
 ```
+
+### Qdrant
+
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: localhost
+    port: 6334
+    use_tls: false
+```
+
+Best for:
+- High-performance vector search
+- Docker-based environments
+- Teams already using Qdrant
+
+Setup:
+```bash
+docker compose --profile=qdrant up -d
+```
+
+See [Vector Stores](/grepai/backends/stores/) for detailed configuration options.
 
 ## Chunking Tuning
 

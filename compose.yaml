@@ -15,6 +15,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    profiles:
+      - postgres
+
+  # Optional: Qdrant for vector storage
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_local
+    ports:
+      - "6333:6333" # API HTTP & Dashboard
+      - "6334:6334" # API gRPC
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    profiles:
+      - qdrant
 
   # Optional: Ollama for local embeddings (Linux only)
   # Uncomment the following to run Ollama in Docker

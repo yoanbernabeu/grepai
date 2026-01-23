@@ -11,6 +11,7 @@ Vector stores persist the embeddings and enable similarity search.
 |---------|------|------|------|
 | GOB | File-based | Simple, no setup | Single machine only |
 | PostgreSQL | Database | Scalable, team-friendly | Requires PostgreSQL + pgvector |
+| Qdrant | Vector DB | Scalable, purpose-built for vectors | Requires Docker or Qdrant Cloud |
 
 ## GOB (File-based)
 
@@ -124,6 +125,73 @@ store:
 - Large codebases (100k+ lines)
 - Production deployments
 - When you need SQL queries on metadata
+
+## Qdrant
+
+Run Qdrant locally from compose.yml:
+```bash
+docker compose --profile=qdrant up
+```
+
+Initialize with Qdrant:
+```bash
+grepai init --backend qdrant
+```
+
+Configuration example:
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "localhost"  # or "localhost" (scheme auto-detected from use_tls)
+    port: 6334                 # gRPC port (default: 6334)
+    use_tls: false               # Enable TLS (required for Qdrant Cloud)
+    collection: "myproject"       # optional
+    api_key: ""                 # optional (for Qdrant Cloud)
+```
+
+**Local Qdrant:**
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "localhost"
+    port: 6334
+    use_tls: false
+```
+
+**Qdrant Cloud:**
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: "your-cluster.qdrant.io"
+    port: 443
+    use_tls: true
+    api_key: "your-api-key"
+```
+
+Note: Collection names are automatically sanitized from the project path (replaces `/` with `_`). If no collection is specified, the sanitized project path is used.
+
+### Characteristics
+
+- **Pros**:
+  - Purpose-built for vector search
+  - High performance with HNSW indexing
+  - Easy Docker setup
+  - Built-in dashboard (http://localhost:6333/dashboard)
+  - Supports filtering and metadata
+
+- **Cons**:
+  - Requires Docker or Qdrant Cloud
+  - Additional service to manage
+
+### Best For
+
+- Projects needing high-performance vector search
+- Docker-based development environments
+- Teams already using Qdrant
+- When you want a dedicated vector database
 
 ## Adding a New Store
 

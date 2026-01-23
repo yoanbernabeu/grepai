@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-01-22
+
+### Added
+
+- **Watcher Performance Optimization**: Skip unchanged files on subsequent launches (#62)
+  - New `last_index_time` field in configuration tracks last indexing timestamp
+  - Files with ModTime before `last_index_time` are skipped, avoiding unnecessary embeddings
+  - Config write throttling (30s) prevents file system overload during active development
+  - Significantly faster subsequent `grepai watch` launches (~1ms vs ~100ms for unchanged codebases)
+  - Fully backward compatible: old configs work normally, optimization kicks in after first watch
+
+### Changed
+
+- `Indexer` now accepts `lastIndexTime` parameter for ModTime-based file skipping
+- `runInitialScan` returns `IndexStats` to enable conditional config updates
+
+## [0.18.0] - 2026-01-21
+
+### Added
+
+- **Qdrant Vector Store Backend**: New storage backend using Qdrant vector database (#57)
+  - Support for local Qdrant (Docker) and Qdrant Cloud
+  - gRPC connection with TLS support
+  - Automatic collection creation and management
+  - Docker Compose profile for easy local setup: `docker compose --profile=qdrant up`
+  - Configuration options: endpoint, port, TLS, API key, collection name
+
+### Fixed
+
+- **Qdrant Backend Improvements**: Various fixes and improvements
+  - Fixed default port display in `grepai init` prompt (6333 → 6334 for gRPC)
+  - Added UTF-8 sanitization to prevent indexing errors on files with invalid characters
+  - Added `qdrant_storage` to default ignore patterns
+  - Updated CLI help to include qdrant in backend options
+  - Fixed typo in compose.yaml ("Optionnal" → "Optional")
+
+## [0.17.0] - 2026-01-21
+
+### Added
+
+- **Cursor Rules Support**: `grepai agent-setup` now supports `.cursor/rules` configuration file (#59)
+  - `.cursor/rules` (Cursor's current standard) takes priority over deprecated `.cursorrules`
+  - Backwards compatibility maintained for existing `.cursorrules` files
+  - Both files are configured if present (idempotence handled by marker detection)
+
 ## [0.16.1] - 2026-01-18
 
 ### Fixed
@@ -267,7 +312,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/yoanbernabeu/grepai/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/yoanbernabeu/grepai/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/yoanbernabeu/grepai/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/yoanbernabeu/grepai/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/yoanbernabeu/grepai/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/yoanbernabeu/grepai/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/yoanbernabeu/grepai/compare/v0.14.0...v0.15.0

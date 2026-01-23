@@ -580,6 +580,12 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 		return gobStore, nil
 	case "postgres":
 		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, s.projectRoot, cfg.Embedder.Dimensions)
+	case "qdrant":
+		collectionName := cfg.Store.Qdrant.Collection
+		if collectionName == "" {
+			collectionName = store.SanitizeCollectionName(s.projectRoot)
+		}
+		return store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.Dimensions)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
 	}

@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project specific
 .grepai/
+qdrant_storage/
 
 # Build
 bin/

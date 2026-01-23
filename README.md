@@ -253,6 +253,7 @@ export OPENAI_API_KEY=sk-...
 
 - **GOB (Default)**: File-based, zero config
 - **PostgreSQL + pgvector**: For large monorepos
+- **Qdrant**: Docker-based vector database
 
 ## Requirements
 

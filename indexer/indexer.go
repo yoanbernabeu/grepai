@@ -11,11 +11,12 @@ import (
 )
 
 type Indexer struct {
-	root     string
-	store    store.VectorStore
-	embedder embedder.Embedder
-	chunker  *Chunker
-	scanner  *Scanner
+	root          string
+	store         store.VectorStore
+	embedder      embedder.Embedder
+	chunker       *Chunker
+	scanner       *Scanner
+	lastIndexTime time.Time
 }
 
 type IndexStats struct {
@@ -42,13 +43,15 @@ func NewIndexer(
 	emb embedder.Embedder,
 	chunker *Chunker,
 	scanner *Scanner,
+	lastIndexTime time.Time,
 ) *Indexer {
 	return &Indexer{
-		root:     root,
-		store:    st,
-		embedder: emb,
-		chunker:  chunker,
-		scanner:  scanner,
+		root:          root,
+		store:         st,
+		embedder:      emb,
+		chunker:       chunker,
+		scanner:       scanner,
+		lastIndexTime: lastIndexTime,
 	}
 }
 
@@ -91,6 +94,16 @@ func (idx *Indexer) IndexAllWithProgress(ctx context.Context, onProgress Progres
 				Total:       total,
 				CurrentFile: file.Path,
 			})
+		}
+
+		// Skip files modified before lastIndexTime
+		if !idx.lastIndexTime.IsZero() {
+			fileModTime := time.Unix(file.ModTime, 0)
+			if fileModTime.Before(idx.lastIndexTime) || fileModTime.Equal(idx.lastIndexTime) {
+				stats.FilesSkipped++
+				delete(existingMap, file.Path)
+				continue
+			}
 		}
 
 		// Check if file needs reindexing

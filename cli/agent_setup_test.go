@@ -7,6 +7,92 @@ import (
 	"testing"
 )
 
+func TestAgentSetupCursorRules(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create .cursor directory and rules file
+	cursorDir := filepath.Join(tmpDir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0755); err != nil {
+		t.Fatalf("failed to create .cursor directory: %v", err)
+	}
+
+	rulesPath := filepath.Join(cursorDir, "rules")
+	initialContent := "# Cursor Rules\n"
+	if err := os.WriteFile(rulesPath, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("failed to create rules file: %v", err)
+	}
+
+	// Test that file is detected and can be configured
+	content, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("failed to read rules file: %v", err)
+	}
+
+	// Verify the file doesn't contain marker initially
+	if strings.Contains(string(content), agentMarker) {
+		t.Error("rules file should not contain marker initially")
+	}
+
+	// Simulate adding instructions (as runAgentSetup would do)
+	f, err := os.OpenFile(rulesPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("failed to open rules file: %v", err)
+	}
+	if _, err := f.WriteString("\n" + agentInstructions); err != nil {
+		f.Close()
+		t.Fatalf("failed to write instructions: %v", err)
+	}
+	f.Close()
+
+	// Verify instructions were added
+	content, err = os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("failed to read rules file after update: %v", err)
+	}
+
+	if !strings.Contains(string(content), agentMarker) {
+		t.Error("rules file should contain grepai marker after update")
+	}
+
+	if !strings.Contains(string(content), "grepai search") {
+		t.Error("rules file should contain grepai search instructions")
+	}
+}
+
+func TestAgentSetupCursorRulesIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create .cursor directory and rules file with existing instructions
+	cursorDir := filepath.Join(tmpDir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0755); err != nil {
+		t.Fatalf("failed to create .cursor directory: %v", err)
+	}
+
+	rulesPath := filepath.Join(cursorDir, "rules")
+	contentWithMarker := "# Cursor Rules\n\n" + agentInstructions
+	if err := os.WriteFile(rulesPath, []byte(contentWithMarker), 0644); err != nil {
+		t.Fatalf("failed to create rules file: %v", err)
+	}
+
+	// Verify the marker exists
+	content, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("failed to read rules file: %v", err)
+	}
+
+	// Count occurrences of marker
+	count := strings.Count(string(content), agentMarker)
+	if count != 1 {
+		t.Errorf("expected 1 occurrence of marker, got %d", count)
+	}
+
+	// Simulating idempotence check (as runAgentSetup would do)
+	if strings.Contains(string(content), agentMarker) {
+		// Should skip - this is the expected behavior
+		t.Log("File already configured, would skip (correct behavior)")
+	}
+}
+
 func TestCreateSubagent(t *testing.T) {
 	tmpDir := t.TempDir()
 

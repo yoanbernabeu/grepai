@@ -153,7 +153,7 @@ var agentSetupCmd = &cobra.Command{
 	Long: `Configure AI agent environments to leverage grepai for context retrieval.
 
 This command will:
-- Detect agent configuration files (.cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md, AGENTS.md)
+- Detect agent configuration files (.cursor/rules, .cursorrules, .windsurfrules, CLAUDE.md, GEMINI.md, AGENTS.md)
 - Append instructions for using grepai search
 - Ensure idempotence (won't add duplicate instructions)
 
@@ -175,7 +175,8 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	agentFiles := []string{
-		".cursorrules",
+		".cursor/rules", // Current standard (priority)
+		".cursorrules",  // Backwards compatibility
 		".windsurfrules",
 		"CLAUDE.md",
 		".claude/settings.md",

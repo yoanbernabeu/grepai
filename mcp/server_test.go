@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -171,5 +172,50 @@ func TestNonCompactSearchResult(t *testing.T) {
 	// Verify score is present and non-zero
 	if !strings.Contains(jsonStr, "0.87") {
 		t.Errorf("Non-compact JSON should contain score value, got: %s", jsonStr)
+	}
+}
+
+// TestServerCreateStore_GOBBackend tests createStore with gob backend
+func TestServerCreateStore_GOBBackend(t *testing.T) {
+	s := &Server{
+		projectRoot: "/tmp/test-project",
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Store.Backend = "gob"
+
+	ctx := context.Background()
+	store, err := s.createStore(ctx, cfg)
+
+	if err != nil {
+		t.Fatalf("createStore returned error: %v", err)
+	}
+
+	if store == nil {
+		t.Error("expected non-nil store")
+	}
+
+	_ = store.Close()
+}
+
+// TestServerCreateStore_UnknownBackend tests that createStore returns error for unknown backend
+func TestServerCreateStore_UnknownBackend(t *testing.T) {
+	s := &Server{
+		projectRoot: "/tmp/test-project",
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Store.Backend = "unknown-backend"
+
+	ctx := context.Background()
+	_, err := s.createStore(ctx, cfg)
+
+	if err == nil {
+		t.Fatal("expected error for unknown backend, got nil")
+	}
+
+	expected := "unknown storage backend: unknown-backend"
+	if err.Error() != expected {
+		t.Errorf("expected error message %s, got %s", expected, err.Error())
 	}
 }
