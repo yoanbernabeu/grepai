@@ -93,6 +93,8 @@ var SupportedExtensions = map[string]bool{
 	".proto":  true,
 	".tf":     true,
 	".hcl":    true,
+	".pas":    true, // Pascal source file
+	".dpr":    true, // Delphi project file
 }
 
 type FileInfo struct {

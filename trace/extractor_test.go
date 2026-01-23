@@ -28,6 +28,8 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".hxx":  true,
 		".java": true,
 		".cs":   true,
+		".pas":  true,
+		".dpr":  true,
 	}
 
 	for _, lang := range langs {

@@ -76,6 +76,8 @@ The watcher indexes files with these extensions:
 | Zig | `.zig` |
 | Java | `.java` |
 | Ruby | `.rb` |
+| C# | `.cs` |
+| Pascal/Delphi | `.pas`, `.dpr` |
 
 ### What Gets Skipped
 

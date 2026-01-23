@@ -48,6 +48,8 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".hxx":  cppPatterns,
 	".java": javaPatterns,
 	".cs":   csharpPatterns,
+	".pas":  pascalPatterns,
+	".dpr":  pascalPatterns,
 }
 
 // Go patterns
@@ -284,6 +286,29 @@ var languageKeywords = map[string]map[string]bool{
 		"yield": true, "lock": true, "this": true, "base": true,
 		"add": true, "remove": true, "toString": true, "equals": true, "getHashCode": true,
 	},
+	"pascal": {
+		// Control flow
+		"if": true, "then": true, "else": true, "case": true, "of": true,
+		"for": true, "to": true, "downto": true, "while": true, "do": true,
+		"repeat": true, "until": true, "with": true, "goto": true,
+		// Exception handling
+		"try": true, "except": true, "finally": true, "raise": true, "on": true,
+		// Logical operators
+		"not": true, "and": true, "or": true, "xor": true, "in": true, "is": true, "as": true,
+		// Arithmetic operators
+		"div": true, "mod": true, "shl": true, "shr": true,
+		// Keywords and constants
+		"nil": true, "true": true, "false": true, "self": true, "inherited": true, "result": true,
+		// Common built-in procedures/functions
+		"writeln": true, "write": true, "readln": true, "read": true,
+		"inc": true, "dec": true, "length": true, "setlength": true,
+		"high": true, "low": true, "sizeof": true, "assigned": true,
+		"new": true, "dispose": true, "freemem": true, "getmem": true,
+		"exit": true, "break": true, "continue": true, "halt": true,
+		"ord": true, "chr": true, "pred": true, "succ": true,
+		"copy": true, "delete": true, "insert": true, "pos": true,
+		"trunc": true, "round": true, "abs": true, "sqr": true, "sqrt": true,
+	},
 }
 
 // C patterns
@@ -481,6 +506,48 @@ var csharpPatterns = &LanguagePatterns{
 	},
 	FunctionCall: regexp.MustCompile(`\b(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(`),
 	MethodCall:   regexp.MustCompile(`(?:\.|\?\.|::)\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(`),
+}
+
+// Pascal/Delphi patterns
+var pascalPatterns = &LanguagePatterns{
+	Extension: ".pas",
+	Language:  "pascal",
+	Functions: []*regexp.Regexp{
+		// function FunctionName(params): ReturnType;
+		regexp.MustCompile(`(?mi)^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s*;`),
+		// procedure ProcedureName(params);
+		regexp.MustCompile(`(?mi)^\s*procedure\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*;`),
+	},
+	Methods: []*regexp.Regexp{
+		// function TClassName.MethodName(params): ReturnType;
+		regexp.MustCompile(`(?mi)^\s*function\s+[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s*;`),
+		// procedure TClassName.MethodName(params);
+		regexp.MustCompile(`(?mi)^\s*procedure\s+[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*;`),
+	},
+	Classes: []*regexp.Regexp{
+		// TClassName = class(TParent)
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*class\s*(?:\([A-Za-z_][A-Za-z0-9_]*\))?\s*$`),
+		// TClassName = class
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*class\s*$`),
+	},
+	Interfaces: []*regexp.Regexp{
+		// IInterfaceName = interface
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*interface\s*(?:\([A-Za-z_][A-Za-z0-9_]*\))?`),
+	},
+	Types: []*regexp.Regexp{
+		// TTypeName = record
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*record\s*$`),
+		// TTypeName = packed record
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*packed\s+record\s*$`),
+		// TEnumName = (value1, value2, ...)
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\([A-Za-z_][A-Za-z0-9_,\s]*\)\s*;`),
+		// TTypeName = type BaseType
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*type\s+[A-Za-z_][A-Za-z0-9_]*\s*;`),
+		// TArrayType = array of Type
+		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*array\s+of\s+[A-Za-z_][A-Za-z0-9_]*\s*;`),
+	},
+	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 }
 
 // IsKeyword checks if a name is a language keyword.

@@ -78,6 +78,9 @@ trace:
     - .cxx
     - .rs
     - .zig
+    - .cs
+    - .pas
+    - .dpr
   # Patterns to exclude from symbol indexing
   exclude_patterns:
     - "*_test.go"

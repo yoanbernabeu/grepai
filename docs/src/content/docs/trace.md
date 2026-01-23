@@ -72,6 +72,8 @@ grepai trace callers "MyFunction" --mode precise
 | C++ | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx` | Good |
 | Zig | `.zig` | Good |
 | Rust | `.rs` | Good |
+| C# | `.cs` | Good |
+| Pascal/Delphi | `.pas`, `.dpr` | Good |
 
 ### JSON Output
 
@@ -123,6 +125,9 @@ trace:
     - .cxx
     - .rs
     - .zig
+    - .cs
+    - .pas
+    - .dpr
   exclude_patterns:
     - "*_test.go"
     - "*.spec.ts"
