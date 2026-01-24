@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-01-24
+
+### Added
+
+- **Multi-Project Workspace Support**: Index and search across multiple projects with shared vector store (#75) - @yoanbernabeu
+  - New `grepai workspace` command for managing workspaces:
+    - `workspace create <name>` - Create a new workspace with store/embedder configuration
+    - `workspace add <workspace> <path>` - Add a project to a workspace
+    - `workspace remove <workspace> <project>` - Remove a project from a workspace
+    - `workspace list` - List all configured workspaces
+    - `workspace show <name>` - Show workspace details and projects
+    - `workspace status <name>` - Show indexing status per project
+    - `workspace delete <name>` - Delete a workspace
+  - Extended `grepai watch` with `--workspace` flag for multi-project indexing
+    - Background daemon mode: `grepai watch --workspace <name> --background`
+    - Status check: `grepai watch --workspace <name> --status`
+    - Stop daemon: `grepai watch --workspace <name> --stop`
+  - Extended `grepai search` with `--workspace` and `--project` flags
+    - Cross-project search: `grepai search --workspace <name> "query"`
+    - Scoped search: `grepai search --workspace <name> --project frontend "query"`
+  - Extended MCP server with `workspace` and `projects` parameters for `grepai_search`
+  - Global workspace configuration stored in `~/.grepai/workspace.yaml`
+  - Path prefixing format: `workspaceName/projectName/relativePath` for isolation
+  - Requires PostgreSQL or Qdrant backend (GOB not supported for shared storage)
+  - 100% backward compatible: existing single-project workflows unchanged
+
+### Documentation
+
+- New workspace management documentation page
+- Blog post announcing multi-project workspace feature
+
 ## [0.21.0] - 2026-01-23
 
 ### Added
@@ -355,7 +386,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/yoanbernabeu/grepai/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/yoanbernabeu/grepai/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/yoanbernabeu/grepai/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/yoanbernabeu/grepai/compare/v0.19.0...v0.20.0
