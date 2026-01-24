@@ -37,7 +37,7 @@ sudo mv ./bin/grepai /usr/local/bin/
 Run the following command in your PowerShell terminal to install `grepai` automatically:
 
 ```powershell
-powershell -ExecutionPolicy ByPass -Command "iwr -useb '[https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1](https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1)' | iex"
+irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
 ## Install Ollama (Recommended)
