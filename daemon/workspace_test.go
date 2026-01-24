@@ -113,7 +113,8 @@ func TestWorkspacePIDFunctions(t *testing.T) {
 }
 
 func TestWorkspaceFileNaming(t *testing.T) {
-	logDir := "/var/log/grepai"
+	// Use a temp directory for cross-platform compatibility
+	logDir := filepath.Join("var", "log", "grepai")
 
 	tests := []struct {
 		name          string
@@ -125,23 +126,23 @@ func TestWorkspaceFileNaming(t *testing.T) {
 		{
 			name:          "simple_name",
 			workspaceName: "myworkspace",
-			wantPID:       "/var/log/grepai/grepai-workspace-myworkspace.pid",
-			wantLog:       "/var/log/grepai/grepai-workspace-myworkspace.log",
-			wantReady:     "/var/log/grepai/grepai-workspace-myworkspace.ready",
+			wantPID:       filepath.Join(logDir, "grepai-workspace-myworkspace.pid"),
+			wantLog:       filepath.Join(logDir, "grepai-workspace-myworkspace.log"),
+			wantReady:     filepath.Join(logDir, "grepai-workspace-myworkspace.ready"),
 		},
 		{
 			name:          "name_with_hyphen",
 			workspaceName: "my-workspace",
-			wantPID:       "/var/log/grepai/grepai-workspace-my-workspace.pid",
-			wantLog:       "/var/log/grepai/grepai-workspace-my-workspace.log",
-			wantReady:     "/var/log/grepai/grepai-workspace-my-workspace.ready",
+			wantPID:       filepath.Join(logDir, "grepai-workspace-my-workspace.pid"),
+			wantLog:       filepath.Join(logDir, "grepai-workspace-my-workspace.log"),
+			wantReady:     filepath.Join(logDir, "grepai-workspace-my-workspace.ready"),
 		},
 		{
 			name:          "name_with_underscore",
 			workspaceName: "my_workspace",
-			wantPID:       "/var/log/grepai/grepai-workspace-my_workspace.pid",
-			wantLog:       "/var/log/grepai/grepai-workspace-my_workspace.log",
-			wantReady:     "/var/log/grepai/grepai-workspace-my_workspace.ready",
+			wantPID:       filepath.Join(logDir, "grepai-workspace-my_workspace.pid"),
+			wantLog:       filepath.Join(logDir, "grepai-workspace-my_workspace.log"),
+			wantReady:     filepath.Join(logDir, "grepai-workspace-my_workspace.ready"),
 		},
 	}
 

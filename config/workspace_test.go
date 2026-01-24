@@ -3,8 +3,25 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// setTestHomeDir sets the home directory for testing in a cross-platform way.
+// On Windows, os.UserHomeDir() uses USERPROFILE, not HOME.
+func setTestHomeDir(t *testing.T, dir string) func() {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		original := os.Getenv("USERPROFILE")
+		os.Setenv("USERPROFILE", dir)
+		return func() { os.Setenv("USERPROFILE", original) }
+	}
+
+	original := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	return func() { os.Setenv("HOME", original) }
+}
 
 func TestWorkspaceConfigOperations(t *testing.T) {
 	// Create temp directory for test config
@@ -14,10 +31,9 @@ func TestWorkspaceConfigOperations(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	// Override home directory for test (cross-platform)
+	cleanup := setTestHomeDir(t, tmpDir)
+	defer cleanup()
 
 	// Test DefaultWorkspaceConfig
 	t.Run("DefaultWorkspaceConfig", func(t *testing.T) {
@@ -278,7 +294,8 @@ func TestWorkspaceConfigOperations(t *testing.T) {
 		emptyDir, _ := os.MkdirTemp("", "grepai-empty")
 		defer os.RemoveAll(emptyDir)
 
-		os.Setenv("HOME", emptyDir)
+		cleanupEmpty := setTestHomeDir(t, emptyDir)
+		defer cleanupEmpty()
 
 		cfg, err := LoadWorkspaceConfig()
 		if err != nil {
@@ -356,9 +373,8 @@ func TestGetGlobalConfigDir(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	cleanup := setTestHomeDir(t, tmpDir)
+	defer cleanup()
 
 	dir, err := GetGlobalConfigDir()
 	if err != nil {
@@ -378,9 +394,8 @@ func TestGetWorkspaceConfigPath(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	cleanup := setTestHomeDir(t, tmpDir)
+	defer cleanup()
 
 	path, err := GetWorkspaceConfigPath()
 	if err != nil {
