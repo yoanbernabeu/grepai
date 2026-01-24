@@ -2,121 +2,101 @@
 // The Problem Section - Pain points that grepai solves
 ---
 
-<section class="py-20 px-4">
+<section class="py-20 px-4 border-t border-glass-border">
   <div class="max-w-6xl mx-auto">
     <!-- Section header -->
     <div class="text-center mb-16">
+      <div class="inline-flex items-center gap-3 mb-6 px-4 py-2 rounded-full glass text-sm">
+        <span class="text-gray-500">grep</span>
+        <span class="text-gray-600">1973</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+        <span class="text-primary-400 font-medium">grepai</span>
+        <span class="text-primary-400">2026</span>
+      </div>
       <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-        The problem with code search today
+        grep for the AI era
       </h2>
       <p class="text-gray-400 text-lg max-w-2xl mx-auto">
-        Traditional tools don't understand what your code <em>does</em>. They only match text.
+        50 years ago, grep revolutionized text search. Today, your codebase needs <em class="text-white not-italic">semantic</em> understanding.
       </p>
     </div>
 
-    <!-- Comparison grid -->
-    <div class="grid md:grid-cols-2 gap-8 mb-16">
-      <!-- Without grepai -->
-      <div class="glass p-8 rounded-2xl border-red-500/20">
-        <div class="flex items-center gap-3 mb-6">
-          <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400">
-              <circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>
-            </svg>
+    <!-- Live comparison terminals -->
+    <div class="grid md:grid-cols-2 gap-6 mb-16">
+      <!-- grep terminal -->
+      <div class="rounded-xl overflow-hidden border border-red-500/20">
+        <div class="bg-gray-900 px-4 py-2 flex items-center gap-2 border-b border-gray-800">
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
           </div>
-          <h3 class="text-xl font-semibold text-white">Without grepai</h3>
+          <span class="text-gray-500 text-xs ml-2 font-mono">grep</span>
         </div>
-        <ul class="space-y-4">
-          <li class="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 mt-0.5 flex-shrink-0">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-            <div>
-              <code class="text-red-300 text-sm">grep -r "auth"</code>
-              <p class="text-gray-400 text-sm mt-1">Returns 847 lines of noise</p>
-            </div>
-          </li>
-          <li class="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 mt-0.5 flex-shrink-0">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-            <div>
-              <span class="text-gray-300">AI reads entire files</span>
-              <p class="text-gray-400 text-sm mt-1">Wastes context window on irrelevant code</p>
-            </div>
-          </li>
-          <li class="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 mt-0.5 flex-shrink-0">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-            <div>
-              <span class="text-gray-300">No dependency awareness</span>
-              <p class="text-gray-400 text-sm mt-1">Can't trace who calls what</p>
-            </div>
-          </li>
-          <li class="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-400 mt-0.5 flex-shrink-0">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-            <div>
-              <span class="text-gray-300">Requires exact keywords</span>
-              <p class="text-gray-400 text-sm mt-1">Miss results if naming differs</p>
-            </div>
-          </li>
-        </ul>
+        <div class="bg-gray-950 p-4 font-mono text-sm h-48 flex flex-col">
+          <p class="text-gray-400">$ grep -r "auth" .</p>
+          <div class="mt-2 text-gray-500 text-xs space-y-0.5 flex-grow overflow-hidden">
+            <p>./src/utils/string.ts:42: // authorize string</p>
+            <p>./src/components/Header.tsx:8: author="John"</p>
+            <p>./src/lib/oauth.ts:15: authToken = null</p>
+            <p>./src/config.ts:3: // authentication config</p>
+            <p>./src/api/user.ts:89: reauthorize()</p>
+            <p class="text-gray-600">... 841 more results</p>
+          </div>
+          <p class="text-red-400 text-xs pt-2 border-t border-gray-800">847 results. Where's the actual auth logic?</p>
+        </div>
       </div>
 
-      <!-- With grepai -->
-      <div class="glass p-8 rounded-2xl border-green-500/20 relative overflow-hidden">
-        <div class="absolute top-0 right-0 w-32 h-32 bg-green-500/10 rounded-full blur-3xl"></div>
-        <div class="relative">
-          <div class="flex items-center gap-3 mb-6">
-            <div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400">
-                <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/>
-              </svg>
-            </div>
-            <h3 class="text-xl font-semibold text-white">With grepai</h3>
+      <!-- grepai terminal -->
+      <div class="rounded-xl overflow-hidden border border-green-500/30 shadow-lg shadow-green-500/5">
+        <div class="bg-gray-900 px-4 py-2 flex items-center gap-2 border-b border-gray-800">
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
           </div>
-          <ul class="space-y-4">
-            <li class="flex items-start gap-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400 mt-0.5 flex-shrink-0">
-                <path d="M20 6 9 17l-5-5"/>
-              </svg>
-              <div>
-                <code class="text-green-300 text-sm">grepai search "user login flow"</code>
-                <p class="text-gray-400 text-sm mt-1">Returns 5 relevant results, ranked by similarity</p>
-              </div>
-            </li>
-            <li class="flex items-start gap-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400 mt-0.5 flex-shrink-0">
-                <path d="M20 6 9 17l-5-5"/>
-              </svg>
-              <div>
-                <span class="text-gray-300">Semantic understanding</span>
-                <p class="text-gray-400 text-sm mt-1">Finds code by meaning, not keywords</p>
-              </div>
-            </li>
-            <li class="flex items-start gap-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400 mt-0.5 flex-shrink-0">
-                <path d="M20 6 9 17l-5-5"/>
-              </svg>
-              <div>
-                <span class="text-gray-300">Call graph tracing</span>
-                <p class="text-gray-400 text-sm mt-1">See callers, callees, and dependencies</p>
-              </div>
-            </li>
-            <li class="flex items-start gap-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400 mt-0.5 flex-shrink-0">
-                <path d="M20 6 9 17l-5-5"/>
-              </svg>
-              <div>
-                <span class="text-gray-300">Real-time indexing</span>
-                <p class="text-gray-400 text-sm mt-1">Index updates as you code</p>
-              </div>
-            </li>
-          </ul>
+          <span class="text-primary-400 text-xs ml-2 font-mono">grepai</span>
         </div>
+        <div class="bg-gray-950 p-4 font-mono text-sm h-48 flex flex-col">
+          <p class="text-gray-400">$ grepai search "user authentication flow"</p>
+          <div class="mt-2 text-xs space-y-2 flex-grow overflow-hidden">
+            <div class="border-l-2 border-green-500 pl-3">
+              <p class="text-green-400">src/auth/login.ts:23-45</p>
+              <p class="text-gray-400">handleUserLogin() - validates credentials</p>
+              <p class="text-gray-600">Score: 0.94</p>
+            </div>
+            <div class="border-l-2 border-green-500/60 pl-3">
+              <p class="text-green-400/80">src/middleware/session.ts:12-28</p>
+              <p class="text-gray-400">verifySession() - checks JWT token</p>
+              <p class="text-gray-600">Score: 0.87</p>
+            </div>
+          </div>
+          <p class="text-green-400 text-xs pt-2 border-t border-gray-800">2 results. Exactly what you need.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key differences -->
+    <div class="flex flex-wrap justify-center gap-4 md:gap-8 mb-16 text-sm">
+      <div class="flex items-center gap-2 text-gray-400">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-400">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+        <span>Search by <span class="text-white">meaning</span>, not keywords</span>
+      </div>
+      <div class="flex items-center gap-2 text-gray-400">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-400">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+        <span>Trace <span class="text-white">callers & callees</span></span>
+      </div>
+      <div class="flex items-center gap-2 text-gray-400">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-400">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+        <span><span class="text-white">Real-time</span> index updates</span>
       </div>
     </div>
 

@@ -26,6 +26,7 @@ var (
 	watchLogDir     string
 	watchStatus     bool
 	watchStop       bool
+	watchWorkspace  string
 )
 
 var watchCmd = &cobra.Command{
@@ -65,6 +66,7 @@ func init() {
 	watchCmd.Flags().StringVar(&watchLogDir, "log-dir", "", "Directory for log files (default: OS-specific)")
 	watchCmd.Flags().BoolVar(&watchStatus, "status", false, "Show background watcher status")
 	watchCmd.Flags().BoolVar(&watchStop, "stop", false, "Stop the background watcher")
+	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
 }
 
 func runWatch(cmd *cobra.Command, args []string) error {
@@ -91,6 +93,11 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get default log directory: %w", err)
 		}
+	}
+
+	// Workspace mode
+	if watchWorkspace != "" {
+		return runWorkspaceWatch(logDir)
 	}
 
 	// Handle --status flag
@@ -657,4 +664,622 @@ func printProgress(current, total int, filePath string) {
 
 	// Print with carriage return to overwrite previous line
 	fmt.Printf("\rIndexing [%s] %3.0f%% (%d/%d) %s", bar, percent, current, total, displayPath)
+}
+
+// runWorkspaceWatch handles workspace-level watch operations
+func runWorkspaceWatch(logDir string) error {
+	// Load workspace config
+	wsCfg, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load workspace config: %w", err)
+	}
+	if wsCfg == nil {
+		return fmt.Errorf("no workspaces configured; create one with: grepai workspace create <name>")
+	}
+
+	ws, err := wsCfg.GetWorkspace(watchWorkspace)
+	if err != nil {
+		return err
+	}
+
+	// Validate backend (GOB not supported for workspaces)
+	if err := config.ValidateWorkspaceBackend(ws); err != nil {
+		return err
+	}
+
+	// Handle --status flag
+	if watchStatus {
+		return showWorkspaceWatchStatus(logDir, ws)
+	}
+
+	// Handle --stop flag
+	if watchStop {
+		return stopWorkspaceWatchDaemon(logDir, watchWorkspace)
+	}
+
+	// Handle --background flag
+	if watchBackground {
+		return startBackgroundWorkspaceWatch(logDir, ws)
+	}
+
+	// Check if already running
+	pid, err := daemon.GetRunningWorkspacePID(logDir, watchWorkspace)
+	if err != nil {
+		return fmt.Errorf("failed to check running status: %w", err)
+	}
+	if pid > 0 {
+		return fmt.Errorf("workspace watcher is already running in background (PID %d)\nUse 'grepai watch --workspace %s --stop' to stop it", pid, watchWorkspace)
+	}
+
+	// Run in foreground mode
+	return runWorkspaceWatchForeground(logDir, ws)
+}
+
+func showWorkspaceWatchStatus(logDir string, ws *config.Workspace) error {
+	pid, err := daemon.GetRunningWorkspacePID(logDir, ws.Name)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	if pid == 0 {
+		fmt.Printf("Workspace %s: not running\n", ws.Name)
+		fmt.Printf("Log directory: %s\n", logDir)
+		return nil
+	}
+
+	fmt.Printf("Workspace %s: running\n", ws.Name)
+	fmt.Printf("PID: %d\n", pid)
+	fmt.Printf("Log directory: %s\n", logDir)
+	fmt.Printf("Log file: %s\n", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+	fmt.Printf("Projects: %d\n", len(ws.Projects))
+	for _, p := range ws.Projects {
+		fmt.Printf("  - %s: %s\n", p.Name, p.Path)
+	}
+
+	return nil
+}
+
+func stopWorkspaceWatchDaemon(logDir, workspaceName string) error {
+	pid, err := daemon.GetRunningWorkspacePID(logDir, workspaceName)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	if pid == 0 {
+		fmt.Printf("No background watcher is running for workspace %s\n", workspaceName)
+		return nil
+	}
+
+	fmt.Printf("Stopping workspace watcher %s (PID %d)...\n", workspaceName, pid)
+	if err := daemon.StopProcess(pid); err != nil {
+		return fmt.Errorf("failed to stop process: %w", err)
+	}
+
+	// Wait for process to stop
+	const shutdownTimeout = 30 * time.Second
+	const pollInterval = 500 * time.Millisecond
+	deadline := time.Now().Add(shutdownTimeout)
+
+	for time.Now().Before(deadline) {
+		if !daemon.IsProcessRunning(pid) {
+			break
+		}
+		time.Sleep(pollInterval)
+	}
+
+	if daemon.IsProcessRunning(pid) {
+		return fmt.Errorf("process did not stop within %v", shutdownTimeout)
+	}
+
+	if err := daemon.RemoveWorkspacePIDFile(logDir, workspaceName); err != nil {
+		return fmt.Errorf("failed to remove PID file: %w", err)
+	}
+
+	fmt.Printf("Workspace watcher %s stopped\n", workspaceName)
+	return nil
+}
+
+func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
+	// Check if already running
+	pid, err := daemon.GetRunningWorkspacePID(logDir, ws.Name)
+	if err != nil {
+		return fmt.Errorf("failed to check running status: %w", err)
+	}
+	if pid > 0 {
+		return fmt.Errorf("workspace watcher %s is already running (PID %d)", ws.Name, pid)
+	}
+
+	// Build extra args
+	var extraArgs []string
+	if watchLogDir != "" {
+		extraArgs = append(extraArgs, "--log-dir", watchLogDir)
+	}
+
+	// Spawn background process
+	childPID, err := daemon.SpawnWorkspaceBackground(logDir, ws.Name, extraArgs)
+	if err != nil {
+		return fmt.Errorf("failed to start background process: %w", err)
+	}
+
+	// Wait for process to become ready
+	const startupTimeout = 60 * time.Second
+	const pollInterval = 250 * time.Millisecond
+	deadline := time.Now().Add(startupTimeout)
+
+	for time.Now().Before(deadline) {
+		if daemon.IsWorkspaceReady(logDir, ws.Name) {
+			fmt.Printf("Workspace watcher %s started (PID %d)\n", ws.Name, childPID)
+			fmt.Printf("Logs: %s\n", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+			fmt.Printf("\nUse 'grepai watch --workspace %s --status' to check status\n", ws.Name)
+			fmt.Printf("Use 'grepai watch --workspace %s --stop' to stop the watcher\n", ws.Name)
+			return nil
+		}
+
+		if !daemon.IsProcessRunning(childPID) {
+			return fmt.Errorf("background process failed to start (check logs at %s)", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return fmt.Errorf("timeout waiting for process to become ready (check logs at %s)", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+}
+
+func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	isBackgroundChild := os.Getenv("GREPAI_BACKGROUND") == "1"
+
+	// If running in background, write PID file
+	if isBackgroundChild {
+		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+		log.SetPrefix(fmt.Sprintf("[grepai-workspace-%s] ", ws.Name))
+
+		if err := daemon.WriteWorkspacePIDFile(logDir, ws.Name); err != nil {
+			return fmt.Errorf("failed to write PID file: %w", err)
+		}
+		defer func() {
+			if err := daemon.RemoveWorkspacePIDFile(logDir, ws.Name); err != nil {
+				log.Printf("Warning: failed to remove PID file on exit: %v", err)
+			}
+		}()
+	}
+
+	if !isBackgroundChild {
+		fmt.Printf("Starting workspace watcher: %s\n", ws.Name)
+		fmt.Printf("Backend: %s\n", ws.Store.Backend)
+		fmt.Printf("Embedder: %s (%s)\n", ws.Embedder.Provider, ws.Embedder.Model)
+		fmt.Printf("Projects: %d\n", len(ws.Projects))
+	} else {
+		log.Printf("Starting workspace watcher: %s", ws.Name)
+		log.Printf("Backend: %s", ws.Store.Backend)
+		log.Printf("Embedder: %s (%s)", ws.Embedder.Provider, ws.Embedder.Model)
+		log.Printf("Projects: %d", len(ws.Projects))
+	}
+
+	// Check all project paths exist
+	for _, p := range ws.Projects {
+		if _, err := os.Stat(p.Path); os.IsNotExist(err) {
+			return fmt.Errorf("project path does not exist: %s (%s)", p.Name, p.Path)
+		}
+	}
+
+	// Initialize shared embedder
+	embCfg := &config.Config{Embedder: ws.Embedder}
+	emb, err := initializeEmbedder(ctx, embCfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize embedder: %w", err)
+	}
+	defer emb.Close()
+
+	// Initialize shared store with workspace-specific project ID
+	st, err := initializeWorkspaceStore(ctx, ws)
+	if err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+	defer st.Close()
+
+	// Index each project
+	for _, project := range ws.Projects {
+		if !isBackgroundChild {
+			fmt.Printf("\nIndexing project: %s (%s)\n", project.Name, project.Path)
+		} else {
+			log.Printf("Indexing project: %s (%s)", project.Name, project.Path)
+		}
+
+		if err := indexWorkspaceProject(ctx, project, ws, emb, st, isBackgroundChild); err != nil {
+			log.Printf("Warning: failed to index project %s: %v", project.Name, err)
+		}
+	}
+
+	// Write ready file
+	if isBackgroundChild {
+		if err := daemon.WriteWorkspaceReadyFile(logDir, ws.Name); err != nil {
+			return fmt.Errorf("failed to write ready file: %w", err)
+		}
+		defer func() {
+			if err := daemon.RemoveWorkspaceReadyFile(logDir, ws.Name); err != nil {
+				log.Printf("Warning: failed to remove ready file on exit: %v", err)
+			}
+		}()
+	}
+
+	// Start watchers for each project
+	watchers := make([]*watcher.Watcher, 0, len(ws.Projects))
+	for _, project := range ws.Projects {
+		// Load project-specific config or use defaults
+		projectCfg := config.DefaultConfig()
+		if config.Exists(project.Path) {
+			var err error
+			projectCfg, err = config.Load(project.Path)
+			if err != nil {
+				log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
+			}
+		}
+
+		ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+		if err != nil {
+			log.Printf("Warning: failed to create ignore matcher for %s: %v", project.Name, err)
+			continue
+		}
+
+		w, err := watcher.NewWatcher(project.Path, ignoreMatcher, projectCfg.Watch.DebounceMs)
+		if err != nil {
+			log.Printf("Warning: failed to create watcher for %s: %v", project.Name, err)
+			continue
+		}
+
+		if err := w.Start(ctx); err != nil {
+			log.Printf("Warning: failed to start watcher for %s: %v", project.Name, err)
+			w.Close()
+			continue
+		}
+
+		watchers = append(watchers, w)
+	}
+
+	defer func() {
+		for _, w := range watchers {
+			w.Close()
+		}
+	}()
+
+	// Handle signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	if !isBackgroundChild {
+		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(ws.Projects))
+	} else {
+		log.Printf("Watching %d projects for changes...", len(ws.Projects))
+	}
+
+	// Collect events from all watchers
+	eventChan := make(chan watcher.FileEvent, 100)
+	for _, w := range watchers {
+		go func(w *watcher.Watcher) {
+			for event := range w.Events() {
+				eventChan <- event
+			}
+		}(w)
+	}
+
+	// Event loop
+	persistTicker := time.NewTicker(30 * time.Second)
+	defer persistTicker.Stop()
+
+	for {
+		select {
+		case <-sigChan:
+			if !isBackgroundChild {
+				fmt.Println("\nShutting down...")
+			} else {
+				log.Println("Shutting down...")
+			}
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index on shutdown: %v", err)
+			}
+			return nil
+
+		case <-persistTicker.C:
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index: %v", err)
+			}
+
+		case event := <-eventChan:
+			handleWorkspaceFileEvent(ctx, ws, emb, st, event)
+		}
+	}
+}
+
+func initializeWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.VectorStore, error) {
+	// Use workspace name as project ID for shared store
+	projectID := "workspace:" + ws.Name
+
+	switch ws.Store.Backend {
+	case "postgres":
+		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.Dimensions)
+	case "qdrant":
+		collectionName := ws.Store.Qdrant.Collection
+		if collectionName == "" {
+			collectionName = "workspace_" + ws.Name
+		}
+		return store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.Dimensions)
+	default:
+		return nil, fmt.Errorf("unsupported backend for workspace: %s", ws.Store.Backend)
+	}
+}
+
+func indexWorkspaceProject(ctx context.Context, project config.ProjectEntry, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, isBackgroundChild bool) error {
+	// Load project-specific config or use defaults
+	projectCfg := config.DefaultConfig()
+	if config.Exists(project.Path) {
+		var err error
+		projectCfg, err = config.Load(project.Path)
+		if err != nil {
+			log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
+		}
+	}
+
+	// Initialize ignore matcher
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+	if err != nil {
+		return fmt.Errorf("failed to initialize ignore matcher: %w", err)
+	}
+
+	// Initialize scanner
+	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
+
+	// Initialize chunker
+	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
+
+	// Create a project-prefixed store wrapper
+	wrappedStore := &projectPrefixStore{
+		store:         st,
+		workspaceName: ws.Name,
+		projectName:   project.Name,
+		projectPath:   project.Path,
+	}
+
+	// Initialize indexer
+	idx := indexer.NewIndexer(project.Path, wrappedStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+
+	// Run initial scan
+	var stats *indexer.IndexStats
+	if !isBackgroundChild {
+		stats, err = idx.IndexAllWithProgress(ctx, func(info indexer.ProgressInfo) {
+			printProgress(info.Current, info.Total, project.Name+":"+info.CurrentFile)
+		})
+		fmt.Print("\r" + strings.Repeat(" ", 80) + "\r")
+	} else {
+		stats, err = idx.IndexAllWithProgress(ctx, nil)
+	}
+
+	if err != nil {
+		return fmt.Errorf("indexing failed: %w", err)
+	}
+
+	if !isBackgroundChild {
+		fmt.Printf("Project %s: %d files indexed, %d chunks created\n", project.Name, stats.FilesIndexed, stats.ChunksCreated)
+	} else {
+		log.Printf("Project %s: %d files indexed, %d chunks created", project.Name, stats.FilesIndexed, stats.ChunksCreated)
+	}
+
+	return nil
+}
+
+func handleWorkspaceFileEvent(ctx context.Context, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, event watcher.FileEvent) {
+	// Find which project this file belongs to
+	var matchedProject *config.ProjectEntry
+	for i := range ws.Projects {
+		if strings.HasPrefix(event.Path, ws.Projects[i].Path) {
+			matchedProject = &ws.Projects[i]
+			break
+		}
+	}
+
+	if matchedProject == nil {
+		log.Printf("Warning: received event for unknown project path: %s", event.Path)
+		return
+	}
+
+	log.Printf("[%s][%s] %s", matchedProject.Name, event.Type, event.Path)
+
+	// Load project config
+	projectCfg := config.DefaultConfig()
+	if config.Exists(matchedProject.Path) {
+		var err error
+		projectCfg, err = config.Load(matchedProject.Path)
+		if err != nil {
+			log.Printf("Warning: failed to load config for %s: %v", matchedProject.Name, err)
+		}
+	}
+
+	// Initialize components
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(matchedProject.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+	if err != nil {
+		log.Printf("Failed to create ignore matcher: %v", err)
+		return
+	}
+
+	scanner := indexer.NewScanner(matchedProject.Path, ignoreMatcher)
+	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
+
+	wrappedStore := &projectPrefixStore{
+		store:         st,
+		workspaceName: ws.Name,
+		projectName:   matchedProject.Name,
+		projectPath:   matchedProject.Path,
+	}
+
+	idx := indexer.NewIndexer(matchedProject.Path, wrappedStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+
+	switch event.Type {
+	case watcher.EventCreate, watcher.EventModify:
+		fileInfo, err := scanner.ScanFile(event.Path)
+		if err != nil {
+			log.Printf("Failed to scan %s: %v", event.Path, err)
+			return
+		}
+		if fileInfo == nil {
+			return
+		}
+
+		chunks, err := idx.IndexFile(ctx, *fileInfo)
+		if err != nil {
+			log.Printf("Failed to index %s: %v", event.Path, err)
+			return
+		}
+		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
+
+	case watcher.EventDelete, watcher.EventRename:
+		if err := idx.RemoveFile(ctx, event.Path); err != nil {
+			log.Printf("Failed to remove %s from index: %v", event.Path, err)
+			return
+		}
+		log.Printf("Removed %s from index", event.Path)
+	}
+}
+
+// projectPrefixStore wraps a VectorStore to prefix file paths with workspace and project name
+type projectPrefixStore struct {
+	store         store.VectorStore
+	workspaceName string
+	projectName   string
+	projectPath   string
+}
+
+// getPrefix returns the full prefix for this project (workspace/project)
+func (p *projectPrefixStore) getPrefix() string {
+	return p.workspaceName + "/" + p.projectName
+}
+
+func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chunk) error {
+	prefixedChunks := make([]store.Chunk, len(chunks))
+	for i, c := range chunks {
+		prefixedChunks[i] = c
+		// Determine the relative path
+		var relPath string
+		if filepath.IsAbs(c.FilePath) {
+			// Absolute path: compute relative from project path
+			var err error
+			relPath, err = filepath.Rel(p.projectPath, c.FilePath)
+			if err != nil {
+				relPath = c.FilePath // fallback
+			}
+		} else {
+			// Already relative
+			relPath = c.FilePath
+		}
+		// Prefix with project name
+		prefixedPath := p.getPrefix() + "/" + relPath
+		prefixedChunks[i].FilePath = prefixedPath
+		// Also update the chunk ID to include project prefix
+		// Original ID format is "filePath_index", we need to replace the filePath part
+		if idx := strings.LastIndex(c.ID, "_"); idx >= 0 {
+			prefixedChunks[i].ID = prefixedPath + c.ID[idx:]
+		}
+	}
+	return p.store.SaveChunks(ctx, prefixedChunks)
+}
+
+func (p *projectPrefixStore) DeleteByFile(ctx context.Context, filePath string) error {
+	var relPath string
+	if filepath.IsAbs(filePath) {
+		var err error
+		relPath, err = filepath.Rel(p.projectPath, filePath)
+		if err != nil {
+			relPath = filePath
+		}
+	} else {
+		relPath = filePath
+	}
+	prefixedPath := p.getPrefix() + "/" + relPath
+	return p.store.DeleteByFile(ctx, prefixedPath)
+}
+
+func (p *projectPrefixStore) Search(ctx context.Context, queryVector []float32, limit int) ([]store.SearchResult, error) {
+	return p.store.Search(ctx, queryVector, limit)
+}
+
+func (p *projectPrefixStore) GetDocument(ctx context.Context, filePath string) (*store.Document, error) {
+	var relPath string
+	if filepath.IsAbs(filePath) {
+		var err error
+		relPath, err = filepath.Rel(p.projectPath, filePath)
+		if err != nil {
+			relPath = filePath
+		}
+	} else {
+		relPath = filePath
+	}
+	prefixedPath := p.getPrefix() + "/" + relPath
+	return p.store.GetDocument(ctx, prefixedPath)
+}
+
+func (p *projectPrefixStore) SaveDocument(ctx context.Context, doc store.Document) error {
+	var relPath string
+	if filepath.IsAbs(doc.Path) {
+		var err error
+		relPath, err = filepath.Rel(p.projectPath, doc.Path)
+		if err != nil {
+			relPath = doc.Path
+		}
+	} else {
+		relPath = doc.Path
+	}
+	doc.Path = p.getPrefix() + "/" + relPath
+	return p.store.SaveDocument(ctx, doc)
+}
+
+func (p *projectPrefixStore) DeleteDocument(ctx context.Context, filePath string) error {
+	var relPath string
+	if filepath.IsAbs(filePath) {
+		var err error
+		relPath, err = filepath.Rel(p.projectPath, filePath)
+		if err != nil {
+			relPath = filePath
+		}
+	} else {
+		relPath = filePath
+	}
+	prefixedPath := p.getPrefix() + "/" + relPath
+	return p.store.DeleteDocument(ctx, prefixedPath)
+}
+
+func (p *projectPrefixStore) ListDocuments(ctx context.Context) ([]string, error) {
+	return p.store.ListDocuments(ctx)
+}
+
+func (p *projectPrefixStore) Load(ctx context.Context) error {
+	return p.store.Load(ctx)
+}
+
+func (p *projectPrefixStore) Persist(ctx context.Context) error {
+	return p.store.Persist(ctx)
+}
+
+func (p *projectPrefixStore) Close() error {
+	return p.store.Close()
+}
+
+func (p *projectPrefixStore) GetStats(ctx context.Context) (*store.IndexStats, error) {
+	return p.store.GetStats(ctx)
+}
+
+func (p *projectPrefixStore) ListFilesWithStats(ctx context.Context) ([]store.FileStats, error) {
+	return p.store.ListFilesWithStats(ctx)
+}
+
+func (p *projectPrefixStore) GetChunksForFile(ctx context.Context, filePath string) ([]store.Chunk, error) {
+	relPath, err := filepath.Rel(p.projectPath, filePath)
+	if err == nil {
+		filePath = p.getPrefix() + "/" + relPath
+	}
+	return p.store.GetChunksForFile(ctx, filePath)
+}
+
+func (p *projectPrefixStore) GetAllChunks(ctx context.Context) ([]store.Chunk, error) {
+	return p.store.GetAllChunks(ctx)
 }

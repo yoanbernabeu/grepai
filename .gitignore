@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project specific
 .grepai/
+.ph-launch/
 qdrant_storage/
 
 # Build

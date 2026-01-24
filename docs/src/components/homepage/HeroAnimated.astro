@@ -3,7 +3,35 @@ interface Props {
   version?: string;
 }
 
-const { version = "0.21.0" } = Astro.props;
+const { version = "0.22.0" } = Astro.props;
+
+// Fetch GitHub stats at build time for SSR fallback
+let stars = 750;
+let downloads = 0;
+
+try {
+  const [repoRes, releasesRes] = await Promise.all([
+    fetch("https://api.github.com/repos/yoanbernabeu/grepai", {
+      headers: { "User-Agent": "grepai-docs" }
+    }),
+    fetch("https://api.github.com/repos/yoanbernabeu/grepai/releases", {
+      headers: { "User-Agent": "grepai-docs" }
+    })
+  ]);
+
+  if (repoRes.ok) {
+    const data = await repoRes.json();
+    stars = data.stargazers_count;
+  }
+
+  if (releasesRes.ok) {
+    const releases = await releasesRes.json();
+    downloads = releases.reduce((total: number, release: any) =>
+      total + release.assets.reduce((sum: number, asset: any) => sum + asset.download_count, 0), 0);
+  }
+} catch (e) {
+  // Use fallback
+}
 ---
 
 <section class="hero-section relative overflow-hidden py-20 md:py-32 px-4">
@@ -14,19 +42,30 @@ const { version = "0.21.0" } = Astro.props;
   </div>
 
   <div class="relative z-10 max-w-5xl mx-auto">
-    <!-- Top badge -->
+    <!-- Top badge with GitHub stars -->
     <div class="flex justify-center mb-8">
       <a
         href="https://github.com/yoanbernabeu/grepai"
         target="_blank"
         rel="noopener noreferrer"
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-full glass text-sm text-gray-300 hover:bg-white/10 transition-colors group"
+        class="inline-flex items-center gap-3 px-4 py-2 rounded-full glass text-sm text-gray-300 hover:bg-white/10 transition-colors group"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="text-yellow-400">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-        </svg>
-        <span>Star on GitHub</span>
-        <span class="text-gray-500">•</span>
+        <span class="inline-flex items-center gap-1.5">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="text-yellow-400">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          <span id="github-stars" class="font-semibold text-white">{stars.toLocaleString()}</span>
+          <span class="text-gray-400">stars</span>
+        </span>
+        <span class="text-gray-600">•</span>
+        <span class="inline-flex items-center gap-1.5">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
+          </svg>
+          <span id="github-downloads" class="font-semibold text-white">{downloads.toLocaleString()}</span>
+          <span class="text-gray-400 hidden sm:inline">downloads</span>
+        </span>
+        <span class="text-gray-600">•</span>
         <span class="font-mono text-primary-400">v{version}</span>
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 group-hover:translate-x-0.5 transition-transform">
           <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
@@ -55,7 +94,7 @@ const { version = "0.21.0" } = Astro.props;
     <!-- CTA Buttons -->
     <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
       <a href="/grepai/quickstart/" class="btn-primary text-lg px-8 py-4">
-        Get Started in 30 seconds
+        Install with one command
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
         </svg>
@@ -92,3 +131,50 @@ const { version = "0.21.0" } = Astro.props;
     </div>
   </div>
 </section>
+
+<script>
+  const CACHE_KEY = 'grepai_github_stats';
+  const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+  async function updateStats() {
+    const starsEl = document.getElementById('github-stars');
+    const downloadsEl = document.getElementById('github-downloads');
+    if (!starsEl || !downloadsEl) return;
+
+    // Check cache
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const { stars, downloads, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < CACHE_TTL) {
+        starsEl.textContent = stars.toLocaleString();
+        downloadsEl.textContent = downloads.toLocaleString();
+        return;
+      }
+    }
+
+    // Fetch from GitHub API
+    try {
+      const [repoRes, releasesRes] = await Promise.all([
+        fetch('https://api.github.com/repos/yoanbernabeu/grepai'),
+        fetch('https://api.github.com/repos/yoanbernabeu/grepai/releases')
+      ]);
+
+      if (repoRes.ok && releasesRes.ok) {
+        const repoData = await repoRes.json();
+        const releases = await releasesRes.json();
+
+        const stars = repoData.stargazers_count;
+        const downloads = releases.reduce((total, release) =>
+          total + release.assets.reduce((sum, asset) => sum + asset.download_count, 0), 0);
+
+        starsEl.textContent = stars.toLocaleString();
+        downloadsEl.textContent = downloads.toLocaleString();
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ stars, downloads, timestamp: Date.now() }));
+      }
+    } catch (e) {
+      // Keep fallback values
+    }
+  }
+
+  updateStats();
+</script>

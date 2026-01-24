@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -110,6 +111,12 @@ func (s *Server) registerTools() {
 		mcp.WithBoolean("compact",
 			mcp.Description("Return minimal JSON without content (default: false)"),
 		),
+		mcp.WithString("workspace",
+			mcp.Description("Workspace name for cross-project search (optional)"),
+		),
+		mcp.WithString("projects",
+			mcp.Description("Comma-separated list of project names to search within workspace (requires workspace)"),
+		),
 	)
 	s.mcpServer.AddTool(searchTool, s.handleSearch)
 
@@ -173,6 +180,13 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	compact := request.GetBool("compact", false)
+	workspace := request.GetString("workspace", "")
+	projects := request.GetString("projects", "")
+
+	// Workspace mode
+	if workspace != "" {
+		return s.handleWorkspaceSearch(ctx, query, limit, compact, workspace, projects)
+	}
 
 	// Load configuration
 	cfg, err := config.Load(s.projectRoot)
@@ -232,6 +246,151 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// handleWorkspaceSearch handles workspace-level search via MCP.
+func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit int, compact bool, workspaceName, projectsStr string) (*mcp.CallToolResult, error) {
+	// Load workspace config
+	wsCfg, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace config: %v", err)), nil
+	}
+	if wsCfg == nil {
+		return mcp.NewToolResultError("no workspaces configured"), nil
+	}
+
+	ws, err := wsCfg.GetWorkspace(workspaceName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("workspace not found: %v", err)), nil
+	}
+
+	// Validate backend
+	if err := config.ValidateWorkspaceBackend(ws); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Initialize embedder
+	emb, err := s.createWorkspaceEmbedder(ws)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to initialize embedder: %v", err)), nil
+	}
+	defer emb.Close()
+
+	// Initialize store
+	st, err := s.createWorkspaceStore(ctx, ws)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to initialize store: %v", err)), nil
+	}
+	defer st.Close()
+
+	// Create searcher with default config
+	searchCfg := config.SearchConfig{
+		Hybrid: config.HybridConfig{Enabled: false, K: 60},
+		Boost:  config.DefaultConfig().Search.Boost,
+	}
+	searcher := search.NewSearcher(st, emb, searchCfg)
+
+	// Search
+	results, err := searcher.Search(ctx, query, limit)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	// Filter by projects if specified
+	// File paths are stored as: workspaceName/projectName/relativePath
+	if projectsStr != "" {
+		projectNames := strings.Split(projectsStr, ",")
+		filteredResults := make([]store.SearchResult, 0)
+		for _, r := range results {
+			for _, projectName := range projectNames {
+				projectName = strings.TrimSpace(projectName)
+				// Match workspace/project/ prefix
+				expectedPrefix := ws.Name + "/" + projectName + "/"
+				if strings.HasPrefix(r.Chunk.FilePath, expectedPrefix) {
+					filteredResults = append(filteredResults, r)
+					break
+				}
+			}
+		}
+		results = filteredResults
+	}
+
+	var jsonBytes []byte
+	if compact {
+		searchResultsCompact := make([]SearchResultCompact, len(results))
+		for i, r := range results {
+			searchResultsCompact[i] = SearchResultCompact{
+				FilePath:  r.Chunk.FilePath,
+				StartLine: r.Chunk.StartLine,
+				EndLine:   r.Chunk.EndLine,
+				Score:     r.Score,
+			}
+		}
+		jsonBytes, err = json.MarshalIndent(searchResultsCompact, "", "  ")
+	} else {
+		searchResults := make([]SearchResult, len(results))
+		for i, r := range results {
+			searchResults[i] = SearchResult{
+				FilePath:  r.Chunk.FilePath,
+				StartLine: r.Chunk.StartLine,
+				EndLine:   r.Chunk.EndLine,
+				Score:     r.Score,
+				Content:   r.Chunk.Content,
+			}
+		}
+		jsonBytes, err = json.MarshalIndent(searchResults, "", "  ")
+	}
+
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// createWorkspaceEmbedder creates an embedder based on workspace configuration.
+func (s *Server) createWorkspaceEmbedder(ws *config.Workspace) (embedder.Embedder, error) {
+	switch ws.Embedder.Provider {
+	case "ollama":
+		return embedder.NewOllamaEmbedder(
+			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
+			embedder.WithOllamaModel(ws.Embedder.Model),
+			embedder.WithOllamaDimensions(ws.Embedder.Dimensions),
+		), nil
+	case "openai":
+		return embedder.NewOpenAIEmbedder(
+			embedder.WithOpenAIModel(ws.Embedder.Model),
+			embedder.WithOpenAIKey(ws.Embedder.APIKey),
+			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
+			embedder.WithOpenAIDimensions(ws.Embedder.Dimensions),
+		)
+	case "lmstudio":
+		return embedder.NewLMStudioEmbedder(
+			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
+			embedder.WithLMStudioModel(ws.Embedder.Model),
+			embedder.WithLMStudioDimensions(ws.Embedder.Dimensions),
+		), nil
+	default:
+		return nil, fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
+	}
+}
+
+// createWorkspaceStore creates a vector store based on workspace configuration.
+func (s *Server) createWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.VectorStore, error) {
+	projectID := "workspace:" + ws.Name
+
+	switch ws.Store.Backend {
+	case "postgres":
+		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.Dimensions)
+	case "qdrant":
+		collectionName := ws.Store.Qdrant.Collection
+		if collectionName == "" {
+			collectionName = "workspace_" + ws.Name
+		}
+		return store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.Dimensions)
+	default:
+		return nil, fmt.Errorf("unsupported backend for workspace: %s", ws.Store.Backend)
+	}
 }
 
 // handleTraceCallers handles the grepai_trace_callers tool call.

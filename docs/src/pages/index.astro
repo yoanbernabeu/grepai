@@ -32,31 +32,77 @@ import Badge from '../components/content/Badge.astro';
   <section class="py-20 px-4 border-t border-glass-border">
     <div class="max-w-6xl mx-auto">
       <div class="text-center mb-16">
-        <h2 class="text-3xl md:text-4xl font-bold gradient-text mb-4">Why developers choose grepai</h2>
+        <h2 class="text-3xl md:text-4xl font-bold gradient-text mb-4">What you get</h2>
         <p class="text-gray-400 text-lg max-w-2xl mx-auto">
-          Built for developers who want their AI tools to actually understand their code
+          Everything you need to make your AI tools actually understand your code
         </p>
       </div>
       <CardGrid>
-        <Card title="Semantic Search" icon="magnifier">
-          Ask in plain English. grepai understands code meaning, not just text patterns. Find "authentication logic" even if it's called <code>validateUser</code>.
+        <Card title="Find code you couldn't grep" icon="magnifier">
+          Search "authentication logic" and find <code>validateUser</code>. grepai understands meaning, not just text patterns.
         </Card>
-        <Card title="Call Graph Tracing" icon="random">
-          Find callers and callees of any function. Build dependency graphs. Understand impact before refactoring.
+        <Card title="Know impact before you change" icon="random">
+          See who calls a function and what it calls. Refactor with confidence, not guesswork.
         </Card>
-        <Card title="100% Local & Private" icon="laptop">
-          Runs entirely on your machine with Ollama. Your code never leaves your laptop. Zero cloud dependencies.
+        <Card title="Your code stays on your machine" icon="laptop">
+          Runs 100% locally with Ollama. No cloud, no API calls, no data leaving your laptop.
         </Card>
-        <Card title="AI Agent Ready" icon="puzzle">
-          JSON output designed for AI agents. Native MCP server. First-class integration with Cursor, Claude Code, Windsurf.
+        <Card title="Your AI agent gets smarter" icon="puzzle">
+          Native MCP server and JSON output. Cursor, Claude Code, Windsurf work better with semantic context.
         </Card>
-        <Card title="Real-time Indexing" icon="approve-check">
-          File watcher keeps your index up-to-date as you code. No manual re-indexing needed. Start coding immediately.
+        <Card title="Always in sync" icon="approve-check">
+          File watcher updates the index as you code. No manual re-indexing. Just search.
         </Card>
-        <Card title="Lightweight & Fast" icon="star">
-          Single binary, no dependencies. Index a 10k file project in seconds. Search results in milliseconds.
+        <Card title="Instant results" icon="star">
+          Single binary, no dependencies. Index 10k files in seconds. Search in milliseconds.
         </Card>
       </CardGrid>
+    </div>
+  </section>
+
+  <!-- Social Proof Section -->
+  <section class="py-20 px-4 border-t border-glass-border">
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl md:text-4xl font-bold gradient-text mb-4">What developers say</h2>
+      </div>
+      <div class="grid md:grid-cols-3 gap-8">
+        <!-- Reddit -->
+        <a href="https://www.reddit.com/r/ClaudeAI/comments/1qiv0d3/open_source_i_reduced_claude_code_input_tokens_by/" target="_blank" rel="noopener noreferrer" class="group glass p-6 rounded-2xl flex flex-col hover:bg-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl hover:shadow-orange-500/10">
+          <svg class="w-8 h-8 text-orange-500/80 mb-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/>
+          </svg>
+          <p class="text-gray-200 text-lg leading-relaxed flex-grow">"I just hit my limit and it took 13% of my max5 plan just to read my codebase. I am very, very excited about your new tool."</p>
+          <div class="mt-6 pt-4 border-t border-white/10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-white font-medium">u/911pleasehold</span>
+            </div>
+            <span class="text-xs px-2 py-1 rounded-full bg-orange-500/20 text-orange-400">280K+ views</span>
+          </div>
+        </a>
+
+        <!-- X/Twitter -->
+        <a href="https://x.com/LesSaleGeek/status/2010335803604611124" target="_blank" rel="noopener noreferrer" class="group glass p-6 rounded-2xl flex flex-col hover:bg-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl hover:shadow-white/10">
+          <svg class="w-8 h-8 text-white/80 mb-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+          <p class="text-gray-200 text-lg leading-relaxed flex-grow">"It works great! Takes 5 minutes to install. Crazy!"</p>
+          <div class="mt-6 pt-4 border-t border-white/10 flex items-center">
+            <span class="text-white font-medium">@LesSaleGeek</span>
+          </div>
+        </a>
+
+        <!-- LinkedIn -->
+        <a href="https://www.linkedin.com/feed/update/urn:li:activity:7419451883293061120?commentUrn=urn%3Ali%3Acomment%3A%28activity%3A7419451883293061120%2C7419464457388453888%29" target="_blank" rel="noopener noreferrer" class="group glass p-6 rounded-2xl flex flex-col hover:bg-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl hover:shadow-blue-500/10">
+          <svg class="w-8 h-8 text-blue-500/80 mb-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+          </svg>
+          <p class="text-gray-200 text-lg leading-relaxed flex-grow">"The results are incredible!"</p>
+          <div class="mt-6 pt-4 border-t border-white/10 flex items-center">
+            <span class="text-white font-medium">Kenny Nguyen</span>
+          </div>
+        </a>
+      </div>
     </div>
   </section>
 
@@ -108,7 +154,7 @@ grepai trace callers "Login"</code></pre>
   <section class="py-20 px-4 border-t border-glass-border">
     <div class="max-w-4xl mx-auto">
       <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold gradient-text mb-4">Your embedder, your choice</h2>
+        <h2 class="text-3xl md:text-4xl font-bold gradient-text mb-4">100% local or cloud-powered</h2>
         <p class="text-gray-400 text-lg">
           Run locally with Ollama or use cloud embeddings
         </p>
