@@ -35,22 +35,20 @@
 
 ## Installation
 
+**Linux/macOS:**
 ```bash
 curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh | sh
 ```
 
-### Windows (PowerShell)
-
-Run the following command in your PowerShell terminal to install `grepai` automatically:
-
+**Windows:**
 ```powershell
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
-Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI:
+Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI.
 
+**Ollama (recommended):**
 ```bash
-# With Ollama (local, privacy-first)
 ollama pull nomic-embed-text
 ```
 
