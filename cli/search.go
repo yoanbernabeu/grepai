@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	searchLimit   int
-	searchJSON    bool
-	searchCompact bool
+	searchLimit     int
+	searchJSON      bool
+	searchCompact   bool
+	searchWorkspace string
+	searchProjects  []string
 )
 
 // SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
@@ -54,6 +56,8 @@ func init() {
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 10, "Maximum number of results to return")
 	searchCmd.Flags().BoolVarP(&searchJSON, "json", "j", false, "Output results in JSON format (for AI agents)")
 	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal JSON without content (requires --json)")
+	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "Workspace name for cross-project search")
+	searchCmd.Flags().StringArrayVar(&searchProjects, "project", nil, "Project name(s) to search (requires --workspace, can be repeated)")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -63,6 +67,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Validate flag combination
 	if searchCompact && !searchJSON {
 		return fmt.Errorf("--compact flag requires --json flag")
+	}
+
+	// Validate workspace-related flags
+	if len(searchProjects) > 0 && searchWorkspace == "" {
+		return fmt.Errorf("--project flag requires --workspace flag")
+	}
+
+	// Workspace mode
+	if searchWorkspace != "" {
+		return runWorkspaceSearch(ctx, query)
 	}
 
 	// Find project root
@@ -297,4 +311,154 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 func init() {
 	// Ensure the search command is registered
 	_ = os.Getenv("GREPAI_DEBUG")
+}
+
+// runWorkspaceSearch handles workspace-level search operations
+func runWorkspaceSearch(ctx context.Context, query string) error {
+	// Load workspace config
+	wsCfg, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load workspace config: %w", err)
+	}
+	if wsCfg == nil {
+		return fmt.Errorf("no workspaces configured; create one with: grepai workspace create <name>")
+	}
+
+	ws, err := wsCfg.GetWorkspace(searchWorkspace)
+	if err != nil {
+		return err
+	}
+
+	// Validate backend
+	if err := config.ValidateWorkspaceBackend(ws); err != nil {
+		return err
+	}
+
+	// Initialize embedder
+	var emb embedder.Embedder
+	switch ws.Embedder.Provider {
+	case "ollama":
+		emb = embedder.NewOllamaEmbedder(
+			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
+			embedder.WithOllamaModel(ws.Embedder.Model),
+			embedder.WithOllamaDimensions(ws.Embedder.Dimensions),
+		)
+	case "openai":
+		emb, err = embedder.NewOpenAIEmbedder(
+			embedder.WithOpenAIModel(ws.Embedder.Model),
+			embedder.WithOpenAIKey(ws.Embedder.APIKey),
+			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
+			embedder.WithOpenAIDimensions(ws.Embedder.Dimensions),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
+		}
+	case "lmstudio":
+		emb = embedder.NewLMStudioEmbedder(
+			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
+			embedder.WithLMStudioModel(ws.Embedder.Model),
+			embedder.WithLMStudioDimensions(ws.Embedder.Dimensions),
+		)
+	default:
+		return fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
+	}
+	defer emb.Close()
+
+	// Initialize store
+	var st store.VectorStore
+	projectID := "workspace:" + ws.Name
+
+	switch ws.Store.Backend {
+	case "postgres":
+		st, err = store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.Dimensions)
+		if err != nil {
+			return fmt.Errorf("failed to connect to postgres: %w", err)
+		}
+	case "qdrant":
+		collectionName := ws.Store.Qdrant.Collection
+		if collectionName == "" {
+			collectionName = "workspace_" + ws.Name
+		}
+		st, err = store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.Dimensions)
+		if err != nil {
+			return fmt.Errorf("failed to connect to qdrant: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported backend for workspace: %s", ws.Store.Backend)
+	}
+	defer st.Close()
+
+	// Create searcher with default search config
+	searchCfg := config.SearchConfig{
+		Hybrid: config.HybridConfig{Enabled: false, K: 60},
+		Boost:  config.DefaultConfig().Search.Boost,
+	}
+	searcher := search.NewSearcher(st, emb, searchCfg)
+
+	// Search
+	results, err := searcher.Search(ctx, query, searchLimit)
+	if err != nil {
+		if searchJSON {
+			return outputSearchError(err)
+		}
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	// Filter by projects if specified
+	// File paths are stored as: workspaceName/projectName/relativePath
+	if len(searchProjects) > 0 {
+		filteredResults := make([]store.SearchResult, 0)
+		for _, r := range results {
+			for _, projectName := range searchProjects {
+				// Match workspace/project/ prefix
+				expectedPrefix := ws.Name + "/" + projectName + "/"
+				if strings.HasPrefix(r.Chunk.FilePath, expectedPrefix) {
+					filteredResults = append(filteredResults, r)
+					break
+				}
+			}
+		}
+		results = filteredResults
+	}
+
+	// JSON output mode
+	if searchJSON {
+		if searchCompact {
+			return outputSearchCompactJSON(results)
+		}
+		return outputSearchJSON(results)
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No results found.")
+		return nil
+	}
+
+	// Display results
+	fmt.Printf("Found %d results for: %q in workspace %q\n\n", len(results), query, searchWorkspace)
+
+	for i, result := range results {
+		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
+		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		fmt.Println()
+
+		// Display content with line numbers
+		lines := strings.Split(result.Chunk.Content, "\n")
+		startIdx := 0
+		if len(lines) > 0 && strings.HasPrefix(lines[0], "File: ") {
+			startIdx = 2
+		}
+
+		lineNum := result.Chunk.StartLine
+		for j := startIdx; j < len(lines) && j < startIdx+15; j++ {
+			fmt.Printf("%4d │ %s\n", lineNum, lines[j])
+			lineNum++
+		}
+		if len(lines)-startIdx > 15 {
+			fmt.Printf("     │ ... (%d more lines)\n", len(lines)-startIdx-15)
+		}
+		fmt.Println()
+	}
+
+	return nil
 }

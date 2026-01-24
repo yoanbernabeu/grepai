@@ -28,6 +28,7 @@ export const navigation: NavSection[] = [
       { label: 'Claude Code Subagent', href: '/grepai/subagent/', order: 5 },
       { label: 'Search Boost', href: '/grepai/search-boost/', order: 6 },
       { label: 'Hybrid Search', href: '/grepai/hybrid-search/', order: 7 },
+      { label: 'Workspace Management', href: '/grepai/workspace/', order: 8 },
     ],
   },
   {
