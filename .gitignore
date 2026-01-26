@@ -31,6 +31,8 @@ Thumbs.db
 .ph-launch/
 qdrant_storage/
 local/
+.claude/
+specs/
 
 # Build
 bin/
@@ -42,3 +44,4 @@ docs/dist/
 docs/node_modules/
 docs/.astro/
 __debug*
+.autospec/
