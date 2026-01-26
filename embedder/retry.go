@@ -77,9 +77,10 @@ func IsRetryable(statusCode int) bool {
 
 // RetryableError wraps an error with its HTTP status code for retry decisions.
 type RetryableError struct {
-	StatusCode int
-	Message    string
-	Retryable  bool
+	StatusCode       int
+	Message          string
+	Retryable        bool
+	RateLimitHeaders *RateLimitHeaders
 }
 
 func (e *RetryableError) Error() string {

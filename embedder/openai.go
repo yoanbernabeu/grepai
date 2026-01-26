@@ -29,6 +29,9 @@ type OpenAIEmbedder struct {
 	parallelism int
 	retryPolicy RetryPolicy
 	client      *http.Client
+	rateLimiter *AdaptiveRateLimiter
+	tokenBucket *TokenBucket
+	tpmLimit    int64 // Tokens per minute limit (0 = disabled)
 }
 
 type openAIEmbedRequest struct {
@@ -94,6 +97,17 @@ func WithOpenAIRetryPolicy(policy RetryPolicy) OpenAIOption {
 	}
 }
 
+// WithOpenAITPMLimit sets the tokens-per-minute limit for proactive rate limiting.
+// When set > 0, the embedder will pace requests to stay within this limit.
+// Default: 0 (disabled). OpenAI Tier 1 limit is 1,000,000 TPM for embeddings.
+func WithOpenAITPMLimit(tpm int64) OpenAIOption {
+	return func(e *OpenAIEmbedder) {
+		if tpm > 0 {
+			e.tpmLimit = tpm
+		}
+	}
+}
+
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
 		endpoint:    defaultOpenAIEndpoint,
@@ -117,6 +131,14 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 
 	if e.apiKey == "" {
 		return nil, fmt.Errorf("OpenAI API key not set (use OPENAI_API_KEY environment variable)")
+	}
+
+	// Initialize adaptive rate limiter with configured parallelism
+	e.rateLimiter = NewAdaptiveRateLimiter(e.parallelism)
+
+	// Initialize token bucket if TPM limit is set
+	if e.tpmLimit > 0 {
+		e.tokenBucket = NewTokenBucket(e.tpmLimit)
 	}
 
 	return e, nil
@@ -218,7 +240,8 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 
 	results := make([]BatchResult, len(batches))
 	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(e.parallelism)
+	// Use adaptive rate limiter's current workers for dynamic parallelism
+	g.SetLimit(e.rateLimiter.CurrentWorkers())
 
 	for i := range batches {
 		batch := batches[i]
@@ -254,9 +277,37 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 	contents := batch.Contents()
 	batchSize := batch.Size()
 
+	// Estimate tokens for this batch (for proactive rate limiting)
+	var estimatedTokens int64
+	if e.tokenBucket != nil {
+		for _, content := range contents {
+			estimatedTokens += int64(EstimateTokens(content))
+		}
+	}
+
 	for attempt := 0; ; attempt++ {
+		// Proactive token pacing: wait if we would exceed TPM limit
+		if e.tokenBucket != nil {
+			if wait := e.tokenBucket.WaitForTokens(estimatedTokens); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(wait):
+					// Continue after waiting
+				}
+			}
+		}
+
 		embeddings, err := e.embedBatchRequest(ctx, contents)
 		if err == nil {
+			// Notify rate limiter of success
+			e.rateLimiter.OnSuccess()
+
+			// Track token usage for proactive rate limiting
+			if e.tokenBucket != nil {
+				e.tokenBucket.AddTokens(estimatedTokens)
+			}
+
 			// Update completed chunks atomically
 			newCompleted := completedChunks.Add(int64(batchSize))
 			if progress != nil {
@@ -271,6 +322,11 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 			return nil, err
 		}
 
+		// Notify rate limiter of rate limit hit (429)
+		if retryErr.StatusCode == 429 {
+			e.rateLimiter.OnRateLimitHit()
+		}
+
 		// Check if we can retry
 		if !e.retryPolicy.ShouldRetry(attempt) {
 			return nil, fmt.Errorf("batch %d failed after %d attempts: %w", batch.Index, attempt+1, err)
@@ -282,8 +338,16 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 			progress(batch.Index, totalBatches, int(completedChunks.Load()), totalChunks, true, attempt+1, retryErr.StatusCode)
 		}
 
-		// Calculate delay with jitter and wait
+		// Determine delay: use Retry-After header if available, otherwise exponential backoff
 		delay := e.retryPolicy.Calculate(attempt)
+		if retryErr.RateLimitHeaders != nil && retryErr.RateLimitHeaders.RetryAfter > 0 {
+			delay = retryErr.RateLimitHeaders.RetryAfter
+			// Cap at 60 seconds for safety
+			if delay > 60*time.Second {
+				delay = 60 * time.Second
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -336,7 +400,15 @@ func (e *OpenAIEmbedder) embedBatchRequest(ctx context.Context, texts []string) 
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
 			msg = errResp.Error.Message
 		}
-		return nil, NewRetryableError(resp.StatusCode, fmt.Sprintf("OpenAI API error (status %d): %s", resp.StatusCode, msg))
+		retryErr := NewRetryableError(resp.StatusCode, fmt.Sprintf("OpenAI API error (status %d): %s", resp.StatusCode, msg))
+
+		// Parse rate limit headers for 429 responses
+		if resp.StatusCode == http.StatusTooManyRequests {
+			headers := parseRateLimitHeaders(resp.Header)
+			retryErr.RateLimitHeaders = &headers
+		}
+
+		return nil, retryErr
 	}
 
 	var result openAIEmbedResponse

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adaptive Rate Limiting for OpenAI**: Intelligent rate limit handling that automatically optimizes parallelism
+  - **Automatic parallelism adjustment**: Halves parallelism after consecutive 429 responses, gradually restores after successful requests
+  - **Retry-After header support**: Uses OpenAI's Retry-After header for optimal retry timing when present
+  - **Proactive token pacing**: Optional TPM limit (`WithOpenAITPMLimit`) to pace requests and avoid hitting rate limits
+  - **Enhanced visibility**: Logs parallelism adjustments with old/new values for debugging and monitoring
+  - Addresses the 16% performance regression observed with parallelism=4 under rate limiting conditions
+  - New `embedder/rate_limiter.go` with thread-safe `AdaptiveRateLimiter` and `TokenBucket` implementations
+  - All rate limiting code passes race detector tests
+
 - **Parallel OpenAI Embedding**: Cross-file batch embedding with parallel API requests for 3x+ faster indexing
   - Batches chunks from multiple files into single API requests (up to 2000 inputs per batch)
   - Parallel batch processing with configurable worker count (default: 4 workers)
