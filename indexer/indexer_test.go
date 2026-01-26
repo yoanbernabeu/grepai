@@ -505,7 +505,7 @@ func (m *mockBatchEmbedder) EmbedBatches(ctx context.Context, batches []embedder
 
 		// Report progress
 		if progress != nil {
-			progress(batch.Index, len(batches), completedChunks, totalChunks, false, 0)
+			progress(batch.Index, len(batches), completedChunks, totalChunks, false, 0, 0)
 		}
 
 		results[batch.Index] = embedder.BatchResult{

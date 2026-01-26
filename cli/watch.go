@@ -674,13 +674,28 @@ func printProgress(current, total int, filePath string) {
 
 func printBatchProgress(info indexer.BatchProgressInfo) {
 	if info.Retrying {
-		// Clear current line and show retry message
+		// Clear current line and show retry message with rate limit visibility
 		fmt.Printf("\r%s\r", strings.Repeat(" ", 80))
-		fmt.Printf("Retrying batch %d (attempt %d/5)...\n", info.BatchIndex+1, info.Attempt)
+		reason := describeRetryReason(info.StatusCode)
+		fmt.Printf("%s - Retrying batch %d (attempt %d/5)...\n", reason, info.BatchIndex+1, info.Attempt)
 	} else if info.TotalChunks > 0 {
 		// Show progress percentage after batch completion
 		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
 		fmt.Printf("\rEmbedding progress: %d/%d chunks (%.0f%%)...", info.CompletedChunks, info.TotalChunks, percentage)
+	}
+}
+
+// describeRetryReason returns a human-readable description of why a retry is happening
+func describeRetryReason(statusCode int) string {
+	switch {
+	case statusCode == 429:
+		return "Rate limited (429)"
+	case statusCode >= 500 && statusCode < 600:
+		return fmt.Sprintf("Server error (%d)", statusCode)
+	case statusCode > 0:
+		return fmt.Sprintf("HTTP error (%d)", statusCode)
+	default:
+		return "Error"
 	}
 }
 

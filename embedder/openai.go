@@ -260,7 +260,7 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 			// Update completed chunks atomically
 			newCompleted := completedChunks.Add(int64(batchSize))
 			if progress != nil {
-				progress(batch.Index, totalBatches, int(newCompleted), totalChunks, false, 0)
+				progress(batch.Index, totalBatches, int(newCompleted), totalChunks, false, 0, 0)
 			}
 			return embeddings, nil
 		}
@@ -276,10 +276,10 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 			return nil, fmt.Errorf("batch %d failed after %d attempts: %w", batch.Index, attempt+1, err)
 		}
 
-		// Report retry attempt via progress callback
+		// Report retry attempt via progress callback with status code for rate limit visibility
 		// Use current completed count (not incrementing since retry is in progress)
 		if progress != nil {
-			progress(batch.Index, totalBatches, int(completedChunks.Load()), totalChunks, true, attempt+1)
+			progress(batch.Index, totalBatches, int(completedChunks.Load()), totalChunks, true, attempt+1, retryErr.StatusCode)
 		}
 
 		// Calculate delay with jitter and wait

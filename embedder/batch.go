@@ -4,6 +4,19 @@ package embedder
 // OpenAI allows 2048, but we use 2000 as a safety margin.
 const MaxBatchSize = 2000
 
+// MaxBatchTokens is the maximum total tokens per OpenAI embedding API batch.
+// OpenAI has a 300,000 token limit. We use 280,000 for safety margin.
+const MaxBatchTokens = 280000
+
+// EstimateTokens estimates the token count for a text string.
+// Uses a conservative estimate of ~4 characters per token for English text.
+// This is intentionally conservative to avoid hitting API limits.
+func EstimateTokens(text string) int {
+	// Rough estimate: 1 token ≈ 4 characters for English text
+	// Use 3.5 to be more conservative
+	return (len(text) + 3) / 4 // Round up
+}
+
 // BatchEntry represents a single chunk with metadata for tracking its source.
 type BatchEntry struct {
 	// FileIndex is the index of the source file in the files slice
@@ -44,7 +57,8 @@ type FileChunks struct {
 	Chunks []string
 }
 
-// FormBatches splits chunks from multiple files into batches of max MaxBatchSize.
+// FormBatches splits chunks from multiple files into batches respecting both
+// MaxBatchSize (input count) and MaxBatchTokens (token limit).
 // Chunks maintain their file/chunk index tracking for result mapping.
 func FormBatches(files []FileChunks) []Batch {
 	if len(files) == 0 {
@@ -61,23 +75,30 @@ func FormBatches(files []FileChunks) []Batch {
 		return nil
 	}
 
-	// Estimate number of batches needed
+	// Estimate number of batches needed (rough estimate)
 	estimatedBatches := (totalChunks + MaxBatchSize - 1) / MaxBatchSize
 	batches := make([]Batch, 0, estimatedBatches)
 
 	var currentBatch Batch
 	currentBatch.Index = 0
 	currentBatch.Entries = make([]BatchEntry, 0, MaxBatchSize)
+	currentBatchTokens := 0
 
 	for _, file := range files {
 		for chunkIdx, chunk := range file.Chunks {
-			// If current batch is full, finalize it and start a new one
-			if len(currentBatch.Entries) >= MaxBatchSize {
+			chunkTokens := EstimateTokens(chunk)
+
+			// If current batch is full (by count or tokens), finalize it and start a new one
+			wouldExceedCount := len(currentBatch.Entries) >= MaxBatchSize
+			wouldExceedTokens := currentBatchTokens+chunkTokens > MaxBatchTokens && len(currentBatch.Entries) > 0
+
+			if wouldExceedCount || wouldExceedTokens {
 				batches = append(batches, currentBatch)
 				currentBatch = Batch{
 					Index:   len(batches),
 					Entries: make([]BatchEntry, 0, MaxBatchSize),
 				}
+				currentBatchTokens = 0
 			}
 
 			currentBatch.Entries = append(currentBatch.Entries, BatchEntry{
@@ -85,6 +106,7 @@ func FormBatches(files []FileChunks) []Batch {
 				ChunkIndex: chunkIdx,
 				Content:    chunk,
 			})
+			currentBatchTokens += chunkTokens
 		}
 	}
 

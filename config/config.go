@@ -61,7 +61,7 @@ type EmbedderConfig struct {
 	Endpoint    string `yaml:"endpoint,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
 	Dimensions  int    `yaml:"dimensions,omitempty"`
-	Parallelism int    `yaml:"parallelism,omitempty"` // Number of parallel workers for batch embedding (default: 4)
+	Parallelism int    `yaml:"parallelism"` // Number of parallel workers for batch embedding (default: 4)
 }
 
 type StoreConfig struct {
@@ -102,10 +102,11 @@ func DefaultConfig() *Config {
 	return &Config{
 		Version: 1,
 		Embedder: EmbedderConfig{
-			Provider:   "ollama",
-			Model:      "nomic-embed-text",
-			Endpoint:   "http://localhost:11434",
-			Dimensions: 768,
+			Provider:    "ollama",
+			Model:       "nomic-embed-text",
+			Endpoint:    "http://localhost:11434",
+			Dimensions:  768,
+			Parallelism: 4,
 		},
 		Store: StoreConfig{
 			Backend: "gob",

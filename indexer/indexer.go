@@ -45,6 +45,7 @@ type BatchProgressInfo struct {
 	TotalChunks     int  // Total number of chunks to embed
 	Retrying        bool // True if this is a retry attempt
 	Attempt         int  // Retry attempt number (1-indexed, 0 if not retrying)
+	StatusCode      int  // HTTP status code when retrying (429 = rate limited, 5xx = server error)
 }
 
 // BatchProgressCallback is called for batch embedding progress and retry visibility
@@ -238,7 +239,7 @@ func (idx *Indexer) indexFilesBatched(
 	// Create progress callback for batch embedding
 	var batchProgress embedder.BatchProgress
 	if onProgress != nil {
-		batchProgress = func(batchIndex, totalBatches, completedChunks, totalChunksArg int, retrying bool, attempt int) {
+		batchProgress = func(batchIndex, totalBatches, completedChunks, totalChunksArg int, retrying bool, attempt int, statusCode int) {
 			onProgress(BatchProgressInfo{
 				BatchIndex:      batchIndex,
 				TotalBatches:    totalBatches,
@@ -246,6 +247,7 @@ func (idx *Indexer) indexFilesBatched(
 				TotalChunks:     totalChunksArg,
 				Retrying:        retrying,
 				Attempt:         attempt,
+				StatusCode:      statusCode,
 			})
 		}
 	}

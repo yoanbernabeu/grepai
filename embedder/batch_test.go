@@ -382,3 +382,96 @@ func TestMapResultsToFiles_EmptyInput(t *testing.T) {
 		}
 	}
 }
+
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		text     string
+		expected int
+	}{
+		{"", 0},
+		{"a", 1},
+		{"ab", 1},
+		{"abc", 1},
+		{"abcd", 1},
+		{"abcde", 2},                    // 5 chars -> 2 tokens
+		{"hello world", 3},              // 11 chars -> 3 tokens
+		{string(make([]byte, 100)), 25}, // 100 chars -> 25 tokens
+	}
+
+	for _, tt := range tests {
+		got := EstimateTokens(tt.text)
+		if got != tt.expected {
+			t.Errorf("EstimateTokens(%q) = %d, expected %d", tt.text, got, tt.expected)
+		}
+	}
+}
+
+func TestFormBatches_TokenLimit(t *testing.T) {
+	// Create chunks that are large enough to trigger token limit
+	// Each chunk will be ~10000 chars -> ~2500 tokens
+	// With MaxBatchTokens = 280000, we can fit ~112 such chunks per batch
+	largeChunk := string(make([]byte, 10000))
+
+	// Create 200 large chunks - should be split into multiple batches by token limit
+	chunks := make([]string, 200)
+	for i := range chunks {
+		chunks[i] = largeChunk
+	}
+
+	files := []FileChunks{
+		{FileIndex: 0, Chunks: chunks},
+	}
+
+	batches := FormBatches(files)
+
+	// Should have more than 1 batch due to token limit (even though count is below MaxBatchSize)
+	if len(batches) < 2 {
+		t.Errorf("expected multiple batches due to token limit, got %d", len(batches))
+	}
+
+	// Verify total chunks are preserved
+	totalChunks := 0
+	for _, batch := range batches {
+		totalChunks += len(batch.Entries)
+	}
+	if totalChunks != 200 {
+		t.Errorf("expected 200 total chunks across batches, got %d", totalChunks)
+	}
+
+	// Each batch should respect token limit
+	for i, batch := range batches {
+		batchTokens := 0
+		for _, entry := range batch.Entries {
+			batchTokens += EstimateTokens(entry.Content)
+		}
+		if batchTokens > MaxBatchTokens {
+			t.Errorf("batch %d has %d tokens, exceeds MaxBatchTokens %d", i, batchTokens, MaxBatchTokens)
+		}
+	}
+}
+
+func TestFormBatches_SmallChunksIgnoreTokenLimit(t *testing.T) {
+	// With small chunks, we should hit the count limit (MaxBatchSize) before token limit
+	smallChunk := "hello"
+
+	chunks := make([]string, MaxBatchSize+100)
+	for i := range chunks {
+		chunks[i] = smallChunk
+	}
+
+	files := []FileChunks{
+		{FileIndex: 0, Chunks: chunks},
+	}
+
+	batches := FormBatches(files)
+
+	// Should be split by count, not tokens
+	if len(batches) != 2 {
+		t.Errorf("expected 2 batches (split by count), got %d", len(batches))
+	}
+
+	// First batch should be exactly MaxBatchSize
+	if len(batches[0].Entries) != MaxBatchSize {
+		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	}
+}
