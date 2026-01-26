@@ -39,10 +39,12 @@ type ProgressCallback func(info ProgressInfo)
 
 // BatchProgressInfo contains progress information for batch embedding
 type BatchProgressInfo struct {
-	BatchIndex   int  // Current batch index (0-indexed)
-	TotalBatches int  // Total number of batches
-	Retrying     bool // True if this is a retry attempt
-	Attempt      int  // Retry attempt number (1-indexed, 0 if not retrying)
+	BatchIndex      int  // Current batch index (0-indexed)
+	TotalBatches    int  // Total number of batches
+	CompletedChunks int  // Number of chunks completed so far
+	TotalChunks     int  // Total number of chunks to embed
+	Retrying        bool // True if this is a retry attempt
+	Attempt         int  // Retry attempt number (1-indexed, 0 if not retrying)
 }
 
 // BatchProgressCallback is called for batch embedding progress and retry visibility
@@ -227,15 +229,23 @@ func (idx *Indexer) indexFilesBatched(
 	// Form batches from all file chunks
 	batches := embedder.FormBatches(fileChunks)
 
+	// Calculate total chunks for progress tracking
+	totalChunks := 0
+	for _, fc := range fileChunks {
+		totalChunks += len(fc.Chunks)
+	}
+
 	// Create progress callback for batch embedding
 	var batchProgress embedder.BatchProgress
 	if onProgress != nil {
-		batchProgress = func(batchIndex, totalBatches int, retrying bool, attempt int) {
+		batchProgress = func(batchIndex, totalBatches, completedChunks, totalChunksArg int, retrying bool, attempt int) {
 			onProgress(BatchProgressInfo{
-				BatchIndex:   batchIndex,
-				TotalBatches: totalBatches,
-				Retrying:     retrying,
-				Attempt:      attempt,
+				BatchIndex:      batchIndex,
+				TotalBatches:    totalBatches,
+				CompletedChunks: completedChunks,
+				TotalChunks:     totalChunksArg,
+				Retrying:        retrying,
+				Attempt:         attempt,
 			})
 		}
 	}

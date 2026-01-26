@@ -136,6 +136,104 @@ func TestGetIndexPath(t *testing.T) {
 	}
 }
 
+// TestParallelismConfig verifies parallelism defaults and validation
+func TestParallelismConfig(t *testing.T) {
+	tests := []struct {
+		name                string
+		configYAML          string
+		expectedParallelism int
+	}{
+		{
+			name: "default parallelism is 4 when not specified",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+store:
+  backend: gob
+`,
+			expectedParallelism: 4,
+		},
+		{
+			name: "custom parallelism is respected",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+  parallelism: 8
+store:
+  backend: gob
+`,
+			expectedParallelism: 8,
+		},
+		{
+			name: "parallelism of 1 is valid",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+  parallelism: 1
+store:
+  backend: gob
+`,
+			expectedParallelism: 1,
+		},
+		{
+			name: "parallelism of 0 defaults to 4",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+  parallelism: 0
+store:
+  backend: gob
+`,
+			expectedParallelism: 4,
+		},
+		{
+			name: "negative parallelism defaults to 4",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+  parallelism: -1
+store:
+  backend: gob
+`,
+			expectedParallelism: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configDir := filepath.Join(tmpDir, ConfigDir)
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				t.Fatalf("failed to create config dir: %v", err)
+			}
+
+			configPath := filepath.Join(configDir, ConfigFileName)
+			if err := os.WriteFile(configPath, []byte(tt.configYAML), 0600); err != nil {
+				t.Fatalf("failed to write config: %v", err)
+			}
+
+			loaded, err := Load(tmpDir)
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+
+			if loaded.Embedder.Parallelism != tt.expectedParallelism {
+				t.Errorf("expected parallelism %d, got %d", tt.expectedParallelism, loaded.Embedder.Parallelism)
+			}
+		})
+	}
+}
+
 // TestBackwardCompatibility verifies that old configs without dimensions/endpoint
 // still work correctly by applying sensible defaults.
 func TestBackwardCompatibility(t *testing.T) {

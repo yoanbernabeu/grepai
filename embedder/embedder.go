@@ -18,8 +18,9 @@ type Embedder interface {
 }
 
 // BatchProgress is a callback for reporting batch embedding progress.
-// It receives the batch index, total batches, and optional retry information.
-type BatchProgress func(batchIndex, totalBatches int, retrying bool, attempt int)
+// It receives the batch index, total batches, chunk progress info, and optional retry information.
+// completedChunks and totalChunks track overall progress across all batches.
+type BatchProgress func(batchIndex, totalBatches, completedChunks, totalChunks int, retrying bool, attempt int)
 
 // BatchEmbedder extends Embedder with cross-file batch embedding capabilities.
 // Providers that support advanced batching (like OpenAI) implement this interface

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -206,6 +207,15 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 		return nil, nil
 	}
 
+	// Calculate total chunks across all batches for progress tracking
+	totalChunks := 0
+	for _, batch := range batches {
+		totalChunks += batch.Size()
+	}
+
+	// Track completed chunks atomically for thread-safe progress updates
+	var completedChunks atomic.Int64
+
 	results := make([]BatchResult, len(batches))
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(e.parallelism)
@@ -213,7 +223,7 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 	for i := range batches {
 		batch := batches[i]
 		g.Go(func() error {
-			embeddings, err := e.embedBatchWithRetry(ctx, batch, len(batches), progress)
+			embeddings, err := e.embedBatchWithRetry(ctx, batch, len(batches), totalChunks, &completedChunks, progress)
 			if err != nil {
 				return err
 			}
@@ -233,14 +243,24 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 }
 
 // embedBatchWithRetry embeds a single batch with retry logic for retryable errors.
-func (e *OpenAIEmbedder) embedBatchWithRetry(ctx context.Context, batch Batch, totalBatches int, progress BatchProgress) ([][]float32, error) {
+func (e *OpenAIEmbedder) embedBatchWithRetry(
+	ctx context.Context,
+	batch Batch,
+	totalBatches int,
+	totalChunks int,
+	completedChunks *atomic.Int64,
+	progress BatchProgress,
+) ([][]float32, error) {
 	contents := batch.Contents()
+	batchSize := batch.Size()
 
 	for attempt := 0; ; attempt++ {
 		embeddings, err := e.embedBatchRequest(ctx, contents)
 		if err == nil {
+			// Update completed chunks atomically
+			newCompleted := completedChunks.Add(int64(batchSize))
 			if progress != nil {
-				progress(batch.Index, totalBatches, false, 0)
+				progress(batch.Index, totalBatches, int(newCompleted), totalChunks, false, 0)
 			}
 			return embeddings, nil
 		}
@@ -257,8 +277,9 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(ctx context.Context, batch Batch, t
 		}
 
 		// Report retry attempt via progress callback
+		// Use current completed count (not incrementing since retry is in progress)
 		if progress != nil {
-			progress(batch.Index, totalBatches, true, attempt+1)
+			progress(batch.Index, totalBatches, int(completedChunks.Load()), totalChunks, true, attempt+1)
 		}
 
 		// Calculate delay with jitter and wait

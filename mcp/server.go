@@ -363,6 +363,7 @@ func (s *Server) createWorkspaceEmbedder(ws *config.Workspace) (embedder.Embedde
 			embedder.WithOpenAIKey(ws.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
 			embedder.WithOpenAIDimensions(ws.Embedder.Dimensions),
+			embedder.WithOpenAIParallelism(ws.Embedder.Parallelism),
 		)
 	case "lmstudio":
 		return embedder.NewLMStudioEmbedder(
@@ -716,6 +717,7 @@ func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithOpenAIDimensions(cfg.Embedder.Dimensions),
+			embedder.WithOpenAIParallelism(cfg.Embedder.Parallelism),
 		)
 	case "lmstudio":
 		return embedder.NewLMStudioEmbedder(

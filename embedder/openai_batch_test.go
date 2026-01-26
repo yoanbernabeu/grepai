@@ -258,7 +258,7 @@ func TestOpenAIEmbedder_EmbedBatches_RetryOn429(t *testing.T) {
 	}
 
 	var retryCount int32
-	progress := func(batchIndex, totalBatches int, retrying bool, attempt int) {
+	progress := func(batchIndex, totalBatches, completedChunks, totalChunks int, retrying bool, attempt int) {
 		if retrying {
 			atomic.AddInt32(&retryCount, 1)
 		}
@@ -447,20 +447,24 @@ func TestOpenAIEmbedder_EmbedBatches_ProgressCallback(t *testing.T) {
 	}
 
 	type progressInfo struct {
-		batchIndex   int
-		totalBatches int
-		retrying     bool
-		attempt      int
+		batchIndex      int
+		totalBatches    int
+		completedChunks int
+		totalChunks     int
+		retrying        bool
+		attempt         int
 	}
 	var progressCalls []progressInfo
 	var mu sync.Mutex
-	progress := func(batchIndex, totalBatches int, retrying bool, attempt int) {
+	progress := func(batchIndex, totalBatches, completedChunks, totalChunks int, retrying bool, attempt int) {
 		mu.Lock()
 		progressCalls = append(progressCalls, progressInfo{
-			batchIndex:   batchIndex,
-			totalBatches: totalBatches,
-			retrying:     retrying,
-			attempt:      attempt,
+			batchIndex:      batchIndex,
+			totalBatches:    totalBatches,
+			completedChunks: completedChunks,
+			totalChunks:     totalChunks,
+			retrying:        retrying,
+			attempt:         attempt,
 		})
 		mu.Unlock()
 	}
@@ -583,7 +587,7 @@ func TestOpenAIEmbedder_EmbedBatches_RetryOn5xx(t *testing.T) {
 	}
 
 	var retryCount int32
-	progress := func(batchIndex, totalBatches int, retrying bool, attempt int) {
+	progress := func(batchIndex, totalBatches, completedChunks, totalChunks int, retrying bool, attempt int) {
 		if retrying {
 			atomic.AddInt32(&retryCount, 1)
 		}

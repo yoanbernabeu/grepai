@@ -677,6 +677,10 @@ func printBatchProgress(info indexer.BatchProgressInfo) {
 		// Clear current line and show retry message
 		fmt.Printf("\r%s\r", strings.Repeat(" ", 80))
 		fmt.Printf("Retrying batch %d (attempt %d/5)...\n", info.BatchIndex+1, info.Attempt)
+	} else if info.TotalChunks > 0 {
+		// Show progress percentage after batch completion
+		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
+		fmt.Printf("\rEmbedding progress: %d/%d chunks (%.0f%%)...", info.CompletedChunks, info.TotalChunks, percentage)
 	}
 }
 

@@ -264,8 +264,8 @@ func (c *Config) applyDefaults() {
 		}
 	}
 
-	// Parallelism default (only relevant for OpenAI, but set for all)
-	if c.Embedder.Parallelism == 0 {
+	// Parallelism default and validation (only relevant for OpenAI, but set for all)
+	if c.Embedder.Parallelism <= 0 {
 		c.Embedder.Parallelism = 4 // Safe default for most OpenAI rate limits
 	}
 
