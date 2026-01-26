@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Parallel OpenAI Embedding**: Cross-file batch embedding with parallel API requests for 3x+ faster indexing
+  - Batches chunks from multiple files into single API requests (up to 2000 inputs per batch)
+  - Parallel batch processing with configurable worker count (default: 4 workers)
+  - New `embedder.parallelism` configuration option to tune concurrency for your API tier
+  - Automatic retry with exponential backoff (1s base, 2x multiplier, max 32s) on rate limits (429) and server errors (5xx)
+  - Immediate failure on non-retryable client errors (400, 401, 403)
+  - Jitter added to backoff to prevent thundering herd
+  - Progress percentage now reflects chunk completion across all batches
+  - Retry attempts displayed to user: "Retrying batch N (attempt X/5)..."
+  - Atomic indexing: all batches succeed or entire operation fails cleanly
+  - Ollama embedder unchanged (local, already fast)
+
 ## [0.23.0] - 2026-01-25
 
 ### Added
