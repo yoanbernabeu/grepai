@@ -56,11 +56,12 @@ type BoostRule struct {
 }
 
 type EmbedderConfig struct {
-	Provider   string `yaml:"provider"` // ollama | lmstudio | openai
-	Model      string `yaml:"model"`
-	Endpoint   string `yaml:"endpoint,omitempty"`
-	APIKey     string `yaml:"api_key,omitempty"`
-	Dimensions int    `yaml:"dimensions,omitempty"`
+	Provider    string `yaml:"provider"` // ollama | lmstudio | openai
+	Model       string `yaml:"model"`
+	Endpoint    string `yaml:"endpoint,omitempty"`
+	APIKey      string `yaml:"api_key,omitempty"`
+	Dimensions  int    `yaml:"dimensions,omitempty"`
+	Parallelism int    `yaml:"parallelism,omitempty"` // Number of parallel workers for batch embedding (default: 4)
 }
 
 type StoreConfig struct {
@@ -261,6 +262,11 @@ func (c *Config) applyDefaults() {
 		default:
 			c.Embedder.Dimensions = defaults.Embedder.Dimensions
 		}
+	}
+
+	// Parallelism default (only relevant for OpenAI, but set for all)
+	if c.Embedder.Parallelism == 0 {
+		c.Embedder.Parallelism = 4 // Safe default for most OpenAI rate limits
 	}
 
 	// Chunking defaults

@@ -16,3 +16,19 @@ type Embedder interface {
 	// Close cleanly shuts down the embedder
 	Close() error
 }
+
+// BatchProgress is a callback for reporting batch embedding progress.
+// It receives the batch index, total batches, and optional retry information.
+type BatchProgress func(batchIndex, totalBatches int, retrying bool, attempt int)
+
+// BatchEmbedder extends Embedder with cross-file batch embedding capabilities.
+// Providers that support advanced batching (like OpenAI) implement this interface
+// to enable parallel processing of multiple batches.
+type BatchEmbedder interface {
+	Embedder
+
+	// EmbedBatches processes multiple batches of chunks concurrently.
+	// It returns results mapped back to their source files, or an error if any batch fails.
+	// The progress callback is called for each batch completion or retry attempt.
+	EmbedBatches(ctx context.Context, batches []Batch, progress BatchProgress) ([]BatchResult, error)
+}
