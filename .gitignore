@@ -30,6 +30,7 @@ Thumbs.db
 .grepai/
 .ph-launch/
 qdrant_storage/
+local/
 
 # Build
 bin/
