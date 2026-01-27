@@ -171,6 +171,25 @@ embedder:
 | `text-embedding-3-small` | 1536 | $0.02 |
 | `text-embedding-3-large` | 3072 | $0.13 |
 
+### Parallelism & Rate Limiting
+
+OpenAI embeddings support parallel batch processing with adaptive rate limiting:
+
+```yaml
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  parallelism: 4  # Concurrent API requests (default: 4)
+```
+
+**How it works:**
+- Batches are processed concurrently up to `parallelism` limit
+- On rate limit (429), parallelism auto-reduces and retries with backoff
+- After successful requests, parallelism gradually restores
+
+Lower `parallelism` for strict rate limits; raise it for higher-tier API plans.
+
 ### Cost Estimation
 
 For a typical codebase:
