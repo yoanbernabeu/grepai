@@ -57,65 +57,89 @@ type FileChunks struct {
 	Chunks []string
 }
 
+// batchBuilder accumulates chunks into batches.
+type batchBuilder struct {
+	batches       []Batch
+	current       Batch
+	currentTokens int
+}
+
+func newBatchBuilder(estimatedBatches int) *batchBuilder {
+	return &batchBuilder{
+		batches: make([]Batch, 0, estimatedBatches),
+		current: Batch{
+			Index:   0,
+			Entries: make([]BatchEntry, 0, MaxBatchSize),
+		},
+	}
+}
+
+func (b *batchBuilder) isFull(additionalTokens int) bool {
+	if len(b.current.Entries) >= MaxBatchSize {
+		return true
+	}
+	if len(b.current.Entries) > 0 && b.currentTokens+additionalTokens > MaxBatchTokens {
+		return true
+	}
+	return false
+}
+
+func (b *batchBuilder) finalizeCurrent() {
+	b.batches = append(b.batches, b.current)
+	b.current = Batch{
+		Index:   len(b.batches),
+		Entries: make([]BatchEntry, 0, MaxBatchSize),
+	}
+	b.currentTokens = 0
+}
+
+func (b *batchBuilder) add(fileIdx, chunkIdx int, content string, tokens int) {
+	b.current.Entries = append(b.current.Entries, BatchEntry{
+		FileIndex:  fileIdx,
+		ChunkIndex: chunkIdx,
+		Content:    content,
+	})
+	b.currentTokens += tokens
+}
+
+func (b *batchBuilder) build() []Batch {
+	if len(b.current.Entries) > 0 {
+		b.batches = append(b.batches, b.current)
+	}
+	return b.batches
+}
+
 // FormBatches splits chunks from multiple files into batches respecting both
 // MaxBatchSize (input count) and MaxBatchTokens (token limit).
 // Chunks maintain their file/chunk index tracking for result mapping.
 func FormBatches(files []FileChunks) []Batch {
-	if len(files) == 0 {
-		return nil
-	}
-
-	// Count total chunks to pre-allocate
-	totalChunks := 0
-	for _, f := range files {
-		totalChunks += len(f.Chunks)
-	}
-
+	totalChunks := countTotalChunks(files)
 	if totalChunks == 0 {
 		return nil
 	}
 
-	// Estimate number of batches needed (rough estimate)
 	estimatedBatches := (totalChunks + MaxBatchSize - 1) / MaxBatchSize
-	batches := make([]Batch, 0, estimatedBatches)
-
-	var currentBatch Batch
-	currentBatch.Index = 0
-	currentBatch.Entries = make([]BatchEntry, 0, MaxBatchSize)
-	currentBatchTokens := 0
+	builder := newBatchBuilder(estimatedBatches)
 
 	for _, file := range files {
 		for chunkIdx, chunk := range file.Chunks {
-			chunkTokens := EstimateTokens(chunk)
-
-			// If current batch is full (by count or tokens), finalize it and start a new one
-			wouldExceedCount := len(currentBatch.Entries) >= MaxBatchSize
-			wouldExceedTokens := currentBatchTokens+chunkTokens > MaxBatchTokens && len(currentBatch.Entries) > 0
-
-			if wouldExceedCount || wouldExceedTokens {
-				batches = append(batches, currentBatch)
-				currentBatch = Batch{
-					Index:   len(batches),
-					Entries: make([]BatchEntry, 0, MaxBatchSize),
-				}
-				currentBatchTokens = 0
+			tokens := EstimateTokens(chunk)
+			if builder.isFull(tokens) {
+				builder.finalizeCurrent()
 			}
-
-			currentBatch.Entries = append(currentBatch.Entries, BatchEntry{
-				FileIndex:  file.FileIndex,
-				ChunkIndex: chunkIdx,
-				Content:    chunk,
-			})
-			currentBatchTokens += chunkTokens
+			builder.add(file.FileIndex, chunkIdx, chunk, tokens)
 		}
 	}
 
-	// Add the last batch if it has entries
-	if len(currentBatch.Entries) > 0 {
-		batches = append(batches, currentBatch)
-	}
+	return builder.build()
+}
 
-	return batches
+func countTotalChunks(files []FileChunks) int {
+	total := 0
+	for _, f := range files {
+		total += len(f.Chunks)
+	}
+	return total
 }
 
 // BatchResult contains the embeddings for a batch with file/chunk index mapping.
@@ -129,25 +153,35 @@ type BatchResult struct {
 // MapResultsToFiles maps batch results back to per-file embeddings.
 // Returns a slice where each index corresponds to a file, containing embeddings for that file's chunks.
 func MapResultsToFiles(batches []Batch, results []BatchResult, numFiles int) [][][]float32 {
-	// First, figure out how many chunks each file has
-	chunkCounts := make([]int, numFiles)
+	chunkCounts := countChunksPerFile(batches, numFiles)
+	fileEmbeddings := allocateFileEmbeddings(chunkCounts)
+	populateEmbeddings(fileEmbeddings, batches, results)
+	return fileEmbeddings
+}
+
+func countChunksPerFile(batches []Batch, numFiles int) []int {
+	counts := make([]int, numFiles)
 	for _, batch := range batches {
 		for _, entry := range batch.Entries {
-			if entry.ChunkIndex+1 > chunkCounts[entry.FileIndex] {
-				chunkCounts[entry.FileIndex] = entry.ChunkIndex + 1
+			if entry.ChunkIndex+1 > counts[entry.FileIndex] {
+				counts[entry.FileIndex] = entry.ChunkIndex + 1
 			}
 		}
 	}
+	return counts
+}
 
-	// Allocate result slices for each file
-	fileEmbeddings := make([][][]float32, numFiles)
+func allocateFileEmbeddings(chunkCounts []int) [][][]float32 {
+	embeddings := make([][][]float32, len(chunkCounts))
 	for i, count := range chunkCounts {
 		if count > 0 {
-			fileEmbeddings[i] = make([][]float32, count)
+			embeddings[i] = make([][]float32, count)
 		}
 	}
+	return embeddings
+}
 
-	// Map embeddings back to their source files
+func populateEmbeddings(fileEmbeddings [][][]float32, batches []Batch, results []BatchResult) {
 	for _, result := range results {
 		batch := batches[result.BatchIndex]
 		for i, entry := range batch.Entries {
@@ -156,6 +190,4 @@ func MapResultsToFiles(batches []Batch, results []BatchResult, numFiles int) [][
 			}
 		}
 	}
-
-	return fileEmbeddings
 }

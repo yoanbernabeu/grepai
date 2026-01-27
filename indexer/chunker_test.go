@@ -89,27 +89,6 @@ func TestChunker_OverlapTooLarge(t *testing.T) {
 	}
 }
 
-func TestEstimateTokens(t *testing.T) {
-	tests := []struct {
-		text      string
-		minTokens int
-		maxTokens int
-	}{
-		{"", 0, 0},
-		{"hello", 1, 2},
-		{"hello world", 2, 4},
-		{"func main() { fmt.Println(\"hello\") }", 4, 10},
-	}
-
-	for _, tt := range tests {
-		result := EstimateTokens(tt.text)
-		if result < tt.minTokens || result > tt.maxTokens {
-			t.Errorf("EstimateTokens(%q) = %d, expected between %d and %d",
-				tt.text, result, tt.minTokens, tt.maxTokens)
-		}
-	}
-}
-
 func TestChunker_MinifiedFile(t *testing.T) {
 	chunker := NewChunker(512, 50)
 

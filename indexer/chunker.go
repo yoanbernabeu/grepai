@@ -150,10 +150,3 @@ func (c *Chunker) ChunkWithContext(filePath string, content string) []ChunkInfo 
 
 	return chunks
 }
-
-// EstimateTokens provides a rough token count (simple word-based estimation)
-func EstimateTokens(text string) int {
-	words := strings.Fields(text)
-	// Rough estimation: 1 word ≈ 1.3 tokens on average for code
-	return int(float64(len(words)) * 1.3)
-}

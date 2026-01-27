@@ -102,11 +102,11 @@ func DefaultConfig() *Config {
 	return &Config{
 		Version: 1,
 		Embedder: EmbedderConfig{
-			Provider:    "ollama",
-			Model:       "nomic-embed-text",
-			Endpoint:    "http://localhost:11434",
-			Dimensions:  768,
-			Parallelism: 4,
+			Provider:   "ollama",
+			Model:      "nomic-embed-text",
+			Endpoint:   "http://localhost:11434",
+			Dimensions: 768,
+			// Parallelism intentionally omitted - only applies to OpenAI
 		},
 		Store: StoreConfig{
 			Backend: "gob",
@@ -265,9 +265,9 @@ func (c *Config) applyDefaults() {
 		}
 	}
 
-	// Parallelism default and validation (only relevant for OpenAI, but set for all)
+	// Parallelism default (only used by OpenAI embedder)
 	if c.Embedder.Parallelism <= 0 {
-		c.Embedder.Parallelism = 4 // Safe default for most OpenAI rate limits
+		c.Embedder.Parallelism = 4
 	}
 
 	// Chunking defaults
