@@ -174,38 +174,32 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 	return stats, nil
 }
 
-// indexFilesBatched indexes multiple files using cross-file batch embedding.
-// It collects chunks from all files, forms batches, embeds them in parallel,
-// then maps results back and stores them.
-func (idx *Indexer) indexFilesBatched(
+// fileChunkData holds chunking information for a single file during batch processing.
+type fileChunkData struct {
+	fileIndex  int // Index in the files slice (for result mapping)
+	file       FileInfo
+	chunkInfos []ChunkInfo
+}
+
+// prepareFileChunks processes files by deleting existing chunks and creating new chunks.
+// Returns the file data for storage and the file chunks for embedding.
+func (idx *Indexer) prepareFileChunks(
 	ctx context.Context,
 	files []FileInfo,
-	batchEmb embedder.BatchEmbedder,
-	onProgress BatchProgressCallback,
-) (filesIndexed int, chunksCreated int, err error) {
-	// Prepare file chunks for batch formation
-	type fileChunkData struct {
-		fileIndex  int // Index in the files slice (for result mapping)
-		file       FileInfo
-		chunkInfos []ChunkInfo
-	}
-
+) ([]fileChunkData, []embedder.FileChunks, error) {
 	fileData := make([]fileChunkData, 0, len(files))
 	fileChunks := make([]embedder.FileChunks, 0, len(files))
 
 	for i, file := range files {
-		// Delete existing chunks for this file
 		if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
-			return 0, 0, fmt.Errorf("failed to delete existing chunks for %s: %w", file.Path, err)
+			return nil, nil, fmt.Errorf("failed to delete existing chunks for %s: %w", file.Path, err)
 		}
 
-		// Chunk the file
 		chunkInfos := idx.chunker.ChunkWithContext(file.Path, file.Content)
 		if len(chunkInfos) == 0 {
 			continue
 		}
 
-		// Collect chunk contents
 		contents := make([]string, len(chunkInfos))
 		for j, c := range chunkInfos {
 			contents[j] = c.Content
@@ -223,45 +217,96 @@ func (idx *Indexer) indexFilesBatched(
 		})
 	}
 
+	return fileData, fileChunks, nil
+}
+
+// createStoreChunks creates store.Chunk objects from chunk info and embeddings.
+func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.Time) ([]store.Chunk, []string) {
+	chunks := make([]store.Chunk, len(chunkInfos))
+	chunkIDs := make([]string, len(chunkInfos))
+
+	for i, info := range chunkInfos {
+		chunks[i] = store.Chunk{
+			ID:        info.ID,
+			FilePath:  info.FilePath,
+			StartLine: info.StartLine,
+			EndLine:   info.EndLine,
+			Content:   info.Content,
+			Vector:    embeddings[i],
+			Hash:      info.Hash,
+			UpdatedAt: now,
+		}
+		chunkIDs[i] = info.ID
+	}
+
+	return chunks, chunkIDs
+}
+
+// saveFileData saves chunks and document metadata for a single file.
+func (idx *Indexer) saveFileData(ctx context.Context, fd fileChunkData, chunks []store.Chunk, chunkIDs []string) error {
+	if err := idx.store.SaveChunks(ctx, chunks); err != nil {
+		return fmt.Errorf("failed to save chunks for %s: %w", fd.file.Path, err)
+	}
+
+	doc := store.Document{
+		Path:     fd.file.Path,
+		Hash:     fd.file.Hash,
+		ModTime:  time.Unix(fd.file.ModTime, 0),
+		ChunkIDs: chunkIDs,
+	}
+
+	if err := idx.store.SaveDocument(ctx, doc); err != nil {
+		return fmt.Errorf("failed to save document for %s: %w", fd.file.Path, err)
+	}
+
+	return nil
+}
+
+// wrapBatchProgress creates an embedder.BatchProgress callback from BatchProgressCallback.
+func wrapBatchProgress(onProgress BatchProgressCallback) embedder.BatchProgress {
+	if onProgress == nil {
+		return nil
+	}
+	return func(batchIndex, totalBatches, completedChunks, totalChunks int, retrying bool, attempt int, statusCode int) {
+		onProgress(BatchProgressInfo{
+			BatchIndex:      batchIndex,
+			TotalBatches:    totalBatches,
+			CompletedChunks: completedChunks,
+			TotalChunks:     totalChunks,
+			Retrying:        retrying,
+			Attempt:         attempt,
+			StatusCode:      statusCode,
+		})
+	}
+}
+
+// indexFilesBatched indexes multiple files using cross-file batch embedding.
+// It collects chunks from all files, forms batches, embeds them in parallel,
+// then maps results back and stores them.
+func (idx *Indexer) indexFilesBatched(
+	ctx context.Context,
+	files []FileInfo,
+	batchEmb embedder.BatchEmbedder,
+	onProgress BatchProgressCallback,
+) (filesIndexed int, chunksCreated int, err error) {
+	fileData, fileChunks, err := idx.prepareFileChunks(ctx, files)
+	if err != nil {
+		return 0, 0, err
+	}
+
 	if len(fileChunks) == 0 {
 		return 0, 0, nil
 	}
 
-	// Form batches from all file chunks
 	batches := embedder.FormBatches(fileChunks)
 
-	// Calculate total chunks for progress tracking
-	totalChunks := 0
-	for _, fc := range fileChunks {
-		totalChunks += len(fc.Chunks)
-	}
-
-	// Create progress callback for batch embedding
-	var batchProgress embedder.BatchProgress
-	if onProgress != nil {
-		batchProgress = func(batchIndex, totalBatches, completedChunks, totalChunksArg int, retrying bool, attempt int, statusCode int) {
-			onProgress(BatchProgressInfo{
-				BatchIndex:      batchIndex,
-				TotalBatches:    totalBatches,
-				CompletedChunks: completedChunks,
-				TotalChunks:     totalChunksArg,
-				Retrying:        retrying,
-				Attempt:         attempt,
-				StatusCode:      statusCode,
-			})
-		}
-	}
-
-	// Embed all batches in parallel
-	results, err := batchEmb.EmbedBatches(ctx, batches, batchProgress)
+	results, err := batchEmb.EmbedBatches(ctx, batches, wrapBatchProgress(onProgress))
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to embed batches: %w", err)
 	}
 
-	// Map results back to files
 	fileEmbeddings := embedder.MapResultsToFiles(batches, results, len(files))
 
-	// Save chunks and documents for each file
 	now := time.Now()
 	for _, fd := range fileData {
 		embeddings := fileEmbeddings[fd.fileIndex]
@@ -272,39 +317,10 @@ func (idx *Indexer) indexFilesBatched(
 			continue
 		}
 
-		// Create store chunks
-		chunks := make([]store.Chunk, len(fd.chunkInfos))
-		chunkIDs := make([]string, len(fd.chunkInfos))
+		chunks, chunkIDs := createStoreChunks(fd.chunkInfos, embeddings, now)
 
-		for i, info := range fd.chunkInfos {
-			chunks[i] = store.Chunk{
-				ID:        info.ID,
-				FilePath:  info.FilePath,
-				StartLine: info.StartLine,
-				EndLine:   info.EndLine,
-				Content:   info.Content,
-				Vector:    embeddings[i],
-				Hash:      info.Hash,
-				UpdatedAt: now,
-			}
-			chunkIDs[i] = info.ID
-		}
-
-		// Save chunks
-		if err := idx.store.SaveChunks(ctx, chunks); err != nil {
-			return filesIndexed, chunksCreated, fmt.Errorf("failed to save chunks for %s: %w", fd.file.Path, err)
-		}
-
-		// Save document metadata
-		doc := store.Document{
-			Path:     fd.file.Path,
-			Hash:     fd.file.Hash,
-			ModTime:  time.Unix(fd.file.ModTime, 0),
-			ChunkIDs: chunkIDs,
-		}
-
-		if err := idx.store.SaveDocument(ctx, doc); err != nil {
-			return filesIndexed, chunksCreated, fmt.Errorf("failed to save document for %s: %w", fd.file.Path, err)
+		if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
+			return filesIndexed, chunksCreated, err
 		}
 
 		filesIndexed++
