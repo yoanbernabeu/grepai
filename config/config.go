@@ -321,6 +321,12 @@ func FindProjectRoot() (string, error) {
 		return "", fmt.Errorf("failed to get current directory: %w", err)
 	}
 
+	// Resolve symlinks to handle symlinked directories
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+	}
+
 	dir := cwd
 	for {
 		if Exists(dir) {

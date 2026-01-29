@@ -234,6 +234,65 @@ store:
 	}
 }
 
+// TestFindProjectRootWithSymlink verifies that FindProjectRoot resolves symlinks correctly.
+func TestFindProjectRootWithSymlink(t *testing.T) {
+	// Create a real directory with grepai config
+	realDir := t.TempDir()
+	configDir := filepath.Join(realDir, ConfigDir)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	if err := cfg.Save(realDir); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// Create a symlink to the real directory
+	symlinkParent := t.TempDir()
+	symlinkPath := filepath.Join(symlinkParent, "symlink-project")
+	if err := os.Symlink(realDir, symlinkPath); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	// Save original working directory
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get original working directory: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Logf("warning: failed to restore working directory: %v", err)
+		}
+	}()
+
+	// Change to the symlink directory
+	if err := os.Chdir(symlinkPath); err != nil {
+		t.Fatalf("failed to change to symlink directory: %v", err)
+	}
+
+	// Call FindProjectRoot - it should return the resolved (real) path
+	projectRoot, err := FindProjectRoot()
+	if err != nil {
+		t.Fatalf("FindProjectRoot failed: %v", err)
+	}
+
+	// Resolve realDir for comparison (in case it contains symlinks itself)
+	expectedPath, err := filepath.EvalSymlinks(realDir)
+	if err != nil {
+		t.Fatalf("failed to resolve expected path: %v", err)
+	}
+
+	if projectRoot != expectedPath {
+		t.Errorf("expected resolved path %s, got %s", expectedPath, projectRoot)
+	}
+
+	// Verify the returned path is not the symlink path
+	if projectRoot == symlinkPath {
+		t.Error("FindProjectRoot returned symlink path instead of resolved path")
+	}
+}
+
 // TestBackwardCompatibility verifies that old configs without dimensions/endpoint
 // still work correctly by applying sensible defaults.
 func TestBackwardCompatibility(t *testing.T) {
