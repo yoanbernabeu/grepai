@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -402,12 +403,24 @@ func (e *OpenAIEmbedder) buildEmbedHTTPRequest(ctx context.Context, texts []stri
 	return req, nil
 }
 
-// handleEmbedErrorResponse parses an error response and returns a RetryableError.
-func handleEmbedErrorResponse(resp *http.Response, body []byte) *RetryableError {
+// handleEmbedErrorResponse parses an error response and returns an appropriate error.
+// Returns a ContextLengthError for context limit exceeded, or a RetryableError for other cases.
+func handleEmbedErrorResponse(resp *http.Response, body []byte) error {
 	var errResp openAIErrorResponse
 	msg := string(body)
 	if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
 		msg = errResp.Error.Message
+	}
+
+	// Check for context length error (OpenAI returns 400 with specific message)
+	// Common patterns: "maximum context length", "too many tokens"
+	if resp.StatusCode == http.StatusBadRequest &&
+		(strings.Contains(msg, "maximum context length") ||
+			strings.Contains(msg, "too many tokens") ||
+			strings.Contains(msg, "reduce the length")) {
+		// OpenAI typically includes "8191 tokens" or similar in the message
+		// For simplicity, we don't parse the exact limit from the message
+		return NewContextLengthError(0, 0, 8191, msg)
 	}
 
 	retryErr := NewRetryableError(resp.StatusCode, fmt.Sprintf("OpenAI API error (status %d): %s", resp.StatusCode, msg))

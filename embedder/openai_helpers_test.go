@@ -258,8 +258,12 @@ func TestHandleEmbedErrorResponse_Basic(t *testing.T) {
 	}
 	body := []byte(`{"error": {"message": "Invalid request", "type": "invalid_request_error"}}`)
 
-	retryErr := handleEmbedErrorResponse(resp, body)
+	err := handleEmbedErrorResponse(resp, body)
 
+	retryErr, ok := err.(*RetryableError)
+	if !ok {
+		t.Fatalf("expected *RetryableError, got %T", err)
+	}
 	if retryErr.StatusCode != 400 {
 		t.Errorf("expected status 400, got %d", retryErr.StatusCode)
 	}
@@ -283,8 +287,12 @@ func TestHandleEmbedErrorResponse_RateLimit(t *testing.T) {
 	}
 	body := []byte(`{"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}`)
 
-	retryErr := handleEmbedErrorResponse(resp, body)
+	err := handleEmbedErrorResponse(resp, body)
 
+	retryErr, ok := err.(*RetryableError)
+	if !ok {
+		t.Fatalf("expected *RetryableError, got %T", err)
+	}
 	if retryErr.StatusCode != 429 {
 		t.Errorf("expected status 429, got %d", retryErr.StatusCode)
 	}
@@ -306,14 +314,36 @@ func TestHandleEmbedErrorResponse_InvalidJSON(t *testing.T) {
 	}
 	body := []byte(`not valid json`)
 
-	retryErr := handleEmbedErrorResponse(resp, body)
+	err := handleEmbedErrorResponse(resp, body)
 
+	retryErr, ok := err.(*RetryableError)
+	if !ok {
+		t.Fatalf("expected *RetryableError, got %T", err)
+	}
 	// Should fall back to raw body as message
 	if retryErr.StatusCode != 500 {
 		t.Errorf("expected status 500, got %d", retryErr.StatusCode)
 	}
 	if retryErr.RateLimitHeaders != nil {
 		t.Error("expected no rate limit headers for 500")
+	}
+}
+
+func TestHandleEmbedErrorResponse_ContextLengthError(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{},
+	}
+	body := []byte(`{"error": {"message": "This model's maximum context length is 8191 tokens", "type": "invalid_request_error"}}`)
+
+	err := handleEmbedErrorResponse(resp, body)
+
+	ctxErr, ok := err.(*ContextLengthError)
+	if !ok {
+		t.Fatalf("expected *ContextLengthError for context limit exceeded, got %T", err)
+	}
+	if ctxErr.MaxTokens != 8191 {
+		t.Errorf("expected MaxTokens 8191, got %d", ctxErr.MaxTokens)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -121,10 +122,26 @@ func (e *LMStudioEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp lmStudioErrorResponse
+		msg := string(body)
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
-			return nil, fmt.Errorf("LM Studio API error: %s", errResp.Error.Message)
+			msg = errResp.Error.Message
 		}
-		return nil, fmt.Errorf("LM Studio returned status %d: %s", resp.StatusCode, string(body))
+
+		// Check for context length error
+		// LM Studio may use various messages for context limit exceeded
+		if strings.Contains(msg, "context length") ||
+			strings.Contains(msg, "too many tokens") ||
+			strings.Contains(msg, "maximum context") {
+			// Estimate tokens from total input length
+			totalChars := 0
+			for _, t := range texts {
+				totalChars += len(t)
+			}
+			estimatedTokens := totalChars / 4
+			return nil, NewContextLengthError(0, estimatedTokens, 0, msg)
+		}
+
+		return nil, fmt.Errorf("LM Studio returned status %d: %s", resp.StatusCode, msg)
 	}
 
 	var result lmStudioEmbedResponse

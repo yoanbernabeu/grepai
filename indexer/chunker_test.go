@@ -176,3 +176,146 @@ func TestGetLineNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestChunker_ReChunk(t *testing.T) {
+	chunker := NewChunker(200, 20) // Original chunk size
+
+	t.Run("splits large chunk into smaller pieces", func(t *testing.T) {
+		// Create a large chunk that would exceed context limit
+		largeContent := strings.Repeat("x", 2000)
+		parentChunk := ChunkInfo{
+			ID:        "test.go_0",
+			FilePath:  "test.go",
+			StartLine: 1,
+			EndLine:   50,
+			Content:   largeContent,
+			Hash:      "abc123",
+		}
+
+		subChunks := chunker.ReChunk(parentChunk, 0)
+
+		// Should create multiple sub-chunks
+		if len(subChunks) < 2 {
+			t.Errorf("expected at least 2 sub-chunks, got %d", len(subChunks))
+		}
+
+		// Verify sub-chunk properties
+		for i, subChunk := range subChunks {
+			// ID should follow pattern file.go_parentIndex_subIndex
+			expectedIDPrefix := "test.go_0_"
+			if !strings.HasPrefix(subChunk.ID, expectedIDPrefix) {
+				t.Errorf("sub-chunk %d ID should start with %q, got %q", i, expectedIDPrefix, subChunk.ID)
+			}
+
+			// FilePath should be preserved
+			if subChunk.FilePath != "test.go" {
+				t.Errorf("sub-chunk %d FilePath should be test.go, got %s", i, subChunk.FilePath)
+			}
+
+			// Content should not be empty
+			if len(subChunk.Content) == 0 {
+				t.Errorf("sub-chunk %d has empty content", i)
+			}
+
+			// Line numbers should be within parent range
+			if subChunk.StartLine < parentChunk.StartLine {
+				t.Errorf("sub-chunk %d StartLine %d is before parent StartLine %d",
+					i, subChunk.StartLine, parentChunk.StartLine)
+			}
+		}
+	})
+
+	t.Run("preserves file context prefix", func(t *testing.T) {
+		content := strings.Repeat("code line\n", 100)
+		contentWithContext := "File: myfile.go\n\n" + content
+
+		parentChunk := ChunkInfo{
+			ID:        "myfile.go_0",
+			FilePath:  "myfile.go",
+			StartLine: 1,
+			EndLine:   100,
+			Content:   contentWithContext,
+			Hash:      "abc123",
+		}
+
+		subChunks := chunker.ReChunk(parentChunk, 0)
+
+		for i, subChunk := range subChunks {
+			if !strings.HasPrefix(subChunk.Content, "File: myfile.go\n\n") {
+				t.Errorf("sub-chunk %d should have file context prefix", i)
+			}
+		}
+	})
+
+	t.Run("handles empty content", func(t *testing.T) {
+		parentChunk := ChunkInfo{
+			ID:        "empty.go_0",
+			FilePath:  "empty.go",
+			StartLine: 1,
+			EndLine:   1,
+			Content:   "",
+			Hash:      "abc123",
+		}
+
+		subChunks := chunker.ReChunk(parentChunk, 0)
+
+		if len(subChunks) != 0 {
+			t.Errorf("expected 0 sub-chunks for empty content, got %d", len(subChunks))
+		}
+	})
+
+	t.Run("handles whitespace-only content", func(t *testing.T) {
+		parentChunk := ChunkInfo{
+			ID:        "whitespace.go_0",
+			FilePath:  "whitespace.go",
+			StartLine: 1,
+			EndLine:   1,
+			Content:   "   \n\n\t\t   ",
+			Hash:      "abc123",
+		}
+
+		subChunks := chunker.ReChunk(parentChunk, 0)
+
+		if len(subChunks) != 0 {
+			t.Errorf("expected 0 sub-chunks for whitespace-only content, got %d", len(subChunks))
+		}
+	})
+
+	t.Run("generates unique sub-chunk IDs", func(t *testing.T) {
+		content := strings.Repeat("x", 2000)
+		parentChunk := ChunkInfo{
+			ID:        "test.go_5",
+			FilePath:  "test.go",
+			StartLine: 100,
+			EndLine:   200,
+			Content:   content,
+			Hash:      "abc123",
+		}
+
+		subChunks := chunker.ReChunk(parentChunk, 5)
+
+		idSet := make(map[string]bool)
+		for _, subChunk := range subChunks {
+			if idSet[subChunk.ID] {
+				t.Errorf("duplicate sub-chunk ID: %s", subChunk.ID)
+			}
+			idSet[subChunk.ID] = true
+		}
+	})
+}
+
+func TestChunker_ChunkSize(t *testing.T) {
+	chunker := NewChunker(256, 32)
+
+	if chunker.ChunkSize() != 256 {
+		t.Errorf("ChunkSize() = %d, expected 256", chunker.ChunkSize())
+	}
+}
+
+func TestChunker_Overlap(t *testing.T) {
+	chunker := NewChunker(256, 32)
+
+	if chunker.Overlap() != 32 {
+		t.Errorf("Overlap() = %d, expected 32", chunker.Overlap())
+	}
+}
