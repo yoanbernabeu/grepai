@@ -244,6 +244,29 @@ chunking:
 - **Smaller chunks**: More precise matches, more results, faster
 - **More overlap**: Better continuity, larger index
 
+### Automatic Re-chunking
+
+If you configure a `chunking.size` larger than your embedder's context limit (e.g., 10000 tokens with a model that only supports 8192), grepai will automatically detect the error and re-chunk the content into smaller pieces.
+
+This happens transparently:
+1. grepai attempts to embed the chunk
+2. If the embedder returns a "context length exceeded" error, grepai splits the chunk in half
+3. The process repeats until chunks fit within the model's limit (up to 3 attempts)
+
+You'll see log messages like:
+```
+Re-chunking large_file.go chunk 0 (attempt 1/3): context limit exceeded
+Split chunk into 4 sub-chunks
+```
+
+**Recommended chunk sizes per model:**
+
+| Provider | Model | Max Context | Recommended Size |
+|----------|-------|-------------|------------------|
+| Ollama | nomic-embed-text | ~8192 | 512-2048 |
+| OpenAI | text-embedding-3-small | 8191 | 512-4096 |
+| LM Studio | nomic-embed-text-v1.5 | ~8192 | 512-2048 |
+
 ## Search Options
 
 grepai provides two optional search enhancements:

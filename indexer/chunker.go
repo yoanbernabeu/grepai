@@ -150,3 +150,112 @@ func (c *Chunker) ChunkWithContext(filePath string, content string) []ChunkInfo 
 
 	return chunks
 }
+
+// ReChunk splits a single chunk into smaller sub-chunks when it exceeds the embedder's context limit.
+// It uses half the original chunk size to ensure the new chunks fit within limits.
+// The parentIndex is used to generate unique sub-chunk IDs (e.g., "file.go_0_0", "file.go_0_1").
+func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
+	// Strip the file context prefix if present (we'll re-add it later)
+	content := parent.Content
+	filePrefix := fmt.Sprintf("File: %s\n\n", parent.FilePath)
+	hasContext := strings.HasPrefix(content, filePrefix)
+	if hasContext {
+		content = strings.TrimPrefix(content, filePrefix)
+	}
+
+	if len(content) == 0 {
+		return nil
+	}
+
+	// Use half the original chunk size for re-chunking
+	halfSize := c.chunkSize / 2
+	if halfSize < 64 {
+		halfSize = 64 // Minimum reasonable chunk size
+	}
+	halfOverlap := c.overlap / 2
+
+	// Create a temporary chunker with smaller settings
+	subChunker := NewChunker(halfSize, halfOverlap)
+
+	// Build line index for the original chunk content
+	lineStarts := buildLineStarts(content)
+	maxChars := halfSize * CharsPerToken
+	overlapChars := halfOverlap * CharsPerToken
+
+	var subChunks []ChunkInfo
+	subIndex := 0
+	pos := 0
+
+	for pos < len(content) {
+		end := pos + maxChars
+		if end > len(content) {
+			end = len(content)
+		}
+
+		// Try to break at a newline if possible
+		if end < len(content) {
+			lastNewline := strings.LastIndex(content[pos:end], "\n")
+			if lastNewline > 0 {
+				end = pos + lastNewline + 1
+			}
+		}
+
+		chunkContent := content[pos:end]
+
+		// Skip empty sub-chunks
+		if strings.TrimSpace(chunkContent) == "" {
+			pos = end
+			continue
+		}
+
+		// Calculate line numbers relative to the parent chunk
+		subStartLine := getLineNumber(lineStarts, pos)
+		subEndLine := getLineNumber(lineStarts, end-1)
+
+		// Adjust to absolute line numbers
+		absoluteStartLine := parent.StartLine + subStartLine - 1
+		absoluteEndLine := parent.StartLine + subEndLine - 1
+
+		// Generate sub-chunk ID: file.go_parentIndex_subIndex
+		hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d:%d:%s", parent.FilePath, parentIndex, subIndex, pos, chunkContent)))
+		subChunkID := fmt.Sprintf("%s_%d_%d", parent.FilePath, parentIndex, subIndex)
+
+		// Re-add file context if it was present in the parent
+		finalContent := chunkContent
+		if hasContext {
+			finalContent = fmt.Sprintf("File: %s\n\n%s", parent.FilePath, chunkContent)
+		}
+
+		subChunks = append(subChunks, ChunkInfo{
+			ID:        subChunkID,
+			FilePath:  parent.FilePath,
+			StartLine: absoluteStartLine,
+			EndLine:   absoluteEndLine,
+			Content:   finalContent,
+			Hash:      hex.EncodeToString(hash[:8]),
+		})
+
+		subIndex++
+
+		// Move to next sub-chunk with overlap
+		nextPos := end - overlapChars
+		if nextPos <= pos {
+			nextPos = end // Prevent infinite loop
+		}
+		pos = nextPos
+	}
+
+	_ = subChunker // Mark as used (we might use it in the future for more complex scenarios)
+
+	return subChunks
+}
+
+// ChunkSize returns the configured chunk size (for testing and re-chunking decisions)
+func (c *Chunker) ChunkSize() int {
+	return c.chunkSize
+}
+
+// Overlap returns the configured overlap (for testing)
+func (c *Chunker) Overlap() int {
+	return c.overlap
+}

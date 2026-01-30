@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -94,7 +95,16 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Ollama returned status %d: %s", resp.StatusCode, string(body))
+		bodyStr := string(body)
+
+		// Check for context length error (Ollama returns 500 with specific message)
+		if resp.StatusCode == http.StatusInternalServerError &&
+			strings.Contains(bodyStr, "exceeds the context length") {
+			estimatedTokens := len(text) / 4 // rough estimate: 4 chars per token
+			return nil, NewContextLengthError(0, estimatedTokens, 0, bodyStr)
+		}
+
+		return nil, fmt.Errorf("Ollama returned status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	var result ollamaEmbedResponse
@@ -115,6 +125,11 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	for i, text := range texts {
 		embedding, err := e.Embed(ctx, text)
 		if err != nil {
+			// Wrap ContextLengthError with correct chunk index
+			if ctxErr := AsContextLengthError(err); ctxErr != nil {
+				ctxErr.ChunkIndex = i
+				return nil, ctxErr
+			}
 			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
 		}
 		results[i] = embedding
