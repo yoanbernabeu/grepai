@@ -60,8 +60,23 @@ type EmbedderConfig struct {
 	Model       string `yaml:"model"`
 	Endpoint    string `yaml:"endpoint,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
-	Dimensions  int    `yaml:"dimensions,omitempty"`
+	Dimensions  *int   `yaml:"dimensions,omitempty"`
 	Parallelism int    `yaml:"parallelism"` // Number of parallel workers for batch embedding (default: 4)
+}
+
+// GetDimensions returns the configured dimensions or a default value.
+// For OpenAI, defaults to 1536 (text-embedding-3-small).
+// For Ollama/LMStudio, defaults to 768 (nomic-embed-text).
+func (e *EmbedderConfig) GetDimensions() int {
+	if e.Dimensions != nil {
+		return *e.Dimensions
+	}
+	switch e.Provider {
+	case "openai":
+		return 1536
+	default:
+		return 768
+	}
 }
 
 type StoreConfig struct {
@@ -99,13 +114,14 @@ type TraceConfig struct {
 }
 
 func DefaultConfig() *Config {
+	defaultDim := 768
 	return &Config{
 		Version: 1,
 		Embedder: EmbedderConfig{
 			Provider:   "ollama",
 			Model:      "nomic-embed-text",
 			Endpoint:   "http://localhost:11434",
-			Dimensions: 768,
+			Dimensions: &defaultDim,
 			// Parallelism intentionally omitted - only applies to OpenAI
 		},
 		Store: StoreConfig{
@@ -252,16 +268,16 @@ func (c *Config) applyDefaults() {
 		}
 	}
 
-	if c.Embedder.Dimensions == 0 {
+	// Only set default dimensions for local embedders (Ollama, LMStudio).
+	// For OpenAI, leave nil to let the API use the model's native dimensions.
+	if c.Embedder.Dimensions == nil {
 		switch c.Embedder.Provider {
 		case "ollama":
-			c.Embedder.Dimensions = 768 // nomic-embed-text default
+			dim := 768 // nomic-embed-text default
+			c.Embedder.Dimensions = &dim
 		case "lmstudio":
-			c.Embedder.Dimensions = 768 // nomic default
-		case "openai":
-			c.Embedder.Dimensions = 1536 // text-embedding-3-small default
-		default:
-			c.Embedder.Dimensions = defaults.Embedder.Dimensions
+			dim := 768 // nomic default
+			c.Embedder.Dimensions = &dim
 		}
 	}
 

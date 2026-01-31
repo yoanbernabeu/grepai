@@ -26,7 +26,7 @@ type OpenAIEmbedder struct {
 	endpoint    string
 	model       string
 	apiKey      string
-	dimensions  int
+	dimensions  *int
 	parallelism int
 	retryPolicy RetryPolicy
 	client      *http.Client
@@ -38,7 +38,7 @@ type OpenAIEmbedder struct {
 type openAIEmbedRequest struct {
 	Model      string   `json:"model"`
 	Input      []string `json:"input"`
-	Dimensions int      `json:"dimensions,omitempty"`
+	Dimensions *int     `json:"dimensions,omitempty"`
 }
 
 type openAIEmbedResponse struct {
@@ -80,7 +80,7 @@ func WithOpenAIKey(key string) OpenAIOption {
 }
 func WithOpenAIDimensions(dimensions int) OpenAIOption {
 	return func(e *OpenAIEmbedder) {
-		e.dimensions = dimensions
+		e.dimensions = &dimensions
 	}
 }
 
@@ -113,7 +113,7 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
 		endpoint:    defaultOpenAIEndpoint,
 		model:       defaultOpenAIModel,
-		dimensions:  defaultOpenAI3SmallDimensions,
+		dimensions:  nil, // nil = let the model use its native dimensions
 		parallelism: defaultParallelism,
 		retryPolicy: DefaultRetryPolicy(),
 		client: &http.Client{
@@ -215,7 +215,10 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 }
 
 func (e *OpenAIEmbedder) Dimensions() int {
-	return e.dimensions
+	if e.dimensions == nil {
+		return defaultOpenAI3SmallDimensions
+	}
+	return *e.dimensions
 }
 
 func (e *OpenAIEmbedder) Close() error {

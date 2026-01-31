@@ -30,7 +30,7 @@ func TestServerCreateEmbedder_AppliesConfiguredDimensions(t *testing.T) {
 			s := &Server{}
 			cfg := config.DefaultConfig()
 			cfg.Embedder.Provider = tt.provider
-			cfg.Embedder.Dimensions = tt.dimensions
+			cfg.Embedder.Dimensions = &tt.dimensions
 			cfg.Embedder.APIKey = tt.apiKey
 
 			emb, err := s.createEmbedder(cfg)

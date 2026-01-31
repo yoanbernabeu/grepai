@@ -203,11 +203,12 @@ func TestEstimateBatchTokens_WithBucket(t *testing.T) {
 }
 
 func TestBuildEmbedHTTPRequest(t *testing.T) {
+	dim := 512
 	e := &OpenAIEmbedder{
 		endpoint:   "https://api.example.com/v1",
 		model:      "text-embedding-3-small",
 		apiKey:     "test-api-key",
-		dimensions: 512,
+		dimensions: &dim,
 	}
 
 	ctx := context.Background()
@@ -246,8 +247,8 @@ func TestBuildEmbedHTTPRequest(t *testing.T) {
 	if len(body.Input) != 2 {
 		t.Errorf("expected 2 inputs, got %d", len(body.Input))
 	}
-	if body.Dimensions != 512 {
-		t.Errorf("expected dimensions 512, got %d", body.Dimensions)
+	if body.Dimensions == nil || *body.Dimensions != 512 {
+		t.Errorf("expected dimensions 512, got %v", body.Dimensions)
 	}
 }
 
@@ -426,4 +427,127 @@ func TestParseEmbeddingsResponse_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
+}
+
+// TestOpenAIEmbedRequest_OmitsNilDimensions verifies that the dimensions field
+// is omitted from JSON when nil (the fix for issue #91).
+func TestOpenAIEmbedRequest_OmitsNilDimensions(t *testing.T) {
+	req := openAIEmbedRequest{
+		Model:      "text-embedding-3-small",
+		Input:      []string{"test"},
+		Dimensions: nil, // nil should be omitted
+	}
+
+	jsonBytes, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	// Verify "dimensions" key is not present in JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if _, exists := result["dimensions"]; exists {
+		t.Error("dimensions key should be omitted when nil")
+	}
+}
+
+// TestOpenAIEmbedRequest_IncludesExplicitDimensions verifies that the dimensions
+// field is included when explicitly set.
+func TestOpenAIEmbedRequest_IncludesExplicitDimensions(t *testing.T) {
+	dim := 512
+	req := openAIEmbedRequest{
+		Model:      "text-embedding-3-small",
+		Input:      []string{"test"},
+		Dimensions: &dim,
+	}
+
+	jsonBytes, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	// Verify "dimensions" key is present with correct value
+	var result map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	dimVal, exists := result["dimensions"]
+	if !exists {
+		t.Fatal("dimensions key should be present when explicitly set")
+	}
+
+	if int(dimVal.(float64)) != 512 {
+		t.Errorf("expected dimensions 512, got %v", dimVal)
+	}
+}
+
+// TestOpenAIEmbedder_DimensionsMethod verifies the Dimensions() method behavior.
+func TestOpenAIEmbedder_DimensionsMethod(t *testing.T) {
+	tests := []struct {
+		name       string
+		dimensions *int
+		expected   int
+	}{
+		{
+			name:       "nil returns default (1536)",
+			dimensions: nil,
+			expected:   1536,
+		},
+		{
+			name:       "explicit 512 returns 512",
+			dimensions: intPtr(512),
+			expected:   512,
+		},
+		{
+			name:       "explicit 3072 returns 3072",
+			dimensions: intPtr(3072),
+			expected:   3072,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &OpenAIEmbedder{
+				dimensions: tt.dimensions,
+			}
+
+			if e.Dimensions() != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, e.Dimensions())
+			}
+		})
+	}
+}
+
+// TestBuildEmbedHTTPRequest_NilDimensions verifies that buildEmbedHTTPRequest
+// does not include dimensions when nil.
+func TestBuildEmbedHTTPRequest_NilDimensions(t *testing.T) {
+	e := &OpenAIEmbedder{
+		endpoint:   "https://api.example.com/v1",
+		model:      "text-embedding-3-small",
+		apiKey:     "test-api-key",
+		dimensions: nil, // Should not be included in request
+	}
+
+	ctx := context.Background()
+	req, err := e.buildEmbedHTTPRequest(ctx, []string{"hello"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var body openAIEmbedRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode request body: %v", err)
+	}
+
+	if body.Dimensions != nil {
+		t.Errorf("expected nil dimensions, got %v", body.Dimensions)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }

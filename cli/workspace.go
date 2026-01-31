@@ -145,8 +145,8 @@ func runWorkspaceShow(cmd *cobra.Command, args []string) error {
 	if ws.Embedder.Endpoint != "" {
 		fmt.Printf("  Endpoint: %s\n", ws.Embedder.Endpoint)
 	}
-	if ws.Embedder.Dimensions > 0 {
-		fmt.Printf("  Dimensions: %d\n", ws.Embedder.Dimensions)
+	if ws.Embedder.Dimensions != nil {
+		fmt.Printf("  Dimensions: %d\n", *ws.Embedder.Dimensions)
 	}
 
 	fmt.Printf("\nProjects (%d):\n", len(ws.Projects))
@@ -300,7 +300,8 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 			model = "nomic-embed-text"
 		}
 		embedderConfig.Model = model
-		embedderConfig.Dimensions = 768
+		dim := 768
+		embedderConfig.Dimensions = &dim
 	case "2":
 		embedderConfig.Provider = "openai"
 		fmt.Print("OpenAI API Key: ")
@@ -314,7 +315,7 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 		}
 		embedderConfig.Model = model
 		embedderConfig.Endpoint = "https://api.openai.com/v1"
-		embedderConfig.Dimensions = 1536
+		// OpenAI: leave Dimensions nil to use model's native dimensions
 	case "3":
 		embedderConfig.Provider = "lmstudio"
 		fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")
@@ -331,7 +332,8 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 			model = "nomic-embed-text"
 		}
 		embedderConfig.Model = model
-		embedderConfig.Dimensions = 768
+		dim := 768
+		embedderConfig.Dimensions = &dim
 	default:
 		return fmt.Errorf("invalid choice: %s", embedderChoice)
 	}

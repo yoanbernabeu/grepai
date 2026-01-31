@@ -18,7 +18,6 @@ var (
 )
 
 const (
-	openAI3SmallDimensions      = 1536
 	lmStudioEmbeddingDimensions = 768
 )
 
@@ -76,12 +75,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Provider = "lmstudio"
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
-				cfg.Embedder.Dimensions = lmStudioEmbeddingDimensions
+				dim := lmStudioEmbeddingDimensions
+				cfg.Embedder.Dimensions = &dim
 			case "3", "openai":
 				cfg.Embedder.Provider = "openai"
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				cfg.Embedder.Dimensions = openAI3SmallDimensions
+				// OpenAI: leave Dimensions nil to use model's native dimensions
 			default:
 				cfg.Embedder.Provider = "ollama"
 			}
@@ -91,11 +91,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "lmstudio":
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
-				cfg.Embedder.Dimensions = lmStudioEmbeddingDimensions
+				dim := lmStudioEmbeddingDimensions
+				cfg.Embedder.Dimensions = &dim
 			case "openai":
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				cfg.Embedder.Dimensions = openAI3SmallDimensions
+				// OpenAI: leave Dimensions nil to use model's native dimensions
 			}
 		}
 
