@@ -683,14 +683,15 @@ func printProgress(current, total int, filePath string) {
 
 func printBatchProgress(info indexer.BatchProgressInfo) {
 	if info.Retrying {
-		// Clear current line and show retry message with rate limit visibility
 		fmt.Printf("\r%s\r", strings.Repeat(" ", 80))
 		reason := describeRetryReason(info.StatusCode)
 		fmt.Printf("%s - Retrying batch %d (attempt %d/5)...\n", reason, info.BatchIndex+1, info.Attempt)
 	} else if info.TotalChunks > 0 {
-		// Show progress percentage after batch completion
 		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
-		fmt.Printf("\rEmbedding progress: %d/%d chunks (%.0f%%)...", info.CompletedChunks, info.TotalChunks, percentage)
+		barWidth := 20
+		filled := int(float64(barWidth) * float64(info.CompletedChunks) / float64(info.TotalChunks))
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+		fmt.Printf("\rEmbedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks)
 	}
 }
 
