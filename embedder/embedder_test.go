@@ -157,8 +157,9 @@ func TestNewOpenAIEmbedder_Defaults(t *testing.T) {
 		t.Errorf("expected model %s, got %s", defaultOpenAIModel, e.model)
 	}
 
-	if e.dimensions != defaultOpenAI3SmallDimensions {
-		t.Errorf("expected dimensions %d, got %d", defaultOpenAI3SmallDimensions, e.dimensions)
+	// dimensions should be nil by default (no dimensions param sent to API)
+	if e.dimensions != nil {
+		t.Errorf("expected nil dimensions, got %v", e.dimensions)
 	}
 }
 
@@ -190,8 +191,8 @@ func TestNewOpenAIEmbedder_WithOptions(t *testing.T) {
 		t.Errorf("expected apiKey %s, got %s", customKey, e.apiKey)
 	}
 
-	if e.dimensions != customDimensions {
-		t.Errorf("expected dimensions %d, got %d", customDimensions, e.dimensions)
+	if e.dimensions == nil || *e.dimensions != customDimensions {
+		t.Errorf("expected dimensions %d, got %v", customDimensions, e.dimensions)
 	}
 }
 

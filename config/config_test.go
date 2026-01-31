@@ -26,8 +26,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("expected model nomic-embed-text, got %s", cfg.Embedder.Model)
 	}
 
-	if cfg.Embedder.Dimensions != 768 {
-		t.Errorf("expected dimensions 768, got %d", cfg.Embedder.Dimensions)
+	if cfg.Embedder.Dimensions == nil || *cfg.Embedder.Dimensions != 768 {
+		t.Errorf("expected dimensions 768, got %v", cfg.Embedder.Dimensions)
 	}
 
 	if cfg.Store.Backend != "gob" {
@@ -52,7 +52,8 @@ func TestConfigSaveAndLoad(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Embedder.Provider = "openai"
-	cfg.Embedder.Dimensions = dimensions
+	dim := dimensions
+	cfg.Embedder.Dimensions = &dim
 	cfg.Embedder.Endpoint = endpoints
 	cfg.Store.Backend = "postgres"
 
@@ -77,8 +78,8 @@ func TestConfigSaveAndLoad(t *testing.T) {
 		t.Errorf("expected provider openai, got %s", loaded.Embedder.Provider)
 	}
 
-	if loaded.Embedder.Dimensions != dimensions {
-		t.Errorf("expected dimensions %d, got %d", dimensions, loaded.Embedder.Dimensions)
+	if loaded.Embedder.Dimensions == nil || *loaded.Embedder.Dimensions != dimensions {
+		t.Errorf("expected dimensions %d, got %v", dimensions, loaded.Embedder.Dimensions)
 	}
 
 	if loaded.Store.Backend != "postgres" {
@@ -391,8 +392,95 @@ store:
 				t.Errorf("expected endpoint %s, got %s", tt.expectedEndpoint, loaded.Embedder.Endpoint)
 			}
 
-			if loaded.Embedder.Dimensions != tt.expectedDimensions {
-				t.Errorf("expected dimensions %d, got %d", tt.expectedDimensions, loaded.Embedder.Dimensions)
+			if loaded.Embedder.GetDimensions() != tt.expectedDimensions {
+				t.Errorf("expected dimensions %d, got %d", tt.expectedDimensions, loaded.Embedder.GetDimensions())
+			}
+		})
+	}
+}
+
+// TestDimensionsPointerBehavior verifies the *int dimension behavior (issue #91).
+func TestDimensionsPointerBehavior(t *testing.T) {
+	tests := []struct {
+		name               string
+		configYAML         string
+		expectedNil        bool
+		expectedDimensions int
+	}{
+		{
+			name: "openai without dimensions leaves Dimensions nil",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+store:
+  backend: gob
+`,
+			expectedNil:        true,
+			expectedDimensions: 1536, // GetDimensions() returns default
+		},
+		{
+			name: "openai with explicit dimensions sets pointer",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-test
+  dimensions: 512
+store:
+  backend: gob
+`,
+			expectedNil:        false,
+			expectedDimensions: 512,
+		},
+		{
+			name: "ollama without dimensions gets default pointer",
+			configYAML: `version: 1
+embedder:
+  provider: ollama
+  model: nomic-embed-text
+store:
+  backend: gob
+`,
+			expectedNil:        false,
+			expectedDimensions: 768,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configDir := filepath.Join(tmpDir, ConfigDir)
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				t.Fatalf("failed to create config dir: %v", err)
+			}
+
+			configPath := filepath.Join(configDir, ConfigFileName)
+			if err := os.WriteFile(configPath, []byte(tt.configYAML), 0600); err != nil {
+				t.Fatalf("failed to write config: %v", err)
+			}
+
+			loaded, err := Load(tmpDir)
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+
+			if tt.expectedNil {
+				if loaded.Embedder.Dimensions != nil {
+					t.Errorf("expected nil Dimensions, got %d", *loaded.Embedder.Dimensions)
+				}
+			} else {
+				if loaded.Embedder.Dimensions == nil {
+					t.Error("expected non-nil Dimensions, got nil")
+				} else if *loaded.Embedder.Dimensions != tt.expectedDimensions {
+					t.Errorf("expected Dimensions=%d, got %d", tt.expectedDimensions, *loaded.Embedder.Dimensions)
+				}
+			}
+
+			// GetDimensions() should always return the expected value
+			if loaded.Embedder.GetDimensions() != tt.expectedDimensions {
+				t.Errorf("GetDimensions() expected %d, got %d", tt.expectedDimensions, loaded.Embedder.GetDimensions())
 			}
 		})
 	}

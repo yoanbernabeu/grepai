@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+// intPtr is a helper function for creating *int values in tests.
+func intPtr(v int) *int {
+	return &v
+}
+
 // setTestHomeDir sets the home directory for testing in a cross-platform way.
 // On Windows, os.UserHomeDir() uses USERPROFILE, not HOME.
 func setTestHomeDir(t *testing.T, dir string) func() {
@@ -65,7 +70,7 @@ func TestWorkspaceConfigOperations(t *testing.T) {
 				Provider:   "ollama",
 				Model:      "nomic-embed-text",
 				Endpoint:   "http://localhost:11434",
-				Dimensions: 768,
+				Dimensions: intPtr(768),
 			},
 			Projects: []ProjectEntry{},
 		}
@@ -235,7 +240,7 @@ func TestWorkspaceConfigOperations(t *testing.T) {
 				Provider:   "ollama",
 				Model:      "nomic-embed-text",
 				Endpoint:   "http://localhost:11434",
-				Dimensions: 768,
+				Dimensions: intPtr(768),
 			},
 			Projects: []ProjectEntry{
 				{Name: "project1", Path: "/path/1"},

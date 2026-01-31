@@ -95,28 +95,37 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	var emb embedder.Embedder
 	switch cfg.Embedder.Provider {
 	case "ollama":
-		emb = embedder.NewOllamaEmbedder(
+		opts := []embedder.OllamaOption{
 			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithOllamaModel(cfg.Embedder.Model),
-			embedder.WithOllamaDimensions(cfg.Embedder.Dimensions),
-		)
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOllamaDimensions(*cfg.Embedder.Dimensions))
+		}
+		emb = embedder.NewOllamaEmbedder(opts...)
 	case "openai":
-		var err error
-		emb, err = embedder.NewOpenAIEmbedder(
+		opts := []embedder.OpenAIOption{
 			embedder.WithOpenAIModel(cfg.Embedder.Model),
 			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOpenAIDimensions(cfg.Embedder.Dimensions),
-		)
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOpenAIDimensions(*cfg.Embedder.Dimensions))
+		}
+		var err error
+		emb, err = embedder.NewOpenAIEmbedder(opts...)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
 		}
 	case "lmstudio":
-		emb = embedder.NewLMStudioEmbedder(
+		opts := []embedder.LMStudioOption{
 			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
 			embedder.WithLMStudioModel(cfg.Embedder.Model),
-			embedder.WithLMStudioDimensions(cfg.Embedder.Dimensions),
-		)
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
+		}
+		emb = embedder.NewLMStudioEmbedder(opts...)
 	default:
 		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}
@@ -134,7 +143,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.Dimensions)
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
@@ -144,7 +153,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			collectionName = store.SanitizeCollectionName(projectRoot)
 		}
 		var err error
-		st, err = store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.Dimensions)
+		st, err = store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions())
 		if err != nil {
 			return fmt.Errorf("failed to connect to qdrant: %w", err)
 		}
@@ -295,7 +304,7 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.Dimensions)
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
 		if err != nil {
 			return nil, err
 		}
@@ -338,27 +347,36 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	var emb embedder.Embedder
 	switch ws.Embedder.Provider {
 	case "ollama":
-		emb = embedder.NewOllamaEmbedder(
+		opts := []embedder.OllamaOption{
 			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
 			embedder.WithOllamaModel(ws.Embedder.Model),
-			embedder.WithOllamaDimensions(ws.Embedder.Dimensions),
-		)
+		}
+		if ws.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOllamaDimensions(*ws.Embedder.Dimensions))
+		}
+		emb = embedder.NewOllamaEmbedder(opts...)
 	case "openai":
-		emb, err = embedder.NewOpenAIEmbedder(
+		opts := []embedder.OpenAIOption{
 			embedder.WithOpenAIModel(ws.Embedder.Model),
 			embedder.WithOpenAIKey(ws.Embedder.APIKey),
 			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
-			embedder.WithOpenAIDimensions(ws.Embedder.Dimensions),
-		)
+		}
+		if ws.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOpenAIDimensions(*ws.Embedder.Dimensions))
+		}
+		emb, err = embedder.NewOpenAIEmbedder(opts...)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
 		}
 	case "lmstudio":
-		emb = embedder.NewLMStudioEmbedder(
+		opts := []embedder.LMStudioOption{
 			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
 			embedder.WithLMStudioModel(ws.Embedder.Model),
-			embedder.WithLMStudioDimensions(ws.Embedder.Dimensions),
-		)
+		}
+		if ws.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithLMStudioDimensions(*ws.Embedder.Dimensions))
+		}
+		emb = embedder.NewLMStudioEmbedder(opts...)
 	default:
 		return fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
 	}
@@ -370,7 +388,7 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 
 	switch ws.Store.Backend {
 	case "postgres":
-		st, err = store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.Dimensions)
+		st, err = store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions())
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
@@ -379,7 +397,7 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 		if collectionName == "" {
 			collectionName = "workspace_" + ws.Name
 		}
-		st, err = store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.Dimensions)
+		st, err = store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.GetDimensions())
 		if err != nil {
 			return fmt.Errorf("failed to connect to qdrant: %w", err)
 		}
