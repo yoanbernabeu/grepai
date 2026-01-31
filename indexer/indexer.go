@@ -148,9 +148,18 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 		}
 		stats.FilesIndexed = indexed
 		stats.ChunksCreated = chunks
-	} else {
-		// Fall back to sequential indexing
-		for _, file := range filesToIndex {
+	} else if len(filesToIndex) > 0 {
+		// Sequential indexing for non-batch embedders (e.g., Ollama)
+		total := len(filesToIndex)
+		for i, file := range filesToIndex {
+			if onBatchProgress != nil {
+				onBatchProgress(BatchProgressInfo{
+					BatchIndex:      i,
+					TotalBatches:    total,
+					CompletedChunks: i,
+					TotalChunks:     total,
+				})
+			}
 			chunks, err := idx.IndexFile(ctx, file)
 			if err != nil {
 				log.Printf("Failed to index %s: %v", file.Path, err)
@@ -158,6 +167,14 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 			}
 			stats.FilesIndexed++
 			stats.ChunksCreated += chunks
+		}
+		if onBatchProgress != nil {
+			onBatchProgress(BatchProgressInfo{
+				BatchIndex:      total,
+				TotalBatches:    total,
+				CompletedChunks: total,
+				TotalChunks:     total,
+			})
 		}
 	}
 
