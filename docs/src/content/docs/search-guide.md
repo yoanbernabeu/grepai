@@ -71,16 +71,21 @@ func AuthMiddleware() gin.HandlerFunc {
 - **File:lines**: Location of the matching chunk
 - **Content**: Code snippet with context
 
-### JSON Output
+### Structured Output
 
-For AI agents and scripts, use the `--json` flag:
+For AI agents and scripts, use `--json` or `--toon` flags:
 
 ```bash
+# JSON output
 grepai search "authentication" --json           # Full JSON output
 grepai search "authentication" --json --compact # Minimal JSON (no content field)
+
+# TOON output (~50% fewer tokens than JSON)
+grepai search "authentication" --toon           # Full TOON output
+grepai search "authentication" --toon --compact # Minimal TOON (no content field)
 ```
 
-Output format:
+#### JSON Format
 
 ```json
 [
@@ -93,6 +98,24 @@ Output format:
   }
 ]
 ```
+
+#### TOON Format
+
+TOON (Token-Oriented Object Notation) is a more compact format designed for AI agents:
+
+```
+[{file_path:middleware/auth.go,start_line:15,end_line:45,score:0.89,content:func AuthMiddleware() gin.HandlerFunc { ... }}]
+```
+
+**When to use TOON:**
+- AI agents with token constraints
+- High-volume search operations
+- When bandwidth or cost is a concern
+
+**When to use JSON:**
+- Human-readable output needed
+- Integration with existing JSON tooling
+- Debugging and inspection
 
 ### Search Enhancements
 
@@ -148,8 +171,11 @@ grepai search "REST API route handlers"
 Provide code context to AI agents:
 
 ```bash
-# Get compact JSON for AI processing (~80% fewer tokens)
+# JSON output (~80% fewer tokens with --compact)
 grepai search "payment processing" --json --compact --limit 5
+
+# TOON output (even more compact, ~50% fewer tokens than JSON)
+grepai search "payment processing" --toon --compact --limit 5
 ```
 
 ### Commands Reference

@@ -76,13 +76,15 @@ You are a specialized code exploration agent with access to grepai.
 ### Primary Tools
 
 Use `grepai search` for semantic code search:
-- grepai search "authentication flow"
-- grepai search "error handling"
+- grepai search "authentication flow" --json
+- grepai search "error handling" --toon --compact
 
 Use `grepai trace` for call graph analysis:
-- grepai trace callers "Login"
-- grepai trace callees "HandleRequest"
-- grepai trace graph "ProcessOrder" --depth 3
+- grepai trace callers "Login" --json
+- grepai trace callees "HandleRequest" --toon
+- grepai trace graph "ProcessOrder" --depth 3 --toon
+
+**Note:** Use `--toon` for ~50% fewer tokens than `--json`.
 
 ### Workflow
 

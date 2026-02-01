@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/embedder"
@@ -17,6 +18,7 @@ import (
 var (
 	searchLimit     int
 	searchJSON      bool
+	searchTOON      bool
 	searchCompact   bool
 	searchWorkspace string
 	searchProjects  []string
@@ -55,9 +57,11 @@ The search will:
 func init() {
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 10, "Maximum number of results to return")
 	searchCmd.Flags().BoolVarP(&searchJSON, "json", "j", false, "Output results in JSON format (for AI agents)")
-	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal JSON without content (requires --json)")
+	searchCmd.Flags().BoolVarP(&searchTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
+	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal format without content (requires --json or --toon)")
 	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "Workspace name for cross-project search")
 	searchCmd.Flags().StringArrayVar(&searchProjects, "project", nil, "Project name(s) to search (requires --workspace, can be repeated)")
+	searchCmd.MarkFlagsMutuallyExclusive("json", "toon")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -65,8 +69,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Validate flag combination
-	if searchCompact && !searchJSON {
-		return fmt.Errorf("--compact flag requires --json flag")
+	if searchCompact && !searchJSON && !searchTOON {
+		return fmt.Errorf("--compact flag requires --json or --toon flag")
 	}
 
 	// Validate workspace-related flags
@@ -169,7 +173,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	results, err := searcher.Search(ctx, query, searchLimit)
 	if err != nil {
 		if searchJSON {
-			return outputSearchError(err)
+			return outputSearchErrorJSON(err)
+		}
+		if searchTOON {
+			return outputSearchErrorTOON(err)
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -180,6 +187,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			return outputSearchCompactJSON(results)
 		}
 		return outputSearchJSON(results)
+	}
+
+	// TOON output mode
+	if searchTOON {
+		if searchCompact {
+			return outputSearchCompactTOON(results)
+		}
+		return outputSearchTOON(results)
 	}
 
 	if len(results) == 0 {
@@ -252,11 +267,62 @@ func outputSearchCompactJSON(results []store.SearchResult) error {
 	return encoder.Encode(jsonResults)
 }
 
-// outputSearchError outputs an error in JSON format
-func outputSearchError(err error) error {
+// outputSearchErrorJSON outputs an error in JSON format
+func outputSearchErrorJSON(err error) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	_ = encoder.Encode(map[string]string{"error": err.Error()})
+	return nil
+}
+
+// outputSearchTOON outputs results in TOON format for AI agents
+func outputSearchTOON(results []store.SearchResult) error {
+	toonResults := make([]SearchResultJSON, len(results))
+	for i, r := range results {
+		toonResults[i] = SearchResultJSON{
+			FilePath:  r.Chunk.FilePath,
+			StartLine: r.Chunk.StartLine,
+			EndLine:   r.Chunk.EndLine,
+			Score:     r.Score,
+			Content:   r.Chunk.Content,
+		}
+	}
+
+	output, err := gotoon.Encode(toonResults)
+	if err != nil {
+		return fmt.Errorf("failed to encode TOON: %w", err)
+	}
+	fmt.Println(output)
+	return nil
+}
+
+// outputSearchCompactTOON outputs results in minimal TOON format (without content)
+func outputSearchCompactTOON(results []store.SearchResult) error {
+	toonResults := make([]SearchResultCompactJSON, len(results))
+	for i, r := range results {
+		toonResults[i] = SearchResultCompactJSON{
+			FilePath:  r.Chunk.FilePath,
+			StartLine: r.Chunk.StartLine,
+			EndLine:   r.Chunk.EndLine,
+			Score:     r.Score,
+		}
+	}
+
+	output, err := gotoon.Encode(toonResults)
+	if err != nil {
+		return fmt.Errorf("failed to encode TOON: %w", err)
+	}
+	fmt.Println(output)
+	return nil
+}
+
+// outputSearchErrorTOON outputs an error in TOON format
+func outputSearchErrorTOON(err error) error {
+	output, encErr := gotoon.Encode(map[string]string{"error": err.Error()})
+	if encErr != nil {
+		return fmt.Errorf("failed to encode TOON error: %w", encErr)
+	}
+	fmt.Println(output)
 	return nil
 }
 
@@ -417,7 +483,10 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	results, err := searcher.Search(ctx, query, searchLimit)
 	if err != nil {
 		if searchJSON {
-			return outputSearchError(err)
+			return outputSearchErrorJSON(err)
+		}
+		if searchTOON {
+			return outputSearchErrorTOON(err)
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -445,6 +514,14 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 			return outputSearchCompactJSON(results)
 		}
 		return outputSearchJSON(results)
+	}
+
+	// TOON output mode
+	if searchTOON {
+		if searchCompact {
+			return outputSearchCompactTOON(results)
+		}
+		return outputSearchTOON(results)
 	}
 
 	if len(results) == 0 {

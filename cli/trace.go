@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/trace"
@@ -16,6 +17,7 @@ var (
 	traceMode  string
 	traceDepth int
 	traceJSON  bool
+	traceTOON  bool
 )
 
 var traceCmd = &cobra.Command{
@@ -74,6 +76,8 @@ func init() {
 	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd} {
 		cmd.Flags().StringVarP(&traceMode, "mode", "m", "fast", "Extraction mode: fast (regex) or precise (tree-sitter)")
 		cmd.Flags().BoolVar(&traceJSON, "json", false, "Output results in JSON format")
+		cmd.Flags().BoolVarP(&traceTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
+		cmd.MarkFlagsMutuallyExclusive("json", "toon")
 	}
 	traceGraphCmd.Flags().IntVarP(&traceDepth, "depth", "d", 2, "Maximum depth for graph traversal")
 
@@ -113,8 +117,12 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(symbols) == 0 {
+		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		if traceJSON {
-			return outputJSON(trace.TraceResult{Query: symbolName, Mode: traceMode})
+			return outputJSON(emptyResult)
+		}
+		if traceTOON {
+			return outputTOON(emptyResult)
 		}
 		fmt.Printf("No symbol found: %s\n", symbolName)
 		return nil
@@ -154,6 +162,9 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	if traceJSON {
 		return outputJSON(result)
 	}
+	if traceTOON {
+		return outputTOON(result)
+	}
 
 	return displayCallersResult(result)
 }
@@ -186,8 +197,12 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(symbols) == 0 {
+		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		if traceJSON {
-			return outputJSON(trace.TraceResult{Query: symbolName, Mode: traceMode})
+			return outputJSON(emptyResult)
+		}
+		if traceTOON {
+			return outputTOON(emptyResult)
 		}
 		fmt.Printf("No symbol found: %s\n", symbolName)
 		return nil
@@ -225,6 +240,9 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 
 	if traceJSON {
 		return outputJSON(result)
+	}
+	if traceTOON {
+		return outputTOON(result)
 	}
 
 	return displayCalleesResult(result)
@@ -265,6 +283,9 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 	if traceJSON {
 		return outputJSON(result)
 	}
+	if traceTOON {
+		return outputTOON(result)
+	}
 
 	return displayGraphResult(result)
 }
@@ -273,6 +294,15 @@ func outputJSON(result trace.TraceResult) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(result)
+}
+
+func outputTOON(result trace.TraceResult) error {
+	output, err := gotoon.Encode(result)
+	if err != nil {
+		return fmt.Errorf("failed to encode TOON: %w", err)
+	}
+	fmt.Println(output)
+	return nil
 }
 
 func displayCallersResult(result trace.TraceResult) error {

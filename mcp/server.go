@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alpkeskin/gotoon"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
@@ -77,6 +78,20 @@ type IndexStatus struct {
 	SymbolsReady bool   `json:"symbols_ready"`
 }
 
+// encodeOutput encodes data in the specified format (json or toon).
+func encodeOutput(data any, format string) (string, error) {
+	switch format {
+	case "toon":
+		return gotoon.Encode(data)
+	default: // "json"
+		jsonBytes, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(jsonBytes), nil
+	}
+}
+
 // NewServer creates a new MCP server for grepai.
 func NewServer(projectRoot string) (*Server, error) {
 	s := &Server{
@@ -109,7 +124,10 @@ func (s *Server) registerTools() {
 			mcp.Description("Maximum number of results to return (default: 10)"),
 		),
 		mcp.WithBoolean("compact",
-			mcp.Description("Return minimal JSON without content (default: false)"),
+			mcp.Description("Return minimal output without content (default: false)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
 		),
 		mcp.WithString("workspace",
 			mcp.Description("Workspace name for cross-project search (optional)"),
@@ -128,7 +146,10 @@ func (s *Server) registerTools() {
 			mcp.Description("Name of the function/method to find callers for"),
 		),
 		mcp.WithBoolean("compact",
-			mcp.Description("Return minimal JSON without context (default: false)"),
+			mcp.Description("Return minimal output without context (default: false)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
 		),
 	)
 	s.mcpServer.AddTool(traceCallersTool, s.handleTraceCallers)
@@ -141,7 +162,10 @@ func (s *Server) registerTools() {
 			mcp.Description("Name of the function/method to find callees for"),
 		),
 		mcp.WithBoolean("compact",
-			mcp.Description("Return minimal JSON without context (default: false)"),
+			mcp.Description("Return minimal output without context (default: false)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
 		),
 	)
 	s.mcpServer.AddTool(traceCalleesTool, s.handleTraceCallees)
@@ -156,6 +180,9 @@ func (s *Server) registerTools() {
 		mcp.WithNumber("depth",
 			mcp.Description("Maximum depth for graph traversal (default: 2)"),
 		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
 	)
 	s.mcpServer.AddTool(traceGraphTool, s.handleTraceGraph)
 
@@ -163,6 +190,9 @@ func (s *Server) registerTools() {
 	indexStatusTool := mcp.NewTool("grepai_index_status",
 		mcp.WithDescription("Check the health and status of the grepai index. Returns statistics about indexed files, chunks, and configuration."),
 		mcp.WithBoolean("verbose", mcp.Description("Include additional debug details when available (optional).")),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
 	)
 	s.mcpServer.AddTool(indexStatusTool, s.handleIndexStatus)
 }
@@ -180,12 +210,18 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	compact := request.GetBool("compact", false)
+	format := request.GetString("format", "json")
 	workspace := request.GetString("workspace", "")
 	projects := request.GetString("projects", "")
 
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
+
 	// Workspace mode
 	if workspace != "" {
-		return s.handleWorkspaceSearch(ctx, query, limit, compact, workspace, projects)
+		return s.handleWorkspaceSearch(ctx, query, limit, compact, format, workspace, projects)
 	}
 
 	// Load configuration
@@ -215,7 +251,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	var jsonBytes []byte
+	var data any
 	if compact {
 		searchResultsCompact := make([]SearchResultCompact, len(results))
 		for i, r := range results {
@@ -226,7 +262,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 				Score:     r.Score,
 			}
 		}
-		jsonBytes, err = json.MarshalIndent(searchResultsCompact, "", "  ")
+		data = searchResultsCompact
 	} else {
 		searchResults := make([]SearchResult, len(results))
 		for i, r := range results {
@@ -238,18 +274,19 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 				Content:   r.Chunk.Content,
 			}
 		}
-		jsonBytes, err = json.MarshalIndent(searchResults, "", "  ")
+		data = searchResults
 	}
 
+	output, err := encodeOutput(data, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // handleWorkspaceSearch handles workspace-level search via MCP.
-func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit int, compact bool, workspaceName, projectsStr string) (*mcp.CallToolResult, error) {
+func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit int, compact bool, format, workspaceName, projectsStr string) (*mcp.CallToolResult, error) {
 	// Load workspace config
 	wsCfg, err := config.LoadWorkspaceConfig()
 	if err != nil {
@@ -315,7 +352,7 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 		results = filteredResults
 	}
 
-	var jsonBytes []byte
+	var data any
 	if compact {
 		searchResultsCompact := make([]SearchResultCompact, len(results))
 		for i, r := range results {
@@ -326,7 +363,7 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 				Score:     r.Score,
 			}
 		}
-		jsonBytes, err = json.MarshalIndent(searchResultsCompact, "", "  ")
+		data = searchResultsCompact
 	} else {
 		searchResults := make([]SearchResult, len(results))
 		for i, r := range results {
@@ -338,14 +375,15 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 				Content:   r.Chunk.Content,
 			}
 		}
-		jsonBytes, err = json.MarshalIndent(searchResults, "", "  ")
+		data = searchResults
 	}
 
+	output, err := encodeOutput(data, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // createWorkspaceEmbedder creates an embedder based on workspace configuration.
@@ -411,6 +449,12 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 	}
 
 	compact := request.GetBool("compact", false)
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
 
 	// Initialize symbol store
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(s.projectRoot))
@@ -433,8 +477,8 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 
 	if len(symbols) == 0 {
 		result := trace.TraceResult{Query: symbolName, Mode: "fast"}
-		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
-		return mcp.NewToolResultText(string(jsonBytes)), nil
+		output, _ := encodeOutput(result, format)
+		return mcp.NewToolResultText(output), nil
 	}
 
 	// Find callers
@@ -443,7 +487,7 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(fmt.Sprintf("failed to lookup callers: %v", err)), nil
 	}
 
-	var jsonBytes []byte
+	var data any
 	if compact {
 		resultCompact := struct {
 			Query   string              `json:"query"`
@@ -474,7 +518,7 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 			})
 		}
 
-		jsonBytes, err = json.MarshalIndent(resultCompact, "", "  ")
+		data = resultCompact
 	} else {
 		result := trace.TraceResult{
 			Query:  symbolName,
@@ -501,14 +545,15 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 			})
 		}
 
-		jsonBytes, err = json.MarshalIndent(result, "", "  ")
+		data = result
 	}
 
+	output, err := encodeOutput(data, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // handleTraceCallees handles the grepai_trace_callees tool call.
@@ -519,6 +564,12 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 	}
 
 	compact := request.GetBool("compact", false)
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
 
 	// Initialize symbol store
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(s.projectRoot))
@@ -541,8 +592,8 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 
 	if len(symbols) == 0 {
 		result := trace.TraceResult{Query: symbolName, Mode: "fast"}
-		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
-		return mcp.NewToolResultText(string(jsonBytes)), nil
+		output, _ := encodeOutput(result, format)
+		return mcp.NewToolResultText(output), nil
 	}
 
 	// Find callees
@@ -551,7 +602,7 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(fmt.Sprintf("failed to lookup callees: %v", err)), nil
 	}
 
-	var jsonBytes []byte
+	var data any
 	if compact {
 		resultCompact := struct {
 			Query   string              `json:"query"`
@@ -582,7 +633,7 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 			})
 		}
 
-		jsonBytes, err = json.MarshalIndent(resultCompact, "", "  ")
+		data = resultCompact
 	} else {
 		result := trace.TraceResult{
 			Query:  symbolName,
@@ -608,14 +659,15 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 			})
 		}
 
-		jsonBytes, err = json.MarshalIndent(result, "", "  ")
+		data = result
 	}
 
+	output, err := encodeOutput(data, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // handleTraceGraph handles the grepai_trace_graph tool call.
@@ -628,6 +680,13 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 	depth := request.GetInt("depth", 2)
 	if depth <= 0 {
 		depth = 2
+	}
+
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
 	}
 
 	// Initialize symbol store
@@ -654,16 +713,22 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 		Graph: graph,
 	}
 
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	output, err := encodeOutput(result, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // handleIndexStatus handles the grepai_index_status tool call.
-func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
 	// Load configuration
 	cfg, err := config.Load(s.projectRoot)
 	if err != nil {
@@ -703,12 +768,12 @@ func (s *Server) handleIndexStatus(ctx context.Context, _ mcp.CallToolRequest) (
 		SymbolsReady: symbolsReady,
 	}
 
-	jsonBytes, err := json.MarshalIndent(status, "", "  ")
+	output, err := encodeOutput(status, format)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal status: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode status: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // createEmbedder creates an embedder based on configuration.
