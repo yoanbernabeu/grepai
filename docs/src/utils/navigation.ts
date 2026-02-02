@@ -72,9 +72,10 @@ export const navigation: NavSection[] = [
     ],
   },
   {
-    title: 'Contributing',
+    title: 'Community',
     items: [
-      { label: 'How to Contribute', href: '/grepai/contributing/', order: 1 },
+      { label: 'Community Tools', href: '/grepai/community-tools/', order: 1 },
+      { label: 'How to Contribute', href: '/grepai/contributing/', order: 2 },
     ],
   },
 ];
