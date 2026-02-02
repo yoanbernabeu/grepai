@@ -27,7 +27,7 @@ grepai watch
 
 Output:
 
-```
+```text
 Starting grepai watch in /path/to/project
 Provider: ollama (nomic-embed-text)
 Backend: gob
@@ -43,7 +43,7 @@ Watching for changes... (Press Ctrl+C to stop)
 
 ### How It Works
 
-```
+```text
 +------------------+     +------------------+     +------------------+
 |   Initial Scan   | --> |   File Watcher   | --> |  Index Update    |
 |   (full index)   |     |   (fsnotify)     |     |  (incremental)   |
@@ -107,7 +107,7 @@ scanner:
 
 When files change, the watcher logs updates:
 
-```
+```text
 [MODIFY] src/auth/handler.go
 Indexed src/auth/handler.go (4 chunks)
 Extracted 12 symbols from src/auth/handler.go
@@ -236,6 +236,7 @@ echo "" > ~/Library/Logs/grepai/grepai-watch.log
 #### PID File Management
 
 The daemon uses PID files with file locking to:
+
 - Prevent multiple watchers from starting simultaneously
 - Automatically clean up stale PID files from crashed processes
 - Detect if a watcher is already running
@@ -299,6 +300,49 @@ grepai watch &
 sleep 60  # Wait for initial indexing
 grepai search "security vulnerabilities" --json --compact
 ```
+
+### Workspace Mode
+
+For multi-project setups, the watcher can index all projects in a workspace using a shared vector store:
+
+```bash
+# Start workspace watcher (foreground)
+grepai watch --workspace my-fullstack
+
+# Start workspace watcher (background)
+grepai watch --workspace my-fullstack --background
+
+# Check workspace watcher status
+grepai watch --workspace my-fullstack --status
+
+# Stop workspace watcher
+grepai watch --workspace my-fullstack --stop
+```
+
+#### How Workspace Watching Differs
+
+| Aspect | Single Project | Workspace |
+|--------|---------------|-----------|
+| Config source | `.grepai/config.yaml` | `~/.grepai/workspace.yaml` |
+| Store/embedder | Per-project settings | Shared workspace settings |
+| Chunking/ignore | Per-project | Per-project (each project keeps its own) |
+| File path format | `src/App.tsx` | `workspace/project/src/App.tsx` |
+| Log file | `grepai-watch.log` | `grepai-workspace-{name}.log` |
+
+#### Coexistence
+
+Per-project and workspace watchers can run simultaneously. The per-project watcher indexes into the local store (e.g., `.grepai/index.gob`), while the workspace watcher indexes into the shared store (e.g., Qdrant or PostgreSQL). This is useful if you want both fast local search and cross-project search.
+
+#### Log Locations (Workspace)
+
+Workspace watcher logs follow the same OS-specific directories as single-project logs:
+
+| Platform | Log File |
+|----------|----------|
+| Linux | `~/.local/state/grepai/logs/grepai-workspace-{name}.log` |
+| macOS | `~/Library/Logs/grepai/grepai-workspace-{name}.log` |
+
+See [Workspace Management](/grepai/workspace/) for full workspace setup and configuration.
 
 ### Commands Reference
 

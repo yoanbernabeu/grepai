@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Non-Interactive Workspace Create**: `workspace create` now supports `--name`, `--backend`, `--embedder-provider`, `--embedder-model`, `--dsn` flags for scripted/CI usage
+  - Enables fully non-interactive workspace creation without TUI prompts
+  - All required parameters can be passed as CLI flags
+- **MCP Serve Workspace Flag**: `mcp-serve --workspace <name>` to scope MCP tools to a specific workspace
+  - MCP search and trace tools automatically use the workspace context
+- **Workspace Config Helpers**: `FindWorkspaceConfig()` and `WorkspaceStoreConfig()` in config package for programmatic workspace resolution
+
+### Documentation
+
+- Updated workspace docs with workspace mode, parallelism tiers, and MCP workspace sections
+- Updated MCP docs with workspace-scoped configuration examples
+- Updated embedders docs with parallelism tier reference
+- Updated watch guide with workspace daemon examples
+
 ## [0.26.0] - 2026-02-01
 
 ### Added
@@ -344,11 +360,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.1] - 2026-01-11
 
 ### Documentation
+
 - Simplify Claude Code MCP setup: use `claude mcp add` command instead of manual JSON configuration
 
 ## [0.8.0] - 2026-01-11
 
 ### Added
+
 - **MCP Server Mode**: New `grepai mcp-serve` command for Model Context Protocol integration (#18)
   - Exposes grepai as native MCP tools for AI agents (Claude Code, Cursor, Windsurf, etc.)
   - Available tools: `grepai_search`, `grepai_trace_callers`, `grepai_trace_callees`, `grepai_trace_graph`, `grepai_index_status`
@@ -359,6 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.2] - 2026-01-11
 
 ### Documentation
+
 - **Sidebar Reorganization**: Moved "Search Boost" and "Hybrid Search" from Configuration to Features section
 - **Configuration Reference**: Updated full configuration reference with correct field names
   - Added missing options: `version`, `watch.debounce_ms`, `trace.mode`, `trace.enabled_languages`, `trace.exclude_patterns`
@@ -370,6 +389,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.1] - 2026-01-11
 
 ### Added
+
 - **Agent Setup Trace Instructions**: Updated `grepai agent-setup` to include trace command documentation (#16)
   - Added "Call Graph Tracing" section with `trace callers`, `trace callees`, `trace graph` examples
   - All trace examples include `--json` flag for optimal AI agent integration
@@ -378,6 +398,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-01-10
 
 ### Added
+
 - **Extended Language Support for Trace**: Symbol extraction now supports additional languages
   - C (`.c`, `.h`) - functions, structs, enums, typedefs
   - Zig (`.zig`) - functions, methods (inside structs/enums), inline/export/extern functions, structs, unions, enums, error sets, opaque types, nested types
@@ -388,6 +409,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.0] - 2026-01-10
 
 ### Added
+
 - **Search JSON Output**: New `--json`/`-j` flag for `grepai search` command
   - Machine-readable JSON output optimized for AI agents
   - Excludes internal fields (vector, hash, updated_at) to minimize token usage
@@ -397,6 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-01-10
 
 ### Added
+
 - **Call Graph Tracing**: New `grepai trace` command for code navigation
   - `trace callers <symbol>` - find all functions calling a symbol
   - `trace callees <symbol>` - find all functions called by a symbol
@@ -410,6 +433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-01-10
 
 ### Added
+
 - **LM Studio Provider**: New local embedding provider using LM Studio
   - Supports OpenAI-compatible API format
   - Configurable endpoint and model selection
@@ -418,6 +442,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-01-09
 
 ### Added
+
 - **Search Boost**: Configurable score multipliers based on file paths
   - Penalize tests, mocks, fixtures, generated files, and docs
   - Boost source directories (`/src/`, `/lib/`, `/app/`)
@@ -431,11 +456,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Feature cards on docs homepage
 
 ### Changed
+
 - Searcher now accepts full SearchConfig instead of just BoostConfig
 
 ## [0.2.0] - 2026-01-09
 
 ### Added
+
 - Initial release of grepai
 - `grepai init` command for project initialization
 - `grepai watch` command for real-time file indexing
@@ -452,12 +479,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform support (macOS, Linux, Windows)
 
 ### Security
+
 - Privacy-first design with local embedding option
 - No telemetry or data collection
 
 ## [0.1.0] - 2026-01-09
 
 ### Added
+
 - Initial public release
 
 [Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.26.0...HEAD

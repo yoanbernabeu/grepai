@@ -18,6 +18,7 @@ Embedders convert text (code chunks) into vector representations that enable sem
 ### Setup
 
 1. Install Ollama:
+
 ```bash
 # macOS
 brew install ollama
@@ -26,12 +27,14 @@ brew install ollama
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-2. Start the server:
+1. Start the server:
+
 ```bash
 ollama serve
 ```
 
-3. Pull an embedding model:
+1. Pull an embedding model:
+
 ```bash
 ollama pull nomic-embed-text
 ```
@@ -96,7 +99,7 @@ LM Studio provides an OpenAI-compatible API for running embedding models locally
 
 2. Start LM Studio and load an embedding model (e.g., `nomic-embed-text`)
 
-3. Enable the local server (default: http://127.0.0.1:1234)
+3. Enable the local server (default: <http://127.0.0.1:1234>)
 
 ### Configuration
 
@@ -137,6 +140,7 @@ curl http://127.0.0.1:1234/v1/embeddings -d '{
 1. Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys)
 
 2. Set the environment variable:
+
 ```bash
 export OPENAI_API_KEY=sk-...
 ```
@@ -184,15 +188,43 @@ embedder:
 ```
 
 **How it works:**
+
 - Batches are processed concurrently up to `parallelism` limit
 - On rate limit (429), parallelism auto-reduces and retries with backoff
 - After successful requests, parallelism gradually restores
 
-Lower `parallelism` for strict rate limits; raise it for higher-tier API plans.
+#### Recommended Parallelism by Tier
+
+Higher OpenAI tiers allow more concurrent requests. Use the table below as a starting point:
+
+| OpenAI Tier | RPM Limit | Recommended `parallelism` |
+|-------------|-----------|--------------------------|
+| Free | 500 | 2 |
+| Tier 1 | 500 | 2–4 |
+| Tier 2 | 5,000 | 8–12 |
+| Tier 3 | 5,000 | 8–16 |
+| Tier 4 | 10,000 | 16–20 |
+| Tier 5 | 10,000 | 16–24 |
+
+**Checking your tier and rate limits:**
+
+```bash
+# Make a test embedding request and inspect rate limit headers
+curl -s -D - https://api.openai.com/v1/embeddings \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "text-embedding-3-small", "input": ["test"]}' \
+  -o /dev/null 2>&1 | grep -i x-ratelimit
+```
+
+Look for `x-ratelimit-limit-requests` (your RPM cap) and `x-ratelimit-limit-tokens` (your tokens/min cap) to determine your effective tier.
+
+**Tip:** Start with a conservative value and increase if you see no 429 errors. The adaptive rate limiter will automatically back off if you exceed your limit, but starting lower avoids unnecessary retries during initial indexing.
 
 ### Cost Estimation
 
 For a typical codebase:
+
 - 10,000 lines of code ≈ 50,000 tokens
 - Initial index: ~$0.001 with `text-embedding-3-small`
 - Ongoing updates: negligible
@@ -247,8 +279,8 @@ type Embedder interface {
 }
 ```
 
-2. Add configuration in `config/config.go`
+1. Add configuration in `config/config.go`
 
-3. Wire it up in the CLI commands
+1. Wire it up in the CLI commands
 
 See [Contributing](/grepai/contributing/) for more details.

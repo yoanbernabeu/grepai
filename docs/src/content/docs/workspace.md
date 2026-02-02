@@ -3,8 +3,6 @@ title: Workspace Management
 description: Manage multi-project workspaces for cross-project indexing and search
 ---
 
-# Workspace Management
-
 Workspaces allow you to index and search across multiple projects using a shared vector store. This is useful when working on microservices architectures, monorepos, or related projects that you want to search together.
 
 ## Prerequisites
@@ -12,6 +10,7 @@ Workspaces allow you to index and search across multiple projects using a shared
 Workspaces require a shared vector store backend. **GOB backend is not supported** because it's file-based and cannot be shared across projects.
 
 Supported backends for workspaces:
+
 - **PostgreSQL** with pgvector (recommended for production)
 - **Qdrant** (recommended for advanced vector search)
 
@@ -19,13 +18,68 @@ Supported backends for workspaces:
 
 ### 1. Create a Workspace
 
+**Interactive mode:**
+
 ```bash
 grepai workspace create my-fullstack
 ```
 
-This will interactively prompt you to configure:
-- Storage backend (PostgreSQL or Qdrant)
-- Embedding provider (Ollama, OpenAI, or LM Studio)
+This will interactively prompt you to configure the storage backend and embedding provider.
+
+**Non-interactive mode (for automation/CI):**
+
+```bash
+# Qdrant + Ollama with defaults
+grepai workspace create my-fullstack --backend qdrant --provider ollama --yes
+
+# Qdrant + specific model
+grepai workspace create my-fullstack --backend qdrant --provider ollama --model bge-m3 --yes
+
+# Qdrant + OpenAI
+grepai workspace create my-fullstack --backend qdrant --provider openai --model text-embedding-3-small --yes
+
+# PostgreSQL + Ollama
+grepai workspace create my-fullstack --backend postgres --provider ollama --dsn "postgres://grepai:grepai@localhost:5432/grepai" --yes
+
+# Custom Qdrant endpoint
+grepai workspace create my-fullstack --backend qdrant --qdrant-endpoint my-qdrant-host --qdrant-port 6334 --provider ollama --yes
+
+# From a YAML config file
+grepai workspace create my-fullstack --from workspace-config.yaml
+```
+
+**Non-interactive flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--backend` | Storage backend (`qdrant` or `postgres`) | Required (or `--yes`) |
+| `--provider` | Embedding provider (`ollama`, `openai`, `lmstudio`) | `ollama` with `--yes` |
+| `--model` | Embedding model name | Provider default |
+| `--endpoint` | Embedder endpoint URL | Provider default |
+| `--dsn` | PostgreSQL connection string | Required for postgres |
+| `--qdrant-endpoint` | Qdrant hostname | `http://localhost` |
+| `--qdrant-port` | Qdrant gRPC port | `6334` |
+| `--collection` | Qdrant collection name | `workspace_{name}` |
+| `--yes` | Accept all defaults | - |
+| `--from` | Load config from YAML/JSON file | - |
+
+**`--yes` defaults:** Qdrant backend, Ollama provider, nomic-embed-text model (768 dims).
+
+**`--from` file format (YAML):**
+
+```yaml
+store:
+  backend: qdrant
+  qdrant:
+    endpoint: http://localhost
+    port: 6334
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-...
+  dimensions: 1536
+  parallelism: 16
+```
 
 ### 2. Add Projects
 
@@ -143,7 +197,30 @@ grepai search --workspace my-fullstack "query" --json --compact
 
 ## MCP Integration
 
-The MCP server supports workspace parameters for cross-project search:
+### Workspace-Aware MCP Server
+
+Start the MCP server with the `--workspace` flag to enable automatic cross-project search:
+
+```bash
+# Claude Code
+claude mcp add grepai -- grepai mcp-serve --workspace my-fullstack
+
+# Or in .mcp.json
+{
+  "mcpServers": {
+    "grepai": {
+      "command": "grepai",
+      "args": ["mcp-serve", "--workspace", "my-fullstack"]
+    }
+  }
+}
+```
+
+When `--workspace` is set, the MCP server **auto-injects** the workspace into every search request. AI agents can call `grepai_search` with just a query — no need to pass `workspace` or `projects` parameters. Cross-project search works by default.
+
+### Manual Workspace Parameters
+
+Without the `--workspace` flag, agents can still search workspaces by passing parameters explicitly:
 
 ```json
 {
@@ -156,15 +233,21 @@ The MCP server supports workspace parameters for cross-project search:
 }
 ```
 
+### Trace Tools in Workspace Mode
+
+The trace tools (`grepai_trace_callers`, `grepai_trace_callees`, `grepai_trace_graph`) and `grepai_index_status` require a local project context (`.grepai/config.yaml`). When the MCP server is started in workspace-only mode from a directory without `.grepai/`, these tools will return an error asking to use `grepai_search` with the workspace parameter instead.
+
 ## How It Works
 
 ### File Path Prefixing
 
 When indexing workspace projects, file paths are stored with workspace and project prefixes:
+
 - Original: `/path/to/frontend/src/App.tsx`
 - Stored: `my-workspace/frontend/src/App.tsx`
 
 This format (`workspaceName/projectName/relativePath`) allows:
+
 - Filtering search results by project name
 - Multiple workspaces with same project names (e.g., `workspace1/frontend` vs `workspace2/frontend`)
 - Clear identification of which workspace/project a result belongs to
@@ -182,6 +265,7 @@ When indexing via workspace, settings come from different sources:
 | `external_gitignore` | **Project** | Project-specific gitignore |
 
 **Why this design?**
+
 - **Store & Embedder from workspace**: All projects must use the same embedder to produce compatible vectors, and the same store for cross-project search.
 - **Chunking & Ignore from project**: These can safely differ between projects (e.g., larger chunks for documentation, smaller for code).
 
