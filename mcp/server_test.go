@@ -258,3 +258,31 @@ func TestRegisterTools_IndexStatusSchema(t *testing.T) {
 		t.Fatalf("expected verbose type boolean, got %v", propMap["type"])
 	}
 }
+
+func TestNewServerWithWorkspace(t *testing.T) {
+	t.Run("creates_server_with_workspace", func(t *testing.T) {
+		srv, err := NewServerWithWorkspace("", "orbix")
+		if err != nil {
+			t.Fatalf("NewServerWithWorkspace error: %v", err)
+		}
+		if srv.workspaceName != "orbix" {
+			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
+		}
+		if srv.projectRoot != "" {
+			t.Errorf("expected empty projectRoot, got %s", srv.projectRoot)
+		}
+	})
+
+	t.Run("creates_server_with_project_and_workspace", func(t *testing.T) {
+		srv, err := NewServerWithWorkspace("/tmp/project", "orbix")
+		if err != nil {
+			t.Fatalf("NewServerWithWorkspace error: %v", err)
+		}
+		if srv.workspaceName != "orbix" {
+			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
+		}
+		if srv.projectRoot != "/tmp/project" {
+			t.Errorf("expected project /tmp/project, got %s", srv.projectRoot)
+		}
+	})
+}

@@ -392,6 +392,110 @@ func TestGetGlobalConfigDir(t *testing.T) {
 	}
 }
 
+func TestFindWorkspaceForPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "grepai-test-find")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cleanup := setTestHomeDir(t, tmpDir)
+	defer cleanup()
+
+	projectA := filepath.Join(tmpDir, "projects", "projectA")
+	projectB := filepath.Join(tmpDir, "projects", "projectB")
+	subDir := filepath.Join(projectA, "src", "pkg")
+	os.MkdirAll(projectA, 0755)
+	os.MkdirAll(projectB, 0755)
+	os.MkdirAll(subDir, 0755)
+
+	cfg := DefaultWorkspaceConfig()
+	cfg.AddWorkspace(Workspace{
+		Name:  "ws1",
+		Store: StoreConfig{Backend: "qdrant"},
+		Projects: []ProjectEntry{
+			{Name: "projectA", Path: projectA},
+		},
+	})
+	cfg.AddWorkspace(Workspace{
+		Name:  "ws2",
+		Store: StoreConfig{Backend: "postgres"},
+		Projects: []ProjectEntry{
+			{Name: "projectB", Path: projectB},
+		},
+	})
+	SaveWorkspaceConfig(cfg)
+
+	t.Run("exact_match", func(t *testing.T) {
+		name, ws, err := FindWorkspaceForPath(projectA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws == nil {
+			t.Fatal("expected workspace, got nil")
+		}
+		if name != "ws1" {
+			t.Errorf("expected ws1, got %s", name)
+		}
+	})
+
+	t.Run("subdirectory_match", func(t *testing.T) {
+		name, ws, err := FindWorkspaceForPath(subDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws == nil {
+			t.Fatal("expected workspace, got nil")
+		}
+		if name != "ws1" {
+			t.Errorf("expected ws1, got %s", name)
+		}
+	})
+
+	t.Run("no_match", func(t *testing.T) {
+		unrelated := filepath.Join(tmpDir, "other")
+		os.MkdirAll(unrelated, 0755)
+		name, ws, err := FindWorkspaceForPath(unrelated)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws != nil {
+			t.Errorf("expected nil workspace, got %s", name)
+		}
+	})
+
+	t.Run("no_workspace_config", func(t *testing.T) {
+		emptyDir, _ := os.MkdirTemp("", "grepai-empty-find")
+		defer os.RemoveAll(emptyDir)
+		cleanupEmpty := setTestHomeDir(t, emptyDir)
+		defer cleanupEmpty()
+
+		name, ws, err := FindWorkspaceForPath("/some/path")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws != nil {
+			t.Errorf("expected nil workspace, got %s", name)
+		}
+	})
+
+	t.Run("second_workspace_match", func(t *testing.T) {
+		cleanup2 := setTestHomeDir(t, tmpDir)
+		defer cleanup2()
+
+		name, ws, err := FindWorkspaceForPath(projectB)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws == nil {
+			t.Fatal("expected workspace, got nil")
+		}
+		if name != "ws2" {
+			t.Errorf("expected ws2, got %s", name)
+		}
+	})
+}
+
 func TestGetWorkspaceConfigPath(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "grepai-test")
 	if err != nil {

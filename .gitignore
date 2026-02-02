@@ -41,3 +41,7 @@ docs/dist/
 docs/node_modules/
 docs/.astro/
 __debug*
+
+# Local tooling
+.pre-commit-config.yaml
+docs/plans/

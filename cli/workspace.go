@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"gopkg.in/yaml.v3"
 )
 
 var workspaceCmd = &cobra.Command{
@@ -44,7 +46,7 @@ var workspaceStatusCmd = &cobra.Command{
 
 var workspaceCreateCmd = &cobra.Command{
 	Use:   "create <name>",
-	Short: "Create a new workspace (interactive)",
+	Short: "Create a new workspace",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkspaceCreate,
 }
@@ -82,6 +84,18 @@ func init() {
 	workspaceCmd.AddCommand(workspaceAddCmd)
 	workspaceCmd.AddCommand(workspaceRemoveCmd)
 	workspaceCmd.AddCommand(workspaceDeleteCmd)
+
+	// Non-interactive workspace create flags
+	workspaceCreateCmd.Flags().String("backend", "", "Storage backend: postgres, qdrant")
+	workspaceCreateCmd.Flags().String("provider", "", "Embedding provider: ollama, openai, lmstudio")
+	workspaceCreateCmd.Flags().String("model", "", "Embedding model name")
+	workspaceCreateCmd.Flags().String("endpoint", "", "Embedder endpoint URL")
+	workspaceCreateCmd.Flags().String("dsn", "", "PostgreSQL DSN (when backend=postgres)")
+	workspaceCreateCmd.Flags().String("qdrant-endpoint", "", "Qdrant endpoint (default: http://localhost)")
+	workspaceCreateCmd.Flags().Int("qdrant-port", 0, "Qdrant gRPC port (default: 6334)")
+	workspaceCreateCmd.Flags().String("collection", "", "Qdrant collection name (empty = auto)")
+	workspaceCreateCmd.Flags().String("from", "", "Path to JSON/YAML file with workspace config")
+	workspaceCreateCmd.Flags().Bool("yes", false, "Use defaults for unspecified values, skip prompts")
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
@@ -205,6 +219,141 @@ func showWorkspaceStatus(ws *config.Workspace) error {
 	return nil
 }
 
+// buildWorkspaceFromFlags constructs a Workspace from CLI flags.
+// If useYes is true, missing values use sensible defaults.
+// If useYes is false and backend is empty, returns an error.
+func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdrantEndpoint string, qdrantPort int, collection string, useYes bool) (*config.Workspace, error) {
+	if backend == "" {
+		if useYes {
+			backend = "qdrant"
+		} else {
+			return nil, fmt.Errorf("--backend is required in non-interactive mode (or use --yes for defaults)")
+		}
+	}
+	if provider == "" {
+		provider = "ollama"
+	}
+	if model == "" {
+		switch provider {
+		case "openai":
+			model = "text-embedding-3-small"
+		default:
+			model = "nomic-embed-text"
+		}
+	}
+
+	var storeConfig config.StoreConfig
+	storeConfig.Backend = backend
+
+	switch backend {
+	case "postgres":
+		if dsn == "" {
+			dsn = "postgres://localhost:5432/grepai"
+		}
+		storeConfig.Postgres.DSN = dsn
+	case "qdrant":
+		if qdrantEndpoint == "" {
+			qdrantEndpoint = "http://localhost"
+		}
+		if qdrantPort == 0 {
+			qdrantPort = 6334
+		}
+		storeConfig.Qdrant.Endpoint = qdrantEndpoint
+		storeConfig.Qdrant.Port = qdrantPort
+		storeConfig.Qdrant.Collection = collection
+	default:
+		return nil, fmt.Errorf("unsupported backend: %s (use postgres or qdrant)", backend)
+	}
+
+	var embedderConfig config.EmbedderConfig
+	embedderConfig.Provider = provider
+	embedderConfig.Model = model
+
+	switch provider {
+	case "ollama":
+		if endpoint == "" {
+			endpoint = "http://localhost:11434"
+		}
+		embedderConfig.Endpoint = endpoint
+		dim := 768
+		embedderConfig.Dimensions = &dim
+	case "lmstudio":
+		if endpoint == "" {
+			endpoint = "http://127.0.0.1:1234"
+		}
+		embedderConfig.Endpoint = endpoint
+		dim := 768
+		embedderConfig.Dimensions = &dim
+	case "openai":
+		if endpoint == "" {
+			endpoint = "https://api.openai.com/v1"
+		}
+		embedderConfig.Endpoint = endpoint
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s (use ollama, openai, or lmstudio)", provider)
+	}
+
+	return &config.Workspace{
+		Name:     name,
+		Store:    storeConfig,
+		Embedder: embedderConfig,
+		Projects: []config.ProjectEntry{},
+	}, nil
+}
+
+// WorkspaceFileConfig is the struct for --from file input.
+type WorkspaceFileConfig struct {
+	Store    config.StoreConfig    `yaml:"store" json:"store"`
+	Embedder config.EmbedderConfig `yaml:"embedder" json:"embedder"`
+}
+
+// buildWorkspaceFromFile loads workspace config from a JSON or YAML file.
+func buildWorkspaceFromFile(name, filePath string) (*config.Workspace, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var fileCfg WorkspaceFileConfig
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".json":
+		if err := json.Unmarshal(data, &fileCfg); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON config: %w", err)
+		}
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, &fileCfg); err != nil {
+			return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+		}
+	default:
+		if err := yaml.Unmarshal(data, &fileCfg); err != nil {
+			if err2 := json.Unmarshal(data, &fileCfg); err2 != nil {
+				return nil, fmt.Errorf("failed to parse config file (tried YAML and JSON): %w", err2)
+			}
+		}
+	}
+
+	return &config.Workspace{
+		Name:     name,
+		Store:    fileCfg.Store,
+		Embedder: fileCfg.Embedder,
+		Projects: []config.ProjectEntry{},
+	}, nil
+}
+
+// hasNonInteractiveFlags checks if any non-interactive flag was explicitly set.
+func hasNonInteractiveFlags(cmd *cobra.Command) bool {
+	flags := []string{"backend", "provider", "model", "endpoint", "dsn",
+		"qdrant-endpoint", "qdrant-port", "collection", "from", "yes"}
+	for _, f := range flags {
+		if cmd.Flags().Changed(f) {
+			return true
+		}
+	}
+	return false
+}
+
 func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 	workspaceName := args[0]
 
@@ -222,9 +371,63 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("workspace %q already exists", workspaceName)
 	}
 
+	fromFile, _ := cmd.Flags().GetString("from")
+
+	var ws *config.Workspace
+
+	if fromFile != "" {
+		ws, err = buildWorkspaceFromFile(workspaceName, fromFile)
+		if err != nil {
+			return err
+		}
+	} else if hasNonInteractiveFlags(cmd) {
+		backend, _ := cmd.Flags().GetString("backend")
+		provider, _ := cmd.Flags().GetString("provider")
+		model, _ := cmd.Flags().GetString("model")
+		dsn, _ := cmd.Flags().GetString("dsn")
+		endpoint, _ := cmd.Flags().GetString("endpoint")
+		qdrantEndpoint, _ := cmd.Flags().GetString("qdrant-endpoint")
+		qdrantPort, _ := cmd.Flags().GetInt("qdrant-port")
+		collection, _ := cmd.Flags().GetString("collection")
+		useYes, _ := cmd.Flags().GetBool("yes")
+
+		ws, err = buildWorkspaceFromFlags(workspaceName, backend, provider, model, dsn, endpoint, qdrantEndpoint, qdrantPort, collection, useYes)
+		if err != nil {
+			return err
+		}
+	} else {
+		ws, err = createWorkspaceInteractive(workspaceName)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Validate backend
+	if err := config.ValidateWorkspaceBackend(ws); err != nil {
+		return err
+	}
+
+	// Add workspace
+	if err := cfg.AddWorkspace(*ws); err != nil {
+		return err
+	}
+
+	// Save config
+	if err := config.SaveWorkspaceConfig(cfg); err != nil {
+		return fmt.Errorf("failed to save workspace config: %w", err)
+	}
+
+	fmt.Printf("\nWorkspace %q created successfully.\n", workspaceName)
+	fmt.Printf("\nAdd projects with: grepai workspace add %s <path>\n", workspaceName)
+	fmt.Printf("Start indexing with: grepai watch --workspace %s\n", workspaceName)
+
+	return nil
+}
+
+// createWorkspaceInteractive runs the original interactive prompt flow.
+func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error) {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Select backend
 	fmt.Println("Select storage backend:")
 	fmt.Println("  1. PostgreSQL (recommended for production)")
 	fmt.Println("  2. Qdrant (for advanced vector search)")
@@ -267,10 +470,9 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 		collection, _ := reader.ReadString('\n')
 		storeConfig.Qdrant.Collection = strings.TrimSpace(collection)
 	default:
-		return fmt.Errorf("invalid choice: %s", backendChoice)
+		return nil, fmt.Errorf("invalid choice: %s", backendChoice)
 	}
 
-	// Select embedder
 	fmt.Println("\nSelect embedding provider:")
 	fmt.Println("  1. Ollama (local, default)")
 	fmt.Println("  2. OpenAI")
@@ -315,7 +517,6 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 		}
 		embedderConfig.Model = model
 		embedderConfig.Endpoint = "https://api.openai.com/v1"
-		// OpenAI: leave Dimensions nil to use model's native dimensions
 	case "3":
 		embedderConfig.Provider = "lmstudio"
 		fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")
@@ -335,37 +536,15 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 		dim := 768
 		embedderConfig.Dimensions = &dim
 	default:
-		return fmt.Errorf("invalid choice: %s", embedderChoice)
+		return nil, fmt.Errorf("invalid choice: %s", embedderChoice)
 	}
 
-	// Create workspace
-	ws := config.Workspace{
+	return &config.Workspace{
 		Name:     workspaceName,
 		Store:    storeConfig,
 		Embedder: embedderConfig,
 		Projects: []config.ProjectEntry{},
-	}
-
-	// Validate backend
-	if err := config.ValidateWorkspaceBackend(&ws); err != nil {
-		return err
-	}
-
-	// Add workspace
-	if err := cfg.AddWorkspace(ws); err != nil {
-		return err
-	}
-
-	// Save config
-	if err := config.SaveWorkspaceConfig(cfg); err != nil {
-		return fmt.Errorf("failed to save workspace config: %w", err)
-	}
-
-	fmt.Printf("\nWorkspace %q created successfully.\n", workspaceName)
-	fmt.Printf("\nAdd projects with: grepai workspace add %s <path>\n", workspaceName)
-	fmt.Printf("Start indexing with: grepai watch --workspace %s\n", workspaceName)
-
-	return nil
+	}, nil
 }
 
 func runWorkspaceAdd(cmd *cobra.Command, args []string) error {

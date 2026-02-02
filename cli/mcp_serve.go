@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -27,8 +28,13 @@ Arguments:
   project-path  Optional path to the grepai project directory.
                 If not provided, searches for .grepai from current directory.
 
+Flags:
+  --workspace   Workspace name. When set, serves using workspace config from
+                ~/.grepai/workspace.yaml without requiring local .grepai/.
+
 Configuration for Claude Code:
   claude mcp add grepai -- grepai mcp-serve
+  claude mcp add grepai -- grepai mcp-serve --workspace myworkspace
 
 Configuration for Cursor (.cursor/mcp.json):
   {
@@ -54,42 +60,96 @@ Configuration for Cursor with explicit path (recommended for Windows):
 }
 
 func init() {
+	mcpServeCmd.Flags().String("workspace", "", "Workspace name for workspace-only mode (no local .grepai/ required)")
 	rootCmd.AddCommand(mcpServeCmd)
 }
 
-func runMCPServe(_ *cobra.Command, args []string) error {
-	var projectRoot string
-	var err error
-
-	if len(args) > 0 {
-		// Explicit path provided
-		projectRoot = args[0]
-
-		// Convert to absolute path if relative
-		if !filepath.IsAbs(projectRoot) {
-			projectRoot, err = filepath.Abs(projectRoot)
-			if err != nil {
-				return fmt.Errorf("failed to resolve path: %w", err)
-			}
-		}
-
-		// Validate that it's a grepai project
-		if !config.Exists(projectRoot) {
-			return fmt.Errorf("no grepai project found at %s (run 'grepai init' first)", projectRoot)
-		}
-	} else {
-		// Default behavior (backward compatibility)
-		projectRoot, err = config.FindProjectRoot()
+// resolveMCPTarget determines the project root and/or workspace for the MCP server.
+// Returns (projectRoot, workspaceName, error).
+// projectRoot may be empty when in workspace-only mode.
+func resolveMCPTarget(explicitPath, workspaceName string) (string, string, error) {
+	// Priority 1: Explicit --workspace flag
+	if workspaceName != "" {
+		cfg, err := config.LoadWorkspaceConfig()
 		if err != nil {
-			return fmt.Errorf("failed to find project root: %w", err)
+			return "", "", fmt.Errorf("failed to load workspace config: %w", err)
 		}
+		if cfg == nil {
+			return "", "", fmt.Errorf("no workspace config found at ~/.grepai/workspace.yaml")
+		}
+		if _, err := cfg.GetWorkspace(workspaceName); err != nil {
+			return "", "", fmt.Errorf("workspace %q not found", workspaceName)
+		}
+
+		// Check if cwd has local config (optional, for trace tools)
+		projectRoot := ""
+		if pr, err := config.FindProjectRoot(); err == nil {
+			projectRoot = pr
+		}
+
+		return projectRoot, workspaceName, nil
 	}
 
-	// Create and start MCP server
-	server, err := mcp.NewServer(projectRoot)
+	// Priority 2: Explicit project path argument
+	if explicitPath != "" {
+		if !filepath.IsAbs(explicitPath) {
+			abs, err := filepath.Abs(explicitPath)
+			if err != nil {
+				return "", "", fmt.Errorf("failed to resolve path: %w", err)
+			}
+			explicitPath = abs
+		}
+		if !config.Exists(explicitPath) {
+			return "", "", fmt.Errorf("no grepai project found at %s (run 'grepai init' first)", explicitPath)
+		}
+		return explicitPath, "", nil
+	}
+
+	// Priority 3: FindProjectRoot (walk upward from cwd)
+	projectRoot, err := config.FindProjectRoot()
+	if err == nil {
+		return projectRoot, "", nil
+	}
+
+	// Priority 4: Auto-detect workspace from cwd
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		return "", "", fmt.Errorf("failed to find project root: %w", err)
+	}
+
+	wsName, ws, wsErr := config.FindWorkspaceForPath(cwd)
+	if wsErr != nil {
+		return "", "", fmt.Errorf("no grepai project or workspace found (run 'grepai init' or use --workspace)")
+	}
+	if ws != nil {
+		return "", wsName, nil
+	}
+
+	return "", "", fmt.Errorf("no grepai project or workspace found (run 'grepai init' or use --workspace)")
+}
+
+func runMCPServe(cmd *cobra.Command, args []string) error {
+	workspaceFlag, _ := cmd.Flags().GetString("workspace")
+
+	var explicitPath string
+	if len(args) > 0 {
+		explicitPath = args[0]
+	}
+
+	projectRoot, wsName, err := resolveMCPTarget(explicitPath, workspaceFlag)
+	if err != nil {
+		return err
+	}
+
+	var srv *mcp.Server
+	if wsName != "" {
+		srv, err = mcp.NewServerWithWorkspace(projectRoot, wsName)
+	} else {
+		srv, err = mcp.NewServer(projectRoot)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create MCP server: %w", err)
 	}
 
-	return server.Serve()
+	return srv.Serve()
 }

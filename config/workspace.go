@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -230,4 +231,40 @@ func (c *WorkspaceConfig) ListWorkspaces() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// FindWorkspaceForPath checks if the given path is within any workspace project.
+// Returns workspace name and workspace config if found, or ("", nil, nil) if no match.
+func FindWorkspaceForPath(targetPath string) (string, *Workspace, error) {
+	cfg, err := LoadWorkspaceConfig()
+	if err != nil {
+		return "", nil, err
+	}
+	if cfg == nil {
+		return "", nil, nil
+	}
+
+	// Resolve symlinks
+	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil {
+		targetPath = resolved
+	}
+
+	for name, ws := range cfg.Workspaces {
+		for _, proj := range ws.Projects {
+			projPath := proj.Path
+			if resolved, err := filepath.EvalSymlinks(projPath); err == nil {
+				projPath = resolved
+			}
+			rel, err := filepath.Rel(projPath, targetPath)
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(rel, "..") {
+				wsCopy := ws
+				return name, &wsCopy, nil
+			}
+		}
+	}
+
+	return "", nil, nil
 }

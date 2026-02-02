@@ -20,8 +20,9 @@ import (
 
 // Server wraps the MCP server with grepai functionality.
 type Server struct {
-	mcpServer   *server.MCPServer
-	projectRoot string
+	mcpServer     *server.MCPServer
+	projectRoot   string
+	workspaceName string // non-empty when started via --workspace or auto-detect
 }
 
 // SearchResult is a lightweight struct for MCP output.
@@ -106,6 +107,25 @@ func NewServer(projectRoot string) (*Server, error) {
 	)
 
 	// Register tools
+	s.registerTools()
+
+	return s, nil
+}
+
+// NewServerWithWorkspace creates a new MCP server with workspace context.
+// projectRoot may be empty when in workspace-only mode (no local .grepai/).
+func NewServerWithWorkspace(projectRoot, workspaceName string) (*Server, error) {
+	s := &Server{
+		projectRoot:   projectRoot,
+		workspaceName: workspaceName,
+	}
+
+	s.mcpServer = server.NewMCPServer(
+		"grepai",
+		"1.0.0",
+		server.WithToolCapabilities(false),
+	)
+
 	s.registerTools()
 
 	return s, nil
@@ -213,6 +233,11 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	format := request.GetString("format", "json")
 	workspace := request.GetString("workspace", "")
 	projects := request.GetString("projects", "")
+
+	// Auto-inject workspace when server is in workspace mode
+	if workspace == "" && s.workspaceName != "" {
+		workspace = s.workspaceName
+	}
 
 	// Validate format
 	if format != "json" && format != "toon" {
@@ -456,6 +481,11 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
 	}
 
+	// Trace requires local project context
+	if s.projectRoot == "" {
+		return mcp.NewToolResultError("trace requires a project context; start mcp-serve from a project directory or use grepai_search with workspace parameter instead"), nil
+	}
+
 	// Initialize symbol store
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(s.projectRoot))
 	if err := symbolStore.Load(ctx); err != nil {
@@ -569,6 +599,11 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 	// Validate format
 	if format != "json" && format != "toon" {
 		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
+
+	// Trace requires local project context
+	if s.projectRoot == "" {
+		return mcp.NewToolResultError("trace requires a project context; start mcp-serve from a project directory or use grepai_search with workspace parameter instead"), nil
 	}
 
 	// Initialize symbol store
@@ -689,6 +724,11 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
 	}
 
+	// Trace requires local project context
+	if s.projectRoot == "" {
+		return mcp.NewToolResultError("trace requires a project context; start mcp-serve from a project directory or use grepai_search with workspace parameter instead"), nil
+	}
+
 	// Initialize symbol store
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(s.projectRoot))
 	if err := symbolStore.Load(ctx); err != nil {
@@ -729,6 +769,12 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 	if format != "json" && format != "toon" {
 		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
 	}
+
+	// Index status requires local project context
+	if s.projectRoot == "" {
+		return mcp.NewToolResultError("index status requires a project context; start mcp-serve from a project directory"), nil
+	}
+
 	// Load configuration
 	cfg, err := config.Load(s.projectRoot)
 	if err != nil {
