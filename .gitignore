@@ -40,4 +40,5 @@ docs/src/content/docs/commands/*.md
 docs/dist/
 docs/node_modules/
 docs/.astro/
+docs/bun.lock
 __debug*
