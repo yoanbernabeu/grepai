@@ -443,6 +443,26 @@ func (s *Server) createWorkspaceEmbedder(ws *config.Workspace) (embedder.Embedde
 			opts = append(opts, embedder.WithLMStudioDimensions(*ws.Embedder.Dimensions))
 		}
 		return embedder.NewLMStudioEmbedder(opts...), nil
+	case "synthetic":
+		opts := []embedder.SyntheticOption{
+			embedder.WithSyntheticModel(ws.Embedder.Model),
+			embedder.WithSyntheticKey(ws.Embedder.APIKey),
+			embedder.WithSyntheticEndpoint(ws.Embedder.Endpoint),
+		}
+		if ws.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithSyntheticDimensions(*ws.Embedder.Dimensions))
+		}
+		return embedder.NewSyntheticEmbedder(opts...)
+	case "openrouter":
+		opts := []embedder.OpenRouterOption{
+			embedder.WithOpenRouterModel(ws.Embedder.Model),
+			embedder.WithOpenRouterKey(ws.Embedder.APIKey),
+			embedder.WithOpenRouterEndpoint(ws.Embedder.Endpoint),
+		}
+		if ws.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOpenRouterDimensions(*ws.Embedder.Dimensions))
+		}
+		return embedder.NewOpenRouterEmbedder(opts...)
 	default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
 	}
@@ -854,6 +874,27 @@ func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
 			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
 		}
 		return embedder.NewLMStudioEmbedder(opts...), nil
+	case "synthetic":
+		opts := []embedder.SyntheticOption{
+			embedder.WithSyntheticModel(cfg.Embedder.Model),
+			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
+			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithSyntheticDimensions(*cfg.Embedder.Dimensions))
+		}
+		return embedder.NewSyntheticEmbedder(opts...)
+	case "openrouter":
+		opts := []embedder.OpenRouterOption{
+			embedder.WithOpenRouterModel(cfg.Embedder.Model),
+			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
+			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithOpenRouterParallelism(cfg.Embedder.Parallelism),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
+		}
+		return embedder.NewOpenRouterEmbedder(opts...)
 	default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}

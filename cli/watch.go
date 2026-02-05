@@ -290,7 +290,42 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 			return nil, fmt.Errorf("cannot connect to LM Studio: %w\nMake sure LM Studio is running with the %s model loaded", err, cfg.Embedder.Model)
 		}
 		return lmstudioEmb, nil
-	default:
+	case "synthetic":
+		opts := []embedder.SyntheticOption{
+			embedder.WithSyntheticModel(cfg.Embedder.Model),
+			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
+			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithSyntheticDimensions(*cfg.Embedder.Dimensions))
+		}
+		syntheticEmb, err := embedder.NewSyntheticEmbedder(opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Synthetic embedder: %w", err)
+		}
+		if err := syntheticEmb.Ping(ctx); err != nil {
+			return nil, fmt.Errorf("cannot connect to Synthetic API: %w\nMake sure your SYNTHETIC_API_KEY or OPENAI_API_KEY is set", err)
+		}
+		return syntheticEmb, nil
+	case "openrouter":
+		opts := []embedder.OpenRouterOption{
+			embedder.WithOpenRouterModel(cfg.Embedder.Model),
+			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
+			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
+			embedder.WithOpenRouterParallelism(cfg.Embedder.Parallelism),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
+		}
+		openrouterEmb, err := embedder.NewOpenRouterEmbedder(opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OpenRouter embedder: %w", err)
+		}
+		if err := openrouterEmb.Ping(ctx); err != nil {
+			return nil, fmt.Errorf("cannot connect to OpenRouter API: %w\nMake sure your OPENROUTER_API_KEY or OPENAI_API_KEY is set", err)
+		}
+		return openrouterEmb, nil
+default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}
 }
