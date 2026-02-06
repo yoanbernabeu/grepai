@@ -6,6 +6,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"syscall"
 )
 
@@ -44,4 +45,43 @@ func sysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
 		Setpgid: true,
 	}
+}
+
+// livenessCheck uses a pipe to detect child process exit.
+// The write end is inherited by the child; when it exits the kernel closes
+// all its FDs, giving EOF on the parent's read end. This reliably detects
+// exit regardless of zombie state or process group settings.
+type livenessCheck struct {
+	pr, pw *os.File
+}
+
+func newLivenessCheck() (*livenessCheck, error) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create liveness pipe: %w", err)
+	}
+	return &livenessCheck{pr: pr, pw: pw}, nil
+}
+
+func (l *livenessCheck) configureCmd(cmd *exec.Cmd) {
+	cmd.ExtraFiles = []*os.File{l.pw}
+}
+
+// start closes the write end in the parent and begins monitoring.
+// Returns a channel that is closed when the child exits.
+func (l *livenessCheck) start(_ int) <-chan struct{} {
+	l.pw.Close()
+	ch := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1)
+		l.pr.Read(buf) // blocks until EOF (child exit)
+		l.pr.Close()
+		close(ch)
+	}()
+	return ch
+}
+
+func (l *livenessCheck) cleanup() {
+	l.pr.Close()
+	l.pw.Close()
 }
