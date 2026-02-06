@@ -357,6 +357,13 @@ func FindProjectRoot() (string, error) {
 		dir = parent
 	}
 
+	// Git worktree fallback: if we're in a linked worktree,
+	// check the main worktree for .grepai/
+	gitInfo, gitErr := git.Detect(cwd)
+	if gitErr == nil && gitInfo.IsWorktree && Exists(gitInfo.MainWorktree) {
+		return gitInfo.MainWorktree, nil
+	}
+
 	return "", fmt.Errorf("no grepai project found (run 'grepai init' first)")
 }
 
