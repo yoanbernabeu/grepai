@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yoanbernabeu/grepai/git"
@@ -357,14 +358,95 @@ func FindProjectRoot() (string, error) {
 		dir = parent
 	}
 
-	// Git worktree fallback: if we're in a linked worktree,
-	// check the main worktree for .grepai/
+	// Git worktree fallback: if we're in a linked worktree and the main
+	// worktree has .grepai/, auto-initialize a local copy for isolation.
+	// Each worktree gets its own config + index so search/watch operate
+	// on the worktree's own files.
 	gitInfo, gitErr := git.Detect(cwd)
 	if gitErr == nil && gitInfo.IsWorktree && Exists(gitInfo.MainWorktree) {
-		return gitInfo.MainWorktree, nil
+		if err := autoInitFromMainWorktree(gitInfo.GitRoot, gitInfo.MainWorktree); err == nil {
+			return gitInfo.GitRoot, nil
+		}
 	}
 
 	return "", fmt.Errorf("no grepai project found (run 'grepai init' first)")
+}
+
+// autoInitFromMainWorktree creates a local .grepai/ in the worktree by copying
+// config and index files from the main worktree. This enables zero-config usage:
+// search and trace work immediately with the main worktree's index as a seed,
+// and watch will incrementally update for worktree-specific changes.
+func autoInitFromMainWorktree(worktreeRoot, mainWorktree string) error {
+	localGrepai := filepath.Join(worktreeRoot, ".grepai")
+	if err := os.MkdirAll(localGrepai, 0755); err != nil {
+		return err
+	}
+
+	mainGrepai := filepath.Join(mainWorktree, ".grepai")
+
+	// Copy config.yaml
+	if err := copyFileIfExists(
+		filepath.Join(mainGrepai, "config.yaml"),
+		filepath.Join(localGrepai, "config.yaml"),
+	); err != nil {
+		// Config is required - clean up and fail
+		os.RemoveAll(localGrepai)
+		return err
+	}
+
+	// Copy index.gob as seed (search works immediately)
+	_ = copyFileIfExists(
+		filepath.Join(mainGrepai, "index.gob"),
+		filepath.Join(localGrepai, "index.gob"),
+	)
+
+	// Copy symbols.gob as seed (trace works immediately)
+	_ = copyFileIfExists(
+		filepath.Join(mainGrepai, "symbols.gob"),
+		filepath.Join(localGrepai, "symbols.gob"),
+	)
+
+	// Ensure .grepai/ is in .gitignore
+	ensureGitignoreEntry(worktreeRoot, ".grepai/")
+
+	return nil
+}
+
+// copyFileIfExists copies src to dst if src exists. Returns error only if src
+// exists but copy fails. Returns nil if src doesn't exist.
+func copyFileIfExists(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return os.WriteFile(dst, data, 0600)
+}
+
+// ensureGitignoreEntry adds an entry to .gitignore if not already present.
+func ensureGitignoreEntry(dir, entry string) {
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	content, err := os.ReadFile(gitignorePath)
+	if err == nil {
+		// Check if entry already exists
+		for _, line := range strings.Split(string(content), "\n") {
+			if strings.TrimSpace(line) == entry || strings.TrimSpace(line) == strings.TrimSuffix(entry, "/") {
+				return
+			}
+		}
+	}
+	// Append entry
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		f.WriteString("\n")
+	}
+	f.WriteString(entry + "\n")
 }
 
 // FindProjectRootWithGit extends FindProjectRoot with git worktree awareness.
