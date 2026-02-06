@@ -269,7 +269,7 @@ func IsReady(logDir string) bool {
 // Returns the child PID and an exit channel. The exit channel receives when
 // the child process terminates, enabling callers to detect early failures
 // without relying on kill(0) which cannot distinguish zombie processes.
-func SpawnBackground(logDir string, args []string) (int, <-chan error, error) {
+func SpawnBackground(logDir string, args []string) (int, <-chan struct{}, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return 0, nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -445,7 +445,7 @@ func IsWorktreeReady(logDir, worktreeID string) bool {
 }
 
 // SpawnWorktreeBackground re-executes the current binary for worktree watch in background.
-func SpawnWorktreeBackground(logDir, worktreeID string, extraArgs []string) (int, <-chan error, error) {
+func SpawnWorktreeBackground(logDir, worktreeID string, extraArgs []string) (int, <-chan struct{}, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return 0, nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -457,10 +457,11 @@ func SpawnWorktreeBackground(logDir, worktreeID string, extraArgs []string) (int
 }
 
 // spawnBackgroundWithLog spawns a background process with a custom log file.
-// Returns the child PID and a channel that receives an error (or nil) when the
-// child exits. This allows callers to detect early termination without relying
-// on kill(0), which cannot distinguish zombie processes.
-func spawnBackgroundWithLog(logDir, logPath string, args []string) (int, <-chan error, error) {
+// Returns the child PID and a channel that is closed when the child exits.
+// Uses a pipe-based liveness check: the write end is passed to the child via
+// ExtraFiles; when the child exits the kernel closes all its FDs, giving EOF
+// on the read end. This is reliable regardless of zombie state or process groups.
+func spawnBackgroundWithLog(logDir, logPath string, args []string) (int, <-chan struct{}, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return 0, nil, fmt.Errorf("failed to get executable path: %w", err)
@@ -471,23 +472,40 @@ func spawnBackgroundWithLog(logDir, logPath string, args []string) (int, <-chan 
 		return 0, nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
+	// Pipe for child liveness detection: child inherits write end,
+	// parent reads from read end. EOF == child exited.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		logFile.Close()
+		return 0, nil, fmt.Errorf("failed to create liveness pipe: %w", err)
+	}
+
 	cmd := exec.Command(executable, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
+	cmd.ExtraFiles = []*os.File{pw} // fd 3 in child
 	cmd.Env = append(os.Environ(), "GREPAI_BACKGROUND=1")
 	cmd.SysProcAttr = sysProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
+		pr.Close()
+		pw.Close()
 		return 0, nil, fmt.Errorf("failed to start background process: %w", err)
 	}
 
-	// Monitor child exit in a goroutine so callers can detect early termination.
-	exitCh := make(chan error, 1)
+	// Close write end in parent — only the child holds it now.
+	pw.Close()
+	logFile.Close()
+
+	// Monitor child exit via pipe EOF.
+	exitCh := make(chan struct{})
 	go func() {
-		exitCh <- cmd.Wait()
-		logFile.Close()
+		buf := make([]byte, 1)
+		pr.Read(buf) // blocks until EOF (child exit)
+		pr.Close()
+		close(exitCh)
 	}()
 
 	return cmd.Process.Pid, exitCh, nil

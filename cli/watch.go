@@ -289,7 +289,7 @@ func startBackgroundWatch(logDir, worktreeID string) error {
 
 	// Spawn background process
 	var childPID int
-	var exitCh <-chan error
+	var exitCh <-chan struct{}
 	if worktreeID != "" {
 		childPID, exitCh, err = daemon.SpawnWorktreeBackground(logDir, worktreeID, args)
 	} else {
