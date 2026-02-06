@@ -41,6 +41,8 @@ ollama pull nomic-embed-text
 
 ### Configuration
 
+During `grepai init`, you will be prompted for the endpoint URL (default: `http://localhost:11434`). This allows connecting to a remote Ollama server, a Docker container, or an instance running on a custom port.
+
 ```yaml
 embedder:
   provider: ollama
@@ -102,6 +104,8 @@ LM Studio provides an OpenAI-compatible API for running embedding models locally
 3. Enable the local server (default: <http://127.0.0.1:1234>)
 
 ### Configuration
+
+During `grepai init`, you will be prompted for the endpoint URL (default: `http://127.0.0.1:1234`). This allows connecting to a remote LM Studio instance or a custom port.
 
 ```yaml
 embedder:
