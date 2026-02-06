@@ -372,6 +372,12 @@ func FindProjectRoot() (string, error) {
 	return "", fmt.Errorf("no grepai project found (run 'grepai init' first)")
 }
 
+// AutoInitWorktree creates a local .grepai/ in worktreeRoot by copying config and
+// index files from mainWorktree. This is used by watch to auto-init linked worktrees.
+func AutoInitWorktree(worktreeRoot, mainWorktree string) error {
+	return autoInitFromMainWorktree(worktreeRoot, mainWorktree)
+}
+
 // autoInitFromMainWorktree creates a local .grepai/ in the worktree by copying
 // config and index files from the main worktree. This enables zero-config usage:
 // search and trace work immediately with the main worktree's index as a seed,

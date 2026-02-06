@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 	"github.com/yoanbernabeu/grepai/watcher"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -522,6 +524,164 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 	return stats, nil
 }
 
+// discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
+// Only discovers from the main worktree; returns nil for linked worktrees.
+func discoverWorktreesForWatch(projectRoot string) []string {
+	gitInfo, err := git.Detect(projectRoot)
+	if err != nil {
+		return nil
+	}
+
+	// Only the main worktree discovers linked worktrees
+	if gitInfo.IsWorktree {
+		return nil
+	}
+
+	// Run git worktree list
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", projectRoot, "worktree", "list", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var worktrees []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			wtPath := strings.TrimPrefix(line, "worktree ")
+			// Skip the main worktree itself
+			if wtPath == projectRoot {
+				continue
+			}
+			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
+			// from within the worktree, but we're not in it, so init manually)
+			localGrepai := filepath.Join(wtPath, ".grepai")
+			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
+				// Auto-init from main
+				if initErr := config.AutoInitWorktree(wtPath, projectRoot); initErr != nil {
+					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPath, initErr)
+					continue
+				}
+				log.Printf("Auto-initialized worktree: %s", wtPath)
+			}
+			worktrees = append(worktrees, wtPath)
+		}
+	}
+	return worktrees
+}
+
+// watchProject runs the full watch pipeline for a single project directory.
+// The embedder is shared across all projects to avoid duplicate connections.
+func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool) error {
+	// Load configuration
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to load config for %s: %w", projectRoot, err)
+	}
+
+	log.Printf("Watching project: %s (backend: %s)", projectRoot, cfg.Store.Backend)
+
+	// Initialize store
+	st, err := initializeStore(ctx, cfg, projectRoot)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// Initialize ignore matcher
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
+	if err != nil {
+		return fmt.Errorf("failed to initialize ignore matcher: %w", err)
+	}
+
+	// Initialize scanner
+	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+
+	// Initialize chunker
+	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
+
+	// Initialize indexer
+	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
+
+	// Initialize symbol store and extractor
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+	if err := symbolStore.Load(ctx); err != nil {
+		log.Printf("Warning: failed to load symbol index for %s: %v", projectRoot, err)
+	}
+	defer symbolStore.Close()
+
+	extractor := trace.NewRegexExtractor()
+
+	tracedLanguages := cfg.Trace.EnabledLanguages
+	if len(tracedLanguages) == 0 {
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+	}
+
+	// Run initial scan (always in background mode for worktrees - no interactive progress)
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, true)
+	if err != nil {
+		return err
+	}
+
+	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
+		cfg.Watch.LastIndexTime = time.Now()
+		if err := cfg.Save(projectRoot); err != nil {
+			log.Printf("Warning: failed to save config: %v", err)
+		}
+	}
+
+	if err := st.Persist(ctx); err != nil {
+		log.Printf("Warning: failed to persist index: %v", err)
+	}
+
+	// Initialize watcher
+	w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
+	if err != nil {
+		return fmt.Errorf("failed to initialize watcher for %s: %w", projectRoot, err)
+	}
+	defer w.Close()
+
+	if err := w.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start watcher for %s: %w", projectRoot, err)
+	}
+
+	// Run watch loop (responds to ctx.Done() for graceful shutdown)
+	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg)
+}
+
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config) error {
+	persistTicker := time.NewTicker(30 * time.Second)
+	defer persistTicker.Stop()
+
+	var lastConfigWrite time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index on shutdown for %s: %v", projectRoot, err)
+			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", projectRoot, err)
+			}
+			return nil
+
+		case <-persistTicker.C:
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index for %s: %v", projectRoot, err)
+			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index for %s: %v", projectRoot, err)
+			}
+
+		case event := <-w.Events():
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
+		}
+	}
+}
+
 func runWatchForeground() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -604,107 +764,180 @@ func runWatchForeground() error {
 		log.Printf("Backend: %s", cfg.Store.Backend)
 	}
 
-	// Initialize embedder
+	// Initialize shared embedder (reused across all worktrees)
 	emb, err := initializeEmbedder(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer emb.Close()
 
-	// Initialize store
-	st, err := initializeStore(ctx, cfg, projectRoot)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	// Initialize ignore matcher
-	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
-	if err != nil {
-		return fmt.Errorf("failed to initialize ignore matcher: %w", err)
-	}
-
-	// Initialize scanner
-	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
-
-	// Initialize chunker
-	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
-
-	// Initialize indexer
-	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
-
-	// Initialize symbol store and extractor
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
-	if err := symbolStore.Load(ctx); err != nil {
-		log.Printf("Warning: failed to load symbol index: %v", err)
-	}
-	defer symbolStore.Close()
-
-	extractor := trace.NewRegexExtractor()
-
-	// Use default trace languages if not configured
-	tracedLanguages := cfg.Trace.EnabledLanguages
-	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
-	}
-
-	// Run initial scan and build symbol index
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
-	if err != nil {
-		return err
-	}
-
-	// Update lastIndexTime in config if files were indexed
-	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
-		cfg.Watch.LastIndexTime = time.Now()
-		if err := cfg.Save(projectRoot); err != nil {
-			log.Printf("Warning: failed to save config: %v", err)
+	// Discover linked worktrees (only from main worktree)
+	linkedWorktrees := discoverWorktreesForWatch(projectRoot)
+	if len(linkedWorktrees) > 0 {
+		if !isBackgroundChild {
+			fmt.Printf("Detected %d linked worktree(s), watching all:\n", len(linkedWorktrees))
+			for _, wt := range linkedWorktrees {
+				fmt.Printf("  - %s\n", wt)
+			}
+		} else {
+			log.Printf("Detected %d linked worktree(s), watching all", len(linkedWorktrees))
+			for _, wt := range linkedWorktrees {
+				log.Printf("  - %s", wt)
+			}
 		}
 	}
 
-	// Save index after initial scan
-	if err := st.Persist(ctx); err != nil {
-		log.Printf("Warning: failed to persist index: %v", err)
+	// Handle signals at top level
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Create cancellable context for all watchers
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	defer watchCancel()
+
+	go func() {
+		select {
+		case <-sigChan:
+			if !isBackgroundChild {
+				fmt.Println("\nShutting down...")
+			} else {
+				log.Println("Shutting down...")
+			}
+			watchCancel()
+		case <-watchCtx.Done():
+		}
+	}()
+
+	// If no linked worktrees, run the main project directly (preserves interactive progress)
+	if len(linkedWorktrees) == 0 {
+		// Initialize store
+		st, err := initializeStore(watchCtx, cfg, projectRoot)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
+		if err != nil {
+			return fmt.Errorf("failed to initialize ignore matcher: %w", err)
+		}
+
+		scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+		chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
+		idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
+
+		symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+		if err := symbolStore.Load(watchCtx); err != nil {
+			log.Printf("Warning: failed to load symbol index: %v", err)
+		}
+		defer symbolStore.Close()
+
+		extractor := trace.NewRegexExtractor()
+
+		tracedLanguages := cfg.Trace.EnabledLanguages
+		if len(tracedLanguages) == 0 {
+			tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+		}
+
+		stats, err := runInitialScan(watchCtx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
+		if err != nil {
+			return err
+		}
+
+		if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
+			cfg.Watch.LastIndexTime = time.Now()
+			if err := cfg.Save(projectRoot); err != nil {
+				log.Printf("Warning: failed to save config: %v", err)
+			}
+		}
+
+		if err := st.Persist(watchCtx); err != nil {
+			log.Printf("Warning: failed to persist index: %v", err)
+		}
+
+		if isBackgroundChild {
+			if worktreeID != "" {
+				if err := daemon.WriteWorktreeReadyFile(logDir, worktreeID); err != nil {
+					return fmt.Errorf("failed to write ready file: %w", err)
+				}
+				defer func() {
+					if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
+						log.Printf("Warning: failed to remove ready file on exit: %v", err)
+					}
+				}()
+			} else {
+				if err := daemon.WriteReadyFile(logDir); err != nil {
+					return fmt.Errorf("failed to write ready file: %w", err)
+				}
+				defer func() {
+					if err := daemon.RemoveReadyFile(logDir); err != nil {
+						log.Printf("Warning: failed to remove ready file on exit: %v", err)
+					}
+				}()
+			}
+		}
+
+		w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
+		if err != nil {
+			return fmt.Errorf("failed to initialize watcher: %w", err)
+		}
+		defer w.Close()
+
+		if err := w.Start(watchCtx); err != nil {
+			return fmt.Errorf("failed to start watcher: %w", err)
+		}
+
+		if !isBackgroundChild {
+			fmt.Println("\nWatching for changes... (Press Ctrl+C to stop)")
+		}
+
+		return runProjectWatchLoop(watchCtx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg)
 	}
 
-	// Write ready file to signal successful initialization (background mode only)
+	// Multi-worktree mode: run all projects in parallel using errgroup
+	g, gCtx := errgroup.WithContext(watchCtx)
+
+	// Main project
+	g.Go(func() error {
+		return watchProject(gCtx, projectRoot, emb, true) // always background-style logging
+	})
+
+	// Linked worktrees
+	for _, wt := range linkedWorktrees {
+		wt := wt
+		g.Go(func() error {
+			return watchProject(gCtx, wt, emb, true)
+		})
+	}
+
+	// Write ready file after all watchers started
 	if isBackgroundChild {
 		if worktreeID != "" {
 			if err := daemon.WriteWorktreeReadyFile(logDir, worktreeID); err != nil {
 				return fmt.Errorf("failed to write ready file: %w", err)
 			}
+			defer func() {
+				if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
+					log.Printf("Warning: failed to remove ready file on exit: %v", err)
+				}
+			}()
 		} else {
 			if err := daemon.WriteReadyFile(logDir); err != nil {
 				return fmt.Errorf("failed to write ready file: %w", err)
 			}
-		}
-		// Ensure ready file is cleaned up on exit
-		defer func() {
-			if worktreeID != "" {
-				if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
-					log.Printf("Warning: failed to remove ready file on exit: %v", err)
-				}
-			} else {
+			defer func() {
 				if err := daemon.RemoveReadyFile(logDir); err != nil {
 					log.Printf("Warning: failed to remove ready file on exit: %v", err)
 				}
-			}
-		}()
+			}()
+		}
 	}
 
-	// Initialize watcher
-	w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
-	if err != nil {
-		return fmt.Errorf("failed to initialize watcher: %w", err)
-	}
-	defer w.Close()
-
-	if err := w.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start watcher: %w", err)
+	if !isBackgroundChild {
+		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(linkedWorktrees)+1)
 	}
 
-	// Run the watch event loop
-	return runWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg, isBackgroundChild)
+	return g.Wait()
 }
 
 func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, event watcher.FileEvent) {
