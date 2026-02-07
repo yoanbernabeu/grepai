@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/alpkeskin/gotoon"
@@ -884,7 +886,65 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 
 // Serve starts the MCP server using stdio transport.
 func (s *Server) Serve() error {
-	return server.ServeStdio(s.mcpServer)
+	// Create stdio server with title fix wrapper
+	stdioServer := server.NewStdioServer(s.mcpServer)
+
+	// Wrap stdout to intercept and fix responses
+	fixedStdout := &titleFixWriter{Writer: os.Stdout}
+
+	// Start listening with fixed stdout
+	ctx := context.Background()
+	return stdioServer.Listen(ctx, os.Stdin, fixedStdout)
+}
+
+// titleFixWriter wraps io.Writer to fix tool titles in responses
+type titleFixWriter struct {
+	Writer io.Writer
+}
+
+func (w *titleFixWriter) Write(p []byte) (n int, err error) {
+	// Try to parse as JSON
+	var data map[string]interface{}
+	if err2 := json.Unmarshal(p, &data); err2 != nil {
+		// Not valid JSON, write as-is
+		return w.Writer.Write(p)
+	}
+
+	// Check if this is a tools/list response
+	if result, ok := data["result"].(map[string]interface{}); ok {
+		if tools, ok := result["tools"].([]interface{}); ok {
+			// Fix each tool
+			for _, toolIf := range tools {
+				tool, ok := toolIf.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				// 1. Move title from annotations to root
+				if annotations, ok := tool["annotations"].(map[string]interface{}); ok {
+					if title, ok := annotations["title"].(string); ok {
+						tool["title"] = title
+						delete(annotations, "title")
+					}
+				}
+
+				// 2. Add $schema to inputSchema (required by Windsurf)
+				if inputSchema, ok := tool["inputSchema"].(map[string]interface{}); ok {
+					if _, hasSchema := inputSchema["$schema"]; !hasSchema {
+						inputSchema["$schema"] = "http://json-schema.org/draft-07/schema#"
+					}
+				}
+			}
+
+			// Marshal back and write with newline
+			fixed, _ := json.Marshal(data)
+			fixed = append(fixed, '\n')
+			return w.Writer.Write(fixed)
+		}
+	}
+
+	// Write original data
+	return w.Writer.Write(p)
 }
 
 // formatBytes formats bytes to human readable string.
