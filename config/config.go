@@ -65,14 +65,14 @@ type EmbedderConfig struct {
 }
 
 // GetDimensions returns the configured dimensions or a default value.
-// For OpenAI, defaults to 1536 (text-embedding-3-small).
+// For OpenAI/OpenRouter, defaults to 1536 (text-embedding-3-small).
 // For Ollama/LMStudio/Synthetic, defaults to 768 (nomic-embed-text-v1.5).
 func (e *EmbedderConfig) GetDimensions() int {
 	if e.Dimensions != nil {
 		return *e.Dimensions
 	}
 	switch e.Provider {
-	case "openai":
+	case "openai", "openrouter":
 		return 1536
 	default:
 		return 768
