@@ -97,7 +97,7 @@ func TestWorkspaceTraceCallers_should_aggregate_results_from_multiple_stores(t *
 	// Aggregate callers from both stores (mirrors workspace mode logic in runTraceCallers)
 	stores := []trace.SymbolStore{store1, store2}
 	symbolName := "Login"
-	result := trace.TraceResult{Query: symbolName, Mode: "fast"}
+	var result trace.TraceResult
 
 	for _, ss := range stores {
 		symbols, _ := ss.LookupSymbol(ctx, symbolName)

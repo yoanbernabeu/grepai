@@ -940,10 +940,10 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 
 // WorkspaceIndexStatus represents the status of a workspace index.
 type WorkspaceIndexStatus struct {
-	Workspace string                      `json:"workspace"`
-	Projects  []WorkspaceProjectStatus    `json:"projects"`
-	Provider  string                      `json:"provider"`
-	Model     string                      `json:"model"`
+	Workspace string                   `json:"workspace"`
+	Projects  []WorkspaceProjectStatus `json:"projects"`
+	Provider  string                   `json:"provider"`
+	Model     string                   `json:"model"`
 }
 
 // WorkspaceProjectStatus represents the status of a single project in a workspace.

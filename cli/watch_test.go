@@ -62,7 +62,7 @@ func (m *mockVectorStore) ListDocuments(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (m *mockVectorStore) Load(_ context.Context) error  { return nil }
+func (m *mockVectorStore) Load(_ context.Context) error    { return nil }
 func (m *mockVectorStore) Persist(_ context.Context) error { return nil }
 func (m *mockVectorStore) Close() error                    { return nil }
 
