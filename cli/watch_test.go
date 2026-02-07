@@ -365,7 +365,7 @@ func TestStopWatchDaemon_WaitForShutdown(t *testing.T) {
 
 func TestProjectPrefixStore_should_prefix_chunk_paths_when_saving(t *testing.T) {
 	mock := &mockVectorStore{}
-	projectPath := "/home/user/projects/myapp"
+	projectPath := filepath.Join(t.TempDir(), "myapp")
 	ps := &projectPrefixStore{
 		store:         mock,
 		workspaceName: "myworkspace",
@@ -373,15 +373,18 @@ func TestProjectPrefixStore_should_prefix_chunk_paths_when_saving(t *testing.T) 
 		projectPath:   projectPath,
 	}
 
+	srcMain := filepath.Join(projectPath, "src", "main.go")
+	pkgUtil := filepath.Join(projectPath, "pkg", "util.go")
+
 	chunks := []store.Chunk{
 		{
-			ID:       "/home/user/projects/myapp/src/main.go_0",
-			FilePath: "/home/user/projects/myapp/src/main.go",
+			ID:       srcMain + "_0",
+			FilePath: srcMain,
 			Content:  "package main",
 		},
 		{
-			ID:       "/home/user/projects/myapp/pkg/util.go_1",
-			FilePath: "/home/user/projects/myapp/pkg/util.go",
+			ID:       pkgUtil + "_1",
+			FilePath: pkgUtil,
 			Content:  "package pkg",
 		},
 	}
@@ -418,7 +421,7 @@ func TestProjectPrefixStore_should_prefix_relative_paths_when_saving_chunks(t *t
 		store:         mock,
 		workspaceName: "ws",
 		projectName:   "proj",
-		projectPath:   "/home/user/projects/myapp",
+		projectPath:   filepath.Join(t.TempDir(), "myapp"),
 	}
 
 	chunks := []store.Chunk{
@@ -451,7 +454,7 @@ func TestProjectPrefixStore_should_prefix_relative_paths_when_saving_chunks(t *t
 
 func TestProjectPrefixStore_should_prefix_path_when_deleting_by_file(t *testing.T) {
 	mock := &mockVectorStore{}
-	projectPath := "/home/user/projects/myapp"
+	projectPath := filepath.Join(t.TempDir(), "myapp")
 	ps := &projectPrefixStore{
 		store:         mock,
 		workspaceName: "ws",
@@ -459,7 +462,8 @@ func TestProjectPrefixStore_should_prefix_path_when_deleting_by_file(t *testing.
 		projectPath:   projectPath,
 	}
 
-	err := ps.DeleteByFile(context.Background(), "/home/user/projects/myapp/src/main.go")
+	absFile := filepath.Join(projectPath, "src", "main.go")
+	err := ps.DeleteByFile(context.Background(), absFile)
 	if err != nil {
 		t.Fatalf("DeleteByFile() returned error: %v", err)
 	}
@@ -476,7 +480,7 @@ func TestProjectPrefixStore_should_prefix_path_when_deleting_by_file(t *testing.
 
 func TestProjectPrefixStore_should_prefix_path_when_getting_document(t *testing.T) {
 	mock := &mockVectorStore{}
-	projectPath := "/home/user/projects/myapp"
+	projectPath := filepath.Join(t.TempDir(), "myapp")
 	ps := &projectPrefixStore{
 		store:         mock,
 		workspaceName: "ws",
@@ -484,7 +488,8 @@ func TestProjectPrefixStore_should_prefix_path_when_getting_document(t *testing.
 		projectPath:   projectPath,
 	}
 
-	_, err := ps.GetDocument(context.Background(), "/home/user/projects/myapp/src/main.go")
+	absFile := filepath.Join(projectPath, "src", "main.go")
+	_, err := ps.GetDocument(context.Background(), absFile)
 	if err != nil {
 		t.Fatalf("GetDocument() returned error: %v", err)
 	}
@@ -501,7 +506,7 @@ func TestProjectPrefixStore_should_prefix_path_when_getting_document(t *testing.
 
 func TestProjectPrefixStore_should_prefix_path_when_saving_document(t *testing.T) {
 	mock := &mockVectorStore{}
-	projectPath := "/home/user/projects/myapp"
+	projectPath := filepath.Join(t.TempDir(), "myapp")
 	ps := &projectPrefixStore{
 		store:         mock,
 		workspaceName: "ws",
@@ -510,7 +515,7 @@ func TestProjectPrefixStore_should_prefix_path_when_saving_document(t *testing.T
 	}
 
 	doc := store.Document{
-		Path: "/home/user/projects/myapp/src/main.go",
+		Path: filepath.Join(projectPath, "src", "main.go"),
 		Hash: "abc123",
 	}
 
@@ -531,7 +536,7 @@ func TestProjectPrefixStore_should_prefix_path_when_saving_document(t *testing.T
 
 func TestProjectPrefixStore_should_prefix_path_when_deleting_document(t *testing.T) {
 	mock := &mockVectorStore{}
-	projectPath := "/home/user/projects/myapp"
+	projectPath := filepath.Join(t.TempDir(), "myapp")
 	ps := &projectPrefixStore{
 		store:         mock,
 		workspaceName: "ws",
@@ -539,7 +544,8 @@ func TestProjectPrefixStore_should_prefix_path_when_deleting_document(t *testing
 		projectPath:   projectPath,
 	}
 
-	err := ps.DeleteDocument(context.Background(), "/home/user/projects/myapp/src/main.go")
+	absFile := filepath.Join(projectPath, "src", "main.go")
+	err := ps.DeleteDocument(context.Background(), absFile)
 	if err != nil {
 		t.Fatalf("DeleteDocument() returned error: %v", err)
 	}
