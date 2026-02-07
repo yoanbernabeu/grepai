@@ -73,8 +73,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 			switch input {
 			case "2", "lmstudio":
 				cfg.Embedder.Provider = "lmstudio"
+				fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")
+				endpoint, _ := reader.ReadString('\n')
+				endpoint = strings.TrimSpace(endpoint)
+				if endpoint == "" {
+					endpoint = "http://127.0.0.1:1234"
+				}
+				cfg.Embedder.Endpoint = endpoint
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
-				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
 			case "3", "openai":
@@ -84,6 +90,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 				// OpenAI: leave Dimensions nil to use model's native dimensions
 			default:
 				cfg.Embedder.Provider = "ollama"
+				fmt.Print("Ollama endpoint [http://localhost:11434]: ")
+				endpoint, _ := reader.ReadString('\n')
+				endpoint = strings.TrimSpace(endpoint)
+				if endpoint == "" {
+					endpoint = "http://localhost:11434"
+				}
+				cfg.Embedder.Endpoint = endpoint
 			}
 		} else {
 			cfg.Embedder.Provider = initProvider

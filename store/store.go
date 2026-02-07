@@ -7,14 +7,15 @@ import (
 
 // Chunk represents a piece of code with its vector embedding
 type Chunk struct {
-	ID        string    `json:"id"`
-	FilePath  string    `json:"file_path"`
-	StartLine int       `json:"start_line"`
-	EndLine   int       `json:"end_line"`
-	Content   string    `json:"content"`
-	Vector    []float32 `json:"vector"`
-	Hash      string    `json:"hash"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	FilePath    string    `json:"file_path"`
+	StartLine   int       `json:"start_line"`
+	EndLine     int       `json:"end_line"`
+	Content     string    `json:"content"`
+	Vector      []float32 `json:"vector"`
+	Hash        string    `json:"hash"`
+	ContentHash string    `json:"content_hash"` // SHA256 of raw content (path-independent)
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Document represents a file with its chunks
@@ -89,4 +90,15 @@ type VectorStore interface {
 
 	// GetAllChunks returns all chunks in the store (used for text search)
 	GetAllChunks(ctx context.Context) ([]Chunk, error)
+}
+
+// EmbeddingCache is an optional interface that VectorStore implementations can
+// provide to enable content-addressed embedding deduplication. When a store
+// implements this interface, the indexer will look up existing embeddings by
+// content hash before calling the embedder, avoiding redundant API calls for
+// identical content (e.g., across git worktrees).
+type EmbeddingCache interface {
+	// LookupByContentHash returns the embedding vector for the given content hash.
+	// Returns (vector, true, nil) if found, (nil, false, nil) if not found.
+	LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error)
 }

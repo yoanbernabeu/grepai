@@ -10,7 +10,7 @@
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
-      version = "0.18.0";
+      version = "0.28.0";
 
       mkGrepai = pkgs: pkgs.buildGoModule {
         pname = "grepai";

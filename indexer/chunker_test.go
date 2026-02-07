@@ -3,6 +3,7 @@ package indexer
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestChunker_Chunk(t *testing.T) {
@@ -317,5 +318,103 @@ func TestChunker_Overlap(t *testing.T) {
 
 	if chunker.Overlap() != 32 {
 		t.Errorf("Overlap() = %d, expected 32", chunker.Overlap())
+	}
+}
+
+func TestAlignRuneBoundary(t *testing.T) {
+	// "é" is 2 bytes (0xC3 0xA9), "═" is 3 bytes (0xE2 0x95 0x90), "🚀" is 4 bytes
+	content := "a═🚀é"
+	// byte layout: a(1) ═(3) 🚀(4) é(2) = 10 bytes total
+
+	tests := []struct {
+		name     string
+		pos      int
+		expected int
+	}{
+		{"at ASCII char", 0, 0},
+		{"at start of 3-byte rune", 1, 1},
+		{"mid 3-byte rune (byte 2)", 2, 2}, // continuation byte -> skip forward
+		{"mid 3-byte rune (byte 3)", 3, 3}, // continuation byte -> skip forward
+		{"at start of 4-byte rune", 4, 4},  // start of 🚀
+		{"mid 4-byte rune (byte 2)", 5, 5}, // continuation -> skip forward
+		{"mid 4-byte rune (byte 3)", 6, 6}, // continuation -> skip forward
+		{"mid 4-byte rune (byte 4)", 7, 7}, // continuation -> skip forward
+		{"at start of 2-byte rune", 8, 8},  // start of é
+		{"mid 2-byte rune (byte 2)", 9, 9}, // continuation -> skip forward
+		{"at end of string", len(content), len(content)},
+	}
+
+	// First, verify our byte layout assumptions
+	if len(content) != 10 {
+		t.Fatalf("expected content length 10, got %d", len(content))
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := alignRuneBoundary(content, tt.pos)
+			if result > len(content) {
+				t.Errorf("alignRuneBoundary(%d) = %d, exceeds content length %d", tt.pos, result, len(content))
+			}
+			// Result should always be at a valid rune start or at end of string
+			if result < len(content) && !utf8.RuneStart(content[result]) {
+				t.Errorf("alignRuneBoundary(%d) = %d, but byte at that position (0x%02x) is not a rune start",
+					tt.pos, result, content[result])
+			}
+			// Result should be >= pos (always moves forward)
+			if result < tt.pos {
+				t.Errorf("alignRuneBoundary(%d) = %d, moved backwards", tt.pos, result)
+			}
+		})
+	}
+}
+
+func TestChunker_ChunkUTF8Boundaries(t *testing.T) {
+	// Use a very small chunk size to force splits in the middle of multi-byte sequences
+	chunker := NewChunker(3, 1) // 3 tokens * 4 bytes = 12 bytes per chunk
+
+	// Content with 3-byte chars (═), 4-byte chars (🚀), and 2-byte chars (é)
+	// Each ═ is 3 bytes, so a line of 20 ═ chars = 60 bytes
+	content := strings.Repeat("═", 20) + "\n" +
+		strings.Repeat("🚀", 15) + "\n" +
+		strings.Repeat("é", 30) + "\n"
+
+	chunks := chunker.Chunk("utf8test.txt", content)
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk")
+	}
+
+	for i, chunk := range chunks {
+		if !utf8.ValidString(chunk.Content) {
+			t.Errorf("chunk %d contains invalid UTF-8: %q", i, chunk.Content[:min(20, len(chunk.Content))])
+		}
+	}
+}
+
+func TestChunker_ReChunkUTF8Boundaries(t *testing.T) {
+	chunker := NewChunker(6, 1) // Will use halfSize=3 for re-chunking
+
+	// Create a parent chunk with multi-byte content
+	content := strings.Repeat("═", 40) + strings.Repeat("🚀", 30)
+
+	parent := ChunkInfo{
+		ID:        "utf8test.txt_0",
+		FilePath:  "utf8test.txt",
+		StartLine: 1,
+		EndLine:   1,
+		Content:   content,
+		Hash:      "abc123",
+	}
+
+	subChunks := chunker.ReChunk(parent, 0)
+
+	if len(subChunks) == 0 {
+		t.Fatal("expected at least one sub-chunk")
+	}
+
+	for i, chunk := range subChunks {
+		if !utf8.ValidString(chunk.Content) {
+			t.Errorf("sub-chunk %d contains invalid UTF-8: %q", i, chunk.Content[:min(20, len(chunk.Content))])
+		}
 	}
 }

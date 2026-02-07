@@ -354,3 +354,41 @@ func TestGOBStore_GetChunksForFile(t *testing.T) {
 		t.Error("expected nil for non-existent file")
 	}
 }
+
+func TestGOBStore_LookupByContentHash(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	store := NewGOBStore(indexPath)
+	ctx := context.Background()
+
+	// Add chunks with content hashes
+	store.SaveChunks(ctx, []Chunk{
+		{
+			ID:          "chunk-1",
+			FilePath:    "main.go",
+			Content:     "func main() {}",
+			Vector:      []float32{0.1, 0.2, 0.3},
+			ContentHash: "abc123",
+		},
+	})
+
+	// Lookup existing hash
+	vec, found, err := store.LookupByContentHash(ctx, "abc123")
+	if err != nil {
+		t.Fatalf("LookupByContentHash failed: %v", err)
+	}
+	if !found {
+		t.Fatal("Expected to find chunk by content hash")
+	}
+	if len(vec) != 3 || vec[0] != 0.1 {
+		t.Errorf("Unexpected vector: %v", vec)
+	}
+
+	// Lookup non-existent hash
+	_, found, err = store.LookupByContentHash(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("LookupByContentHash failed: %v", err)
+	}
+	if found {
+		t.Fatal("Expected not found for non-existent hash")
+	}
+}

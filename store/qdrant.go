@@ -95,6 +95,14 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		}
 	}
 
+	// Create field index for content_hash to enable efficient lookups.
+	// Error is intentionally ignored because the index may already exist.
+	_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+		CollectionName: s.collectionName,
+		FieldName:      "content_hash",
+		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
+	})
+
 	return nil
 }
 
@@ -183,6 +191,14 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 	payload["hash"] = hashVal
 	payload["updated_at"] = updatedAtVal
 
+	if chunk.ContentHash != "" {
+		contentHashVal, err := qdrant.NewValue(chunk.ContentHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create content_hash value: %w", err)
+		}
+		payload["content_hash"] = contentHashVal
+	}
+
 	return payload, nil
 }
 
@@ -252,6 +268,9 @@ func (s *QdrantStore) parseChunkPayload(payload map[string]*qdrant.Value) *Chunk
 		if err == nil {
 			chunk.UpdatedAt = t
 		}
+	}
+	if val, ok := payload["content_hash"]; ok {
+		chunk.ContentHash = val.GetStringValue()
 	}
 
 	return chunk
@@ -446,4 +465,40 @@ func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	}
 
 	return chunks, nil
+}
+
+// LookupByContentHash searches Qdrant for a point matching the content hash.
+func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+	if contentHash == "" {
+		return nil, false, nil
+	}
+
+	filter := &qdrant.Filter{
+		Must: []*qdrant.Condition{
+			qdrant.NewMatch("content_hash", contentHash),
+		},
+	}
+
+	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		Filter:         filter,
+		Limit:          qdrant.PtrOf(uint32(1)),
+		WithVectors:    qdrant.NewWithVectors(true),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to lookup by content hash: %w", err)
+	}
+
+	if len(scrollResult) == 0 {
+		return nil, false, nil
+	}
+
+	point := scrollResult[0]
+	if point.Vectors != nil && point.Vectors.GetVector() != nil {
+		if dense := point.Vectors.GetVector().GetDense(); dense != nil {
+			return dense.GetData(), true, nil
+		}
+	}
+
+	return nil, false, nil
 }

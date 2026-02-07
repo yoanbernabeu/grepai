@@ -60,6 +60,8 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			chunk_ids TEXT[] NOT NULL,
 			PRIMARY KEY (project_id, path)
 		)`,
+		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash) WHERE content_hash != ''`,
 		buildEnsureVectorSQL(s.dimensions),
 	}
 
@@ -78,8 +80,8 @@ func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 	for _, chunk := range chunks {
 		vec := pgvector.NewVector(chunk.Vector)
 		batch.Queue(
-			`INSERT INTO chunks (id, project_id, file_path, start_line, end_line, content, vector, hash, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`INSERT INTO chunks (id, project_id, file_path, start_line, end_line, content, vector, hash, content_hash, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			ON CONFLICT (id) DO UPDATE SET
 				file_path = EXCLUDED.file_path,
 				start_line = EXCLUDED.start_line,
@@ -87,9 +89,10 @@ func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 				content = EXCLUDED.content,
 				vector = EXCLUDED.vector,
 				hash = EXCLUDED.hash,
+				content_hash = EXCLUDED.content_hash,
 				updated_at = EXCLUDED.updated_at`,
 			chunk.ID, s.projectID, chunk.FilePath, chunk.StartLine, chunk.EndLine,
-			chunk.Content, vec, chunk.Hash, chunk.UpdatedAt,
+			chunk.Content, vec, chunk.Hash, chunk.ContentHash, chunk.UpdatedAt,
 		)
 	}
 
@@ -338,6 +341,28 @@ func (s *PostgresStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	}
 
 	return chunks, rows.Err()
+}
+
+// LookupByContentHash queries the chunks table for a matching content hash and returns the vector.
+func (s *PostgresStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+	if contentHash == "" {
+		return nil, false, nil
+	}
+
+	var vec pgvector.Vector
+	err := s.pool.QueryRow(ctx,
+		`SELECT vector FROM chunks WHERE content_hash = $1 AND vector IS NOT NULL LIMIT 1`,
+		contentHash,
+	).Scan(&vec)
+
+	if err == pgx.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to lookup by content hash: %w", err)
+	}
+
+	return vec.Slice(), true, nil
 }
 
 // buildEnsureVectorSQL returns a SQL block that alters the "chunks.vector" column
