@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Workspace Trace Support**: `grepai trace callers/callees/graph` now supports `--workspace` and `--project` flags for cross-project call graph analysis
+- **Workspace Symbol Indexing**: `grepai watch --workspace` now extracts symbols and builds per-project call graphs (stored in `.grepai/symbols.gob` per project)
+- **MCP Workspace Trace**: MCP trace tools (`grepai_trace_callers`, `grepai_trace_callees`, `grepai_trace_graph`) and `grepai_index_status` support workspace and project parameters
+- **SymbolStore Interface**: Extracted `trace.SymbolStore` interface from `GOBSymbolStore` for extensibility
+
+### Fixed
+
+- **Watcher Event Routing**: Fixed workspace file events being silently dropped due to relative vs absolute path comparison
+- **Symbol Store Directory Creation**: `GOBSymbolStore.Persist` now creates parent directories automatically
+
 ## [0.28.0] - 2026-02-07
 
 ### Added
