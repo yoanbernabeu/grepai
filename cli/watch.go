@@ -312,7 +312,6 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 			embedder.WithOpenRouterModel(cfg.Embedder.Model),
 			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
 			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOpenRouterParallelism(cfg.Embedder.Parallelism),
 		}
 		if cfg.Embedder.Dimensions != nil {
 			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
@@ -325,7 +324,7 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 			return nil, fmt.Errorf("cannot connect to OpenRouter API: %w\nMake sure your OPENROUTER_API_KEY or OPENAI_API_KEY is set", err)
 		}
 		return openrouterEmb, nil
-default:
+	default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}
 }

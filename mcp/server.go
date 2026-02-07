@@ -889,7 +889,6 @@ func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
 			embedder.WithOpenRouterModel(cfg.Embedder.Model),
 			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
 			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOpenRouterParallelism(cfg.Embedder.Parallelism),
 		}
 		if cfg.Embedder.Dimensions != nil {
 			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))

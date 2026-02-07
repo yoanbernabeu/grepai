@@ -101,7 +101,7 @@ func NewSyntheticEmbedder(opts ...SyntheticOption) (*SyntheticEmbedder, error) {
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("Synthetic API key not set (use SYNTHETIC_API_KEY or OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("synthetic API key not set (use SYNTHETIC_API_KEY or OPENAI_API_KEY environment variable)")
 	}
 
 	return e, nil
@@ -156,7 +156,7 @@ func (e *SyntheticEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
 			msg = errResp.Error.Message
 		}
-		return nil, fmt.Errorf("Synthetic API error (status %d): %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("synthetic API error (status %d): %s", resp.StatusCode, msg)
 	}
 
 	var result syntheticEmbedResponse
@@ -203,7 +203,7 @@ func (e *SyntheticEmbedder) Ping(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Synthetic returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("synthetic returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil

@@ -17,13 +17,17 @@ const (
 	openRouterDimensions      = 1536
 )
 
+// OpenRouterEmbedder implements the Embedder interface for the OpenRouter API.
+// Note: Parallelism was intentionally removed to keep the implementation simple.
+// OpenRouter processes batches efficiently as-is. If parallel processing is needed
+// in the future, consider implementing the BatchEmbedder interface similar to
+// OpenAIEmbedder with AdaptiveRateLimiter and worker pools.
 type OpenRouterEmbedder struct {
-	endpoint    string
-	model       string
-	apiKey      string
-	dimensions  *int
-	parallelism int
-	client      *http.Client
+	endpoint   string
+	model      string
+	apiKey     string
+	dimensions *int
+	client     *http.Client
 }
 
 type openRouterEmbedRequest struct {
@@ -76,20 +80,11 @@ func WithOpenRouterDimensions(dimensions int) OpenRouterOption {
 	}
 }
 
-func WithOpenRouterParallelism(parallelism int) OpenRouterOption {
-	return func(e *OpenRouterEmbedder) {
-		if parallelism > 0 {
-			e.parallelism = parallelism
-		}
-	}
-}
-
 func NewOpenRouterEmbedder(opts ...OpenRouterOption) (*OpenRouterEmbedder, error) {
 	e := &OpenRouterEmbedder{
-		endpoint:    defaultOpenRouterEndpoint,
-		model:       defaultOpenRouterModel,
-		dimensions:  nil, // nil = let the model use its native dimensions
-		parallelism: 4, // default parallelism
+		endpoint:   defaultOpenRouterEndpoint,
+		model:      defaultOpenRouterModel,
+		dimensions: nil, // nil = let the model use its native dimensions
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -109,7 +104,7 @@ func NewOpenRouterEmbedder(opts ...OpenRouterOption) (*OpenRouterEmbedder, error
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("OpenRouter API key not set (use OPENROUTER_API_KEY or OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("openrouter API key not set (use OPENROUTER_API_KEY or OPENAI_API_KEY environment variable)")
 	}
 
 	return e, nil
@@ -166,7 +161,7 @@ func (e *OpenRouterEmbedder) EmbedBatch(ctx context.Context, texts []string) ([]
 		if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
 			msg = errResp.Error.Message
 		}
-		return nil, fmt.Errorf("OpenRouter API error (status %d): %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("openrouter API error (status %d): %s", resp.StatusCode, msg)
 	}
 
 	var result openRouterEmbedResponse
@@ -217,7 +212,7 @@ func (e *OpenRouterEmbedder) Ping(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("OpenRouter returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("openrouter returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
