@@ -268,7 +268,7 @@ func TestNewServerWithWorkspace(t *testing.T) {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
 		if srv.workspaceName != "test" {
-			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
+			t.Errorf("expected workspace test, got %s", srv.workspaceName)
 		}
 		if srv.projectRoot != "" {
 			t.Errorf("expected empty projectRoot, got %s", srv.projectRoot)
@@ -281,7 +281,7 @@ func TestNewServerWithWorkspace(t *testing.T) {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
 		if srv.workspaceName != "test" {
-			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
+			t.Errorf("expected workspace test, got %s", srv.workspaceName)
 		}
 		if srv.projectRoot != "/tmp/project" {
 			t.Errorf("expected project /tmp/project, got %s", srv.projectRoot)
