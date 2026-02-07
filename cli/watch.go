@@ -1288,24 +1288,24 @@ func (p *projectPrefixStore) getPrefix() string {
 	return p.workspaceName + "/" + p.projectName
 }
 
+// toRelSlash computes a forward-slash relative path from the project root.
+// Vector store paths must always use forward slashes regardless of OS.
+func (p *projectPrefixStore) toRelSlash(absPath string) string {
+	if !filepath.IsAbs(absPath) {
+		return filepath.ToSlash(absPath)
+	}
+	rel, err := filepath.Rel(p.projectPath, absPath)
+	if err != nil {
+		return filepath.ToSlash(absPath)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chunk) error {
 	prefixedChunks := make([]store.Chunk, len(chunks))
 	for i, c := range chunks {
 		prefixedChunks[i] = c
-		// Determine the relative path
-		var relPath string
-		if filepath.IsAbs(c.FilePath) {
-			// Absolute path: compute relative from project path
-			var err error
-			relPath, err = filepath.Rel(p.projectPath, c.FilePath)
-			if err != nil {
-				relPath = c.FilePath // fallback
-			}
-		} else {
-			// Already relative
-			relPath = c.FilePath
-		}
-		// Prefix with project name
+		relPath := p.toRelSlash(c.FilePath)
 		prefixedPath := p.getPrefix() + "/" + relPath
 		prefixedChunks[i].FilePath = prefixedPath
 		// Also update the chunk ID to include project prefix
@@ -1318,17 +1318,7 @@ func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chun
 }
 
 func (p *projectPrefixStore) DeleteByFile(ctx context.Context, filePath string) error {
-	var relPath string
-	if filepath.IsAbs(filePath) {
-		var err error
-		relPath, err = filepath.Rel(p.projectPath, filePath)
-		if err != nil {
-			relPath = filePath
-		}
-	} else {
-		relPath = filePath
-	}
-	prefixedPath := p.getPrefix() + "/" + relPath
+	prefixedPath := p.getPrefix() + "/" + p.toRelSlash(filePath)
 	return p.store.DeleteByFile(ctx, prefixedPath)
 }
 
@@ -1337,47 +1327,17 @@ func (p *projectPrefixStore) Search(ctx context.Context, queryVector []float32, 
 }
 
 func (p *projectPrefixStore) GetDocument(ctx context.Context, filePath string) (*store.Document, error) {
-	var relPath string
-	if filepath.IsAbs(filePath) {
-		var err error
-		relPath, err = filepath.Rel(p.projectPath, filePath)
-		if err != nil {
-			relPath = filePath
-		}
-	} else {
-		relPath = filePath
-	}
-	prefixedPath := p.getPrefix() + "/" + relPath
+	prefixedPath := p.getPrefix() + "/" + p.toRelSlash(filePath)
 	return p.store.GetDocument(ctx, prefixedPath)
 }
 
 func (p *projectPrefixStore) SaveDocument(ctx context.Context, doc store.Document) error {
-	var relPath string
-	if filepath.IsAbs(doc.Path) {
-		var err error
-		relPath, err = filepath.Rel(p.projectPath, doc.Path)
-		if err != nil {
-			relPath = doc.Path
-		}
-	} else {
-		relPath = doc.Path
-	}
-	doc.Path = p.getPrefix() + "/" + relPath
+	doc.Path = p.getPrefix() + "/" + p.toRelSlash(doc.Path)
 	return p.store.SaveDocument(ctx, doc)
 }
 
 func (p *projectPrefixStore) DeleteDocument(ctx context.Context, filePath string) error {
-	var relPath string
-	if filepath.IsAbs(filePath) {
-		var err error
-		relPath, err = filepath.Rel(p.projectPath, filePath)
-		if err != nil {
-			relPath = filePath
-		}
-	} else {
-		relPath = filePath
-	}
-	prefixedPath := p.getPrefix() + "/" + relPath
+	prefixedPath := p.getPrefix() + "/" + p.toRelSlash(filePath)
 	return p.store.DeleteDocument(ctx, prefixedPath)
 }
 
