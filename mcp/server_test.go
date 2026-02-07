@@ -3,11 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/trace"
 )
 
 // TestServerCreateEmbedder_AppliesConfiguredDimensions verifies that createEmbedder
@@ -285,4 +287,278 @@ func TestNewServerWithWorkspace(t *testing.T) {
 			t.Errorf("expected project /tmp/project, got %s", srv.projectRoot)
 		}
 	})
+}
+
+// TestResolveWorkspace_should_return_explicit_workspace_when_provided verifies that
+// resolveWorkspace returns the explicit workspace parameter when it is non-empty.
+func TestResolveWorkspace_should_return_explicit_workspace_when_provided(t *testing.T) {
+	s := &Server{workspaceName: "default"}
+
+	got := s.resolveWorkspace("explicit")
+	if got != "explicit" {
+		t.Errorf("expected 'explicit', got %q", got)
+	}
+}
+
+// TestResolveWorkspace_should_fallback_to_server_workspace_when_empty verifies that
+// resolveWorkspace falls back to the server's workspaceName when the parameter is empty.
+func TestResolveWorkspace_should_fallback_to_server_workspace_when_empty(t *testing.T) {
+	s := &Server{workspaceName: "default"}
+
+	got := s.resolveWorkspace("")
+	if got != "default" {
+		t.Errorf("expected 'default', got %q", got)
+	}
+}
+
+// TestResolveWorkspace_should_return_empty_when_both_empty verifies that
+// resolveWorkspace returns empty string when both parameter and server workspace are empty.
+func TestResolveWorkspace_should_return_empty_when_both_empty(t *testing.T) {
+	s := &Server{workspaceName: ""}
+
+	got := s.resolveWorkspace("")
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+// helperGetToolSchemaProperties returns the properties map for a registered tool.
+func helperGetToolSchemaProperties(t *testing.T, toolName string) map[string]any {
+	t.Helper()
+
+	s := &Server{projectRoot: "/tmp/test-project"}
+	s.mcpServer = server.NewMCPServer("grepai-test", "1.0.0")
+	s.registerTools()
+
+	tools := s.mcpServer.ListTools()
+	tool, ok := tools[toolName]
+	if !ok {
+		t.Fatalf("tool %q not registered", toolName)
+	}
+
+	schema := tool.Tool.InputSchema
+	if schema.Type != "object" {
+		t.Fatalf("expected schema type object, got %q", schema.Type)
+	}
+
+	props := make(map[string]any, len(schema.Properties))
+	for k, v := range schema.Properties {
+		props[k] = v
+	}
+	return props
+}
+
+// TestRegisterTools_should_include_workspace_param_on_trace_callers verifies that
+// grepai_trace_callers has workspace and project properties in its schema.
+func TestRegisterTools_should_include_workspace_param_on_trace_callers(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_trace_callers")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_trace_callers schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_trace_callers schema")
+	}
+}
+
+// TestRegisterTools_should_include_workspace_param_on_trace_callees verifies that
+// grepai_trace_callees has workspace and project properties in its schema.
+func TestRegisterTools_should_include_workspace_param_on_trace_callees(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_trace_callees")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_trace_callees schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_trace_callees schema")
+	}
+}
+
+// TestRegisterTools_should_include_workspace_param_on_trace_graph verifies that
+// grepai_trace_graph has workspace and project properties in its schema.
+func TestRegisterTools_should_include_workspace_param_on_trace_graph(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_trace_graph")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_trace_graph schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_trace_graph schema")
+	}
+}
+
+// TestRegisterTools_should_include_workspace_param_on_index_status verifies that
+// grepai_index_status has a workspace property in its schema.
+func TestRegisterTools_should_include_workspace_param_on_index_status(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_index_status")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_index_status schema")
+	}
+}
+
+// TestWorkspaceIndexStatus_should_marshal_correctly verifies that WorkspaceIndexStatus
+// marshals to JSON with the expected fields.
+func TestWorkspaceIndexStatus_should_marshal_correctly(t *testing.T) {
+	status := WorkspaceIndexStatus{
+		Workspace: "my-workspace",
+		Projects: []WorkspaceProjectStatus{
+			{Name: "project-a", Path: "/home/user/project-a", SymbolsReady: true, TotalSymbols: 42},
+			{Name: "project-b", Path: "/home/user/project-b", SymbolsReady: false, TotalSymbols: 0},
+		},
+		Provider: "ollama",
+		Model:    "nomic-embed-text",
+	}
+
+	jsonBytes, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	jsonStr := string(jsonBytes)
+
+	expectedFields := []string{
+		`"workspace"`,
+		`"projects"`,
+		`"provider"`,
+		`"model"`,
+		`"my-workspace"`,
+		`"project-a"`,
+		`"project-b"`,
+		`"symbols_ready"`,
+		`"total_symbols"`,
+	}
+
+	for _, field := range expectedFields {
+		if !strings.Contains(jsonStr, field) {
+			t.Errorf("expected JSON to contain %s, got: %s", field, jsonStr)
+		}
+	}
+
+	// Verify round-trip unmarshaling
+	var decoded WorkspaceIndexStatus
+	if err := json.Unmarshal(jsonBytes, &decoded); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if decoded.Workspace != "my-workspace" {
+		t.Errorf("expected workspace 'my-workspace', got %q", decoded.Workspace)
+	}
+	if len(decoded.Projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(decoded.Projects))
+	}
+	if decoded.Projects[0].TotalSymbols != 42 {
+		t.Errorf("expected project-a total_symbols=42, got %d", decoded.Projects[0].TotalSymbols)
+	}
+	if decoded.Projects[1].SymbolsReady {
+		t.Error("expected project-b symbols_ready=false")
+	}
+}
+
+// TestHandleTraceCallersFromStores_should_aggregate_across_stores verifies that
+// handleTraceCallersFromStores aggregates callers from multiple symbol stores.
+func TestHandleTraceCallersFromStores_should_aggregate_across_stores(t *testing.T) {
+	ctx := context.Background()
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	store1 := trace.NewGOBSymbolStore(filepath.Join(tmpDir1, "symbols.gob"))
+	store2 := trace.NewGOBSymbolStore(filepath.Join(tmpDir2, "symbols.gob"))
+
+	// Save a symbol "Login" to store1 with a caller "HandleAuth"
+	err := store1.SaveFile(ctx, "/project1/auth.go", []trace.Symbol{
+		{Name: "Login", Kind: "function", File: "/project1/auth.go", Line: 10, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "Login", File: "/project1/handler.go", Line: 20, CallerName: "HandleAuth", CallerFile: "/project1/handler.go", CallerLine: 15},
+	})
+	if err != nil {
+		t.Fatalf("store1.SaveFile failed: %v", err)
+	}
+
+	// Save a symbol "Login" to store2 with a caller "ProcessAuth"
+	err = store2.SaveFile(ctx, "/project2/api.go", []trace.Symbol{
+		{Name: "Login", Kind: "function", File: "/project2/api.go", Line: 5, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "Login", File: "/project2/service.go", Line: 30, CallerName: "ProcessAuth", CallerFile: "/project2/service.go", CallerLine: 25},
+	})
+	if err != nil {
+		t.Fatalf("store2.SaveFile failed: %v", err)
+	}
+
+	s := &Server{}
+	stores := []trace.SymbolStore{store1, store2}
+
+	result, err := s.handleTraceCallersFromStores(ctx, "Login", false, "json", stores)
+	if err != nil {
+		t.Fatalf("handleTraceCallersFromStores returned error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	text := string(resultJSON)
+
+	if !strings.Contains(text, "HandleAuth") {
+		t.Errorf("expected result to contain caller 'HandleAuth', got: %s", text)
+	}
+	if !strings.Contains(text, "ProcessAuth") {
+		t.Errorf("expected result to contain caller 'ProcessAuth', got: %s", text)
+	}
+}
+
+// TestHandleTraceCalleesFromStores_should_aggregate_across_stores verifies that
+// handleTraceCalleesFromStores aggregates callees from multiple symbol stores.
+func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.T) {
+	ctx := context.Background()
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	store1 := trace.NewGOBSymbolStore(filepath.Join(tmpDir1, "symbols.gob"))
+	store2 := trace.NewGOBSymbolStore(filepath.Join(tmpDir2, "symbols.gob"))
+
+	// In store1, "HandleRequest" calls "ValidateInput"
+	err := store1.SaveFile(ctx, "/project1/handler.go", []trace.Symbol{
+		{Name: "HandleRequest", Kind: "function", File: "/project1/handler.go", Line: 10, Language: "go"},
+		{Name: "ValidateInput", Kind: "function", File: "/project1/handler.go", Line: 30, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "ValidateInput", File: "/project1/handler.go", Line: 15, CallerName: "HandleRequest", CallerFile: "/project1/handler.go", CallerLine: 10},
+	})
+	if err != nil {
+		t.Fatalf("store1.SaveFile failed: %v", err)
+	}
+
+	// In store2, "HandleRequest" calls "SendResponse"
+	err = store2.SaveFile(ctx, "/project2/handler.go", []trace.Symbol{
+		{Name: "HandleRequest", Kind: "function", File: "/project2/handler.go", Line: 5, Language: "go"},
+		{Name: "SendResponse", Kind: "function", File: "/project2/handler.go", Line: 25, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "SendResponse", File: "/project2/handler.go", Line: 12, CallerName: "HandleRequest", CallerFile: "/project2/handler.go", CallerLine: 5},
+	})
+	if err != nil {
+		t.Fatalf("store2.SaveFile failed: %v", err)
+	}
+
+	s := &Server{}
+	stores := []trace.SymbolStore{store1, store2}
+
+	result, err := s.handleTraceCalleesFromStores(ctx, "HandleRequest", false, "json", stores)
+	if err != nil {
+		t.Fatalf("handleTraceCalleesFromStores returned error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	text := string(resultJSON)
+
+	if !strings.Contains(text, "ValidateInput") {
+		t.Errorf("expected result to contain callee 'ValidateInput', got: %s", text)
+	}
+	if !strings.Contains(text, "SendResponse") {
+		t.Errorf("expected result to contain callee 'SendResponse', got: %s", text)
+	}
 }
