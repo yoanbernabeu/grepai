@@ -263,11 +263,11 @@ func TestRegisterTools_IndexStatusSchema(t *testing.T) {
 
 func TestNewServerWithWorkspace(t *testing.T) {
 	t.Run("creates_server_with_workspace", func(t *testing.T) {
-		srv, err := NewServerWithWorkspace("", "orbix")
+		srv, err := NewServerWithWorkspace("", "test")
 		if err != nil {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
-		if srv.workspaceName != "orbix" {
+		if srv.workspaceName != "test" {
 			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
 		}
 		if srv.projectRoot != "" {
@@ -276,11 +276,11 @@ func TestNewServerWithWorkspace(t *testing.T) {
 	})
 
 	t.Run("creates_server_with_project_and_workspace", func(t *testing.T) {
-		srv, err := NewServerWithWorkspace("/tmp/project", "orbix")
+		srv, err := NewServerWithWorkspace("/tmp/project", "test")
 		if err != nil {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
-		if srv.workspaceName != "orbix" {
+		if srv.workspaceName != "test" {
 			t.Errorf("expected workspace orbix, got %s", srv.workspaceName)
 		}
 		if srv.projectRoot != "/tmp/project" {
