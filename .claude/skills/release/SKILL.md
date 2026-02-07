@@ -85,10 +85,26 @@ Update version in `docs/src/components/homepage/HeroAnimated.astro` line 6:
 const { version = "X.Y.Z" } = Astro.props;
 ```
 
+#### 4.3 Nix Flake
+
+Update `flake.nix`:
+
+1. Update `version` (line 13):
+
+```nix
+version = "X.Y.Z";
+```
+
+2. Update `vendorHash`:
+   - Set `vendorHash = "";` temporarily in `flake.nix`
+   - Run `make nix-hash` to compute the correct hash (requires Docker)
+   - Replace with the new hash: `vendorHash = "sha256-XXXXX";`
+   - If Docker is not available, ask the user to provide the hash or skip this step
+
 ### Step 5: Commit and Push
 
 ```bash
-git add CHANGELOG.md docs/src/components/homepage/HeroAnimated.astro
+git add CHANGELOG.md docs/src/components/homepage/HeroAnimated.astro flake.nix
 git commit -m "chore(release): bump version to X.Y.Z
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
@@ -130,6 +146,7 @@ GitHub `--generate-notes` automatically credits contributors in release notes.
 - [ ] CHANGELOG.md updated with all PRs
 - [ ] All contributors credited with @username
 - [ ] Hero version updated in docs
+- [ ] Nix flake version and vendorHash updated in flake.nix
 - [ ] CI passed after version commit
 - [ ] GitHub release created
 
