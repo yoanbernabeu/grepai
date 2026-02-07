@@ -32,6 +32,28 @@ grepai trace callees "HandleRequest"
 grepai trace graph "ProcessOrder" --depth 3
 ```
 
+### Workspace Mode
+
+Trace commands support cross-project analysis in workspace mode:
+
+```bash
+# Trace within a specific project
+grepai trace callers "HandleRequest" --workspace my-fullstack --project backend
+
+# Trace across ALL projects in a workspace
+grepai trace callers "HandleRequest" --workspace my-fullstack
+
+# Cross-project call graph
+grepai trace graph "ProcessOrder" --workspace my-fullstack --depth 3
+```
+
+When `--workspace` is specified without `--project`, results are aggregated from all projects. Each project maintains its own symbol index in `.grepai/symbols.gob`, regardless of the workspace's vector store backend.
+
+| Flag | Description |
+|------|-------------|
+| `--workspace` | Workspace name for cross-project trace |
+| `--project` | Specific project within the workspace (requires `--workspace`) |
+
 ### Extraction Modes
 
 #### Fast Mode (default)
