@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -78,6 +79,10 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0755); err != nil {
+		return fmt.Errorf("failed to create symbol index directory: %w", err)
+	}
 
 	file, err := os.Create(s.indexPath)
 	if err != nil {

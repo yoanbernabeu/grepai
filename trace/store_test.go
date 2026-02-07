@@ -425,6 +425,40 @@ func TestGOBSymbolStore_should_replace_file_on_save(t *testing.T) {
 	}
 }
 
+func TestGOBSymbolStore_should_persist_creating_parent_directories(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Nested path where parent .grepai/ doesn't exist yet
+	indexPath := filepath.Join(tmpDir, "project", ".grepai", "symbols.gob")
+
+	store := NewGOBSymbolStore(indexPath)
+	ctx := context.Background()
+
+	symbols := []Symbol{
+		{Name: "Foo", Kind: KindFunction, File: "main.go", Line: 1, Language: "go"},
+	}
+	err := store.SaveFile(ctx, "main.go", symbols, nil)
+	if err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	err = store.Persist(ctx)
+	if err != nil {
+		t.Fatalf("Persist should create parent directories, got: %v", err)
+	}
+
+	// Verify file was written by loading into a new store
+	store2 := NewGOBSymbolStore(indexPath)
+	err = store2.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load failed after Persist with nested path: %v", err)
+	}
+
+	result, _ := store2.LookupSymbol(ctx, "Foo")
+	if len(result) != 1 {
+		t.Errorf("expected 1 symbol after reload from nested path, got %d", len(result))
+	}
+}
+
 func TestGOBSymbolStore_should_return_empty_for_unknown_symbol(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "symbols.gob")
