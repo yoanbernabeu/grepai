@@ -542,6 +542,18 @@ func runWatchForeground() error {
 		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
 	}
 
+	// Write ready file before indexing so background daemon signals readiness immediately
+	if isBackgroundChild {
+		if err := daemon.WriteReadyFile(logDir); err != nil {
+			return fmt.Errorf("failed to write ready file: %w", err)
+		}
+		defer func() {
+			if err := daemon.RemoveReadyFile(logDir); err != nil {
+				log.Printf("Warning: failed to remove ready file on exit: %v", err)
+			}
+		}()
+	}
+
 	// Run initial scan and build symbol index
 	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
 	if err != nil {
@@ -559,19 +571,6 @@ func runWatchForeground() error {
 	// Save index after initial scan
 	if err := st.Persist(ctx); err != nil {
 		log.Printf("Warning: failed to persist index: %v", err)
-	}
-
-	// Write ready file to signal successful initialization (background mode only)
-	if isBackgroundChild {
-		if err := daemon.WriteReadyFile(logDir); err != nil {
-			return fmt.Errorf("failed to write ready file: %w", err)
-		}
-		// Ensure ready file is cleaned up on exit
-		defer func() {
-			if err := daemon.RemoveReadyFile(logDir); err != nil {
-				log.Printf("Warning: failed to remove ready file on exit: %v", err)
-			}
-		}()
 	}
 
 	// Initialize watcher
@@ -923,20 +922,23 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	}
 	defer st.Close()
 
-	// Index each project
+	// Initialize per-project symbol stores and extractor
+	symbolStores := make(map[string]trace.SymbolStore, len(ws.Projects))
+	extractor := trace.NewRegexExtractor()
 	for _, project := range ws.Projects {
-		if !isBackgroundChild {
-			fmt.Printf("\nIndexing project: %s (%s)\n", project.Name, project.Path)
-		} else {
-			log.Printf("Indexing project: %s (%s)", project.Name, project.Path)
+		ss := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
+		if err := ss.Load(ctx); err != nil {
+			log.Printf("Warning: failed to load symbol index for %s: %v", project.Name, err)
 		}
-
-		if err := indexWorkspaceProject(ctx, project, ws, emb, st, isBackgroundChild); err != nil {
-			log.Printf("Warning: failed to index project %s: %v", project.Name, err)
-		}
+		symbolStores[project.Name] = ss
 	}
+	defer func() {
+		for _, ss := range symbolStores {
+			ss.Close()
+		}
+	}()
 
-	// Write ready file
+	// Write ready file before indexing so background daemon signals readiness immediately
 	if isBackgroundChild {
 		if err := daemon.WriteWorkspaceReadyFile(logDir, ws.Name); err != nil {
 			return fmt.Errorf("failed to write ready file: %w", err)
@@ -948,8 +950,25 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 		}()
 	}
 
-	// Start watchers for each project
-	watchers := make([]*watcher.Watcher, 0, len(ws.Projects))
+	// Index each project
+	for _, project := range ws.Projects {
+		if !isBackgroundChild {
+			fmt.Printf("\nIndexing project: %s (%s)\n", project.Name, project.Path)
+		} else {
+			log.Printf("Indexing project: %s (%s)", project.Name, project.Path)
+		}
+
+		if err := indexWorkspaceProject(ctx, project, ws, emb, st, symbolStores[project.Name], extractor, isBackgroundChild); err != nil {
+			log.Printf("Warning: failed to index project %s: %v", project.Name, err)
+		}
+	}
+
+	// Start watchers for each project, tracking project association
+	type projectWatcher struct {
+		watcher *watcher.Watcher
+		project config.ProjectEntry
+	}
+	projectWatchers := make([]projectWatcher, 0, len(ws.Projects))
 	for _, project := range ws.Projects {
 		// Load project-specific config or use defaults
 		projectCfg := config.DefaultConfig()
@@ -979,12 +998,12 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 			continue
 		}
 
-		watchers = append(watchers, w)
+		projectWatchers = append(projectWatchers, projectWatcher{watcher: w, project: project})
 	}
 
 	defer func() {
-		for _, w := range watchers {
-			w.Close()
+		for _, pw := range projectWatchers {
+			pw.watcher.Close()
 		}
 	}()
 
@@ -993,19 +1012,19 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	if !isBackgroundChild {
-		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(ws.Projects))
+		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(projectWatchers))
 	} else {
-		log.Printf("Watching %d projects for changes...", len(ws.Projects))
+		log.Printf("Watching %d projects for changes...", len(projectWatchers))
 	}
 
-	// Collect events from all watchers
-	eventChan := make(chan watcher.FileEvent, 100)
-	for _, w := range watchers {
-		go func(w *watcher.Watcher) {
+	// Collect events from all watchers, tagged with project info
+	eventChan := make(chan projectFileEvent, 100)
+	for _, pw := range projectWatchers {
+		go func(w *watcher.Watcher, project config.ProjectEntry) {
 			for event := range w.Events() {
-				eventChan <- event
+				eventChan <- projectFileEvent{FileEvent: event, Project: project}
 			}
-		}(w)
+		}(pw.watcher, pw.project)
 	}
 
 	// Event loop
@@ -1023,15 +1042,25 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index on shutdown: %v", err)
 			}
+			for name, ss := range symbolStores {
+				if err := ss.Persist(ctx); err != nil {
+					log.Printf("Warning: failed to persist symbol index for %s on shutdown: %v", name, err)
+				}
+			}
 			return nil
 
 		case <-persistTicker.C:
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index: %v", err)
 			}
+			for name, ss := range symbolStores {
+				if err := ss.Persist(ctx); err != nil {
+					log.Printf("Warning: failed to persist symbol index for %s: %v", name, err)
+				}
+			}
 
 		case event := <-eventChan:
-			handleWorkspaceFileEvent(ctx, ws, emb, st, event)
+			handleWorkspaceFileEvent(ctx, event.Project, ws, emb, st, symbolStores[event.Project.Name], extractor, event.FileEvent)
 		}
 	}
 }
@@ -1054,7 +1083,7 @@ func initializeWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.
 	}
 }
 
-func indexWorkspaceProject(ctx context.Context, project config.ProjectEntry, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, isBackgroundChild bool) error {
+func indexWorkspaceProject(ctx context.Context, project config.ProjectEntry, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, symbolStore trace.SymbolStore, extractor *trace.RegexExtractor, isBackgroundChild bool) error {
 	// Load project-specific config or use defaults
 	projectCfg := config.DefaultConfig()
 	if config.Exists(project.Path) {
@@ -1114,57 +1143,87 @@ func indexWorkspaceProject(ctx context.Context, project config.ProjectEntry, ws 
 		log.Printf("Project %s: %d files indexed, %d chunks created", project.Name, stats.FilesIndexed, stats.ChunksCreated)
 	}
 
+	// Build symbol index for traced languages
+	tracedLanguages := projectCfg.Trace.EnabledLanguages
+	if len(tracedLanguages) == 0 {
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+	}
+
+	if !isBackgroundChild {
+		fmt.Printf("Building symbol index for %s...\n", project.Name)
+	} else {
+		log.Printf("Building symbol index for %s...", project.Name)
+	}
+	symbolCount := 0
+	files, _, _ := scanner.Scan()
+	for _, file := range files {
+		ext := strings.ToLower(filepath.Ext(file.Path))
+		if !isTracedLanguage(ext, tracedLanguages) {
+			continue
+		}
+		symbols, refs, extractErr := extractor.ExtractAll(ctx, file.Path, file.Content)
+		if extractErr != nil {
+			log.Printf("Warning: failed to extract symbols from %s: %v", file.Path, extractErr)
+			continue
+		}
+		if saveErr := symbolStore.SaveFile(ctx, file.Path, symbols, refs); saveErr != nil {
+			log.Printf("Warning: failed to save symbols for %s: %v", file.Path, saveErr)
+		}
+		symbolCount += len(symbols)
+	}
+	if persistErr := symbolStore.Persist(ctx); persistErr != nil {
+		log.Printf("Warning: failed to persist symbol index for %s: %v", project.Name, persistErr)
+	}
+	if !isBackgroundChild {
+		fmt.Printf("Project %s: %d symbols extracted\n", project.Name, symbolCount)
+	} else {
+		log.Printf("Project %s: %d symbols extracted", project.Name, symbolCount)
+	}
+
 	return nil
 }
 
-func handleWorkspaceFileEvent(ctx context.Context, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, event watcher.FileEvent) {
-	// Find which project this file belongs to
-	var matchedProject *config.ProjectEntry
-	for i := range ws.Projects {
-		if strings.HasPrefix(event.Path, ws.Projects[i].Path) {
-			matchedProject = &ws.Projects[i]
-			break
-		}
-	}
-
-	if matchedProject == nil {
-		log.Printf("Warning: received event for unknown project path: %s", event.Path)
-		return
-	}
-
-	log.Printf("[%s][%s] %s", matchedProject.Name, event.Type, event.Path)
+func handleWorkspaceFileEvent(ctx context.Context, project config.ProjectEntry, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, symbolStore trace.SymbolStore, extractor *trace.RegexExtractor, event watcher.FileEvent) {
+	log.Printf("[%s][%s] %s", project.Name, event.Type, event.Path)
 
 	// Load project config
 	projectCfg := config.DefaultConfig()
-	if config.Exists(matchedProject.Path) {
+	if config.Exists(project.Path) {
 		var err error
-		projectCfg, err = config.Load(matchedProject.Path)
+		projectCfg, err = config.Load(project.Path)
 		if err != nil {
-			log.Printf("Warning: failed to load config for %s: %v", matchedProject.Name, err)
+			log.Printf("Warning: failed to load config for %s: %v", project.Name, err)
 		}
 	}
 
 	// Initialize components
-	ignoreMatcher, err := indexer.NewIgnoreMatcher(matchedProject.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
 	if err != nil {
 		log.Printf("Failed to create ignore matcher: %v", err)
 		return
 	}
 
-	scanner := indexer.NewScanner(matchedProject.Path, ignoreMatcher)
+	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
 	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
 
 	wrappedStore := &projectPrefixStore{
 		store:         st,
 		workspaceName: ws.Name,
-		projectName:   matchedProject.Name,
-		projectPath:   matchedProject.Path,
+		projectName:   project.Name,
+		projectPath:   project.Path,
 	}
 
-	idx := indexer.NewIndexer(matchedProject.Path, wrappedStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+	idx := indexer.NewIndexer(project.Path, wrappedStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+
+	// Determine traced languages for symbol extraction
+	tracedLanguages := projectCfg.Trace.EnabledLanguages
+	if len(tracedLanguages) == 0 {
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+	}
 
 	switch event.Type {
 	case watcher.EventCreate, watcher.EventModify:
+		// event.Path is relative; ScanFile expects relative path
 		fileInfo, err := scanner.ScanFile(event.Path)
 		if err != nil {
 			log.Printf("Failed to scan %s: %v", event.Path, err)
@@ -1181,13 +1240,39 @@ func handleWorkspaceFileEvent(ctx context.Context, ws *config.Workspace, emb emb
 		}
 		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
 
+		// Extract symbols if language is supported
+		ext := strings.ToLower(filepath.Ext(event.Path))
+		if symbolStore != nil && isTracedLanguage(ext, tracedLanguages) {
+			symbols, refs, extractErr := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+			if extractErr != nil {
+				log.Printf("Failed to extract symbols from %s: %v", event.Path, extractErr)
+			} else if saveErr := symbolStore.SaveFile(ctx, fileInfo.Path, symbols, refs); saveErr != nil {
+				log.Printf("Failed to save symbols for %s: %v", event.Path, saveErr)
+			} else {
+				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
+			}
+		}
+
 	case watcher.EventDelete, watcher.EventRename:
 		if err := idx.RemoveFile(ctx, event.Path); err != nil {
 			log.Printf("Failed to remove %s from index: %v", event.Path, err)
 			return
 		}
+		// Also remove from symbol index
+		if symbolStore != nil {
+			absPath := filepath.Join(project.Path, event.Path)
+			if deleteErr := symbolStore.DeleteFile(ctx, absPath); deleteErr != nil {
+				log.Printf("Failed to remove symbols for %s: %v", event.Path, deleteErr)
+			}
+		}
 		log.Printf("Removed %s from index", event.Path)
 	}
+}
+
+// projectFileEvent wraps a watcher.FileEvent with the project it originated from.
+type projectFileEvent struct {
+	watcher.FileEvent
+	Project config.ProjectEntry
 }
 
 // projectPrefixStore wraps a VectorStore to prefix file paths with workspace and project name

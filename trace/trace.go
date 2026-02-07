@@ -135,6 +135,9 @@ type SymbolStore interface {
 	// DeleteFile removes all symbols and references for a file.
 	DeleteFile(ctx context.Context, filePath string) error
 
+	// IsFileIndexed checks if a file has been indexed.
+	IsFileIndexed(filePath string) bool
+
 	// LookupSymbol finds symbol definitions by name.
 	LookupSymbol(ctx context.Context, name string) ([]Symbol, error)
 
