@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -44,6 +45,15 @@ func NewChunker(chunkSize, overlap int) *Chunker {
 	}
 }
 
+// alignRuneBoundary adjusts a byte offset forward to the start of the next
+// valid UTF-8 rune. This prevents slicing in the middle of multi-byte sequences.
+func alignRuneBoundary(content string, pos int) int {
+	for pos < len(content) && !utf8.RuneStart(content[pos]) {
+		pos++
+	}
+	return pos
+}
+
 func (c *Chunker) Chunk(filePath string, content string) []ChunkInfo {
 	if len(content) == 0 {
 		return nil
@@ -66,6 +76,7 @@ func (c *Chunker) Chunk(filePath string, content string) []ChunkInfo {
 		if end > len(content) {
 			end = len(content)
 		}
+		end = alignRuneBoundary(content, end)
 
 		// Try to break at a newline if possible (cleaner chunks)
 		if end < len(content) {
@@ -107,6 +118,7 @@ func (c *Chunker) Chunk(filePath string, content string) []ChunkInfo {
 		if nextPos <= pos {
 			nextPos = end // Prevent infinite loop
 		}
+		nextPos = alignRuneBoundary(content, nextPos)
 		pos = nextPos
 	}
 
@@ -191,6 +203,7 @@ func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
 		if end > len(content) {
 			end = len(content)
 		}
+		end = alignRuneBoundary(content, end)
 
 		// Try to break at a newline if possible
 		if end < len(content) {
@@ -242,6 +255,7 @@ func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
 		if nextPos <= pos {
 			nextPos = end // Prevent infinite loop
 		}
+		nextPos = alignRuneBoundary(content, nextPos)
 		pos = nextPos
 	}
 
