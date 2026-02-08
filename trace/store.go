@@ -11,15 +11,17 @@ import (
 
 // GOBSymbolStore implements SymbolStore using GOB encoding.
 type GOBSymbolStore struct {
-	indexPath string
-	index     *SymbolIndex
-	fileIndex map[string]bool
-	mu        sync.RWMutex
+	indexPath         string
+	index             *SymbolIndex
+	fileIndex         map[string]bool
+	fileContentHashes map[string]string
+	mu                sync.RWMutex
 }
 
 type gobSymbolData struct {
-	Index     SymbolIndex
-	FileIndex map[string]bool
+	Index             SymbolIndex
+	FileIndex         map[string]bool
+	FileContentHashes map[string]string
 }
 
 // NewGOBSymbolStore creates a new GOB-based symbol store.
@@ -32,7 +34,8 @@ func NewGOBSymbolStore(indexPath string) *GOBSymbolStore {
 			CallGraph:  []CallEdge{},
 			Version:    1,
 		},
-		fileIndex: make(map[string]bool),
+		fileIndex:         make(map[string]bool),
+		fileContentHashes: make(map[string]string),
 	}
 }
 
@@ -57,6 +60,7 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 
 	s.index = &data.Index
 	s.fileIndex = data.FileIndex
+	s.fileContentHashes = data.FileContentHashes
 
 	if s.index.Symbols == nil {
 		s.index.Symbols = make(map[string][]Symbol)
@@ -69,6 +73,9 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 	}
 	if s.fileIndex == nil {
 		s.fileIndex = make(map[string]bool)
+	}
+	if s.fileContentHashes == nil {
+		s.fileContentHashes = make(map[string]string)
 	}
 
 	return nil
@@ -87,8 +94,9 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 
 	s.index.UpdatedAt = time.Now()
 	data := gobSymbolData{
-		Index:     *s.index,
-		FileIndex: s.fileIndex,
+		Index:             *s.index,
+		FileIndex:         s.fileIndex,
+		FileContentHashes: s.fileContentHashes,
 	}
 
 	if err := gob.NewEncoder(file).Encode(data); err != nil {
@@ -100,6 +108,12 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 
 // SaveFile persists symbols and references for a file.
 func (s *GOBSymbolStore) SaveFile(ctx context.Context, filePath string, symbols []Symbol, refs []Reference) error {
+	return s.SaveFileWithContentHash(ctx, filePath, "", symbols, refs)
+}
+
+// SaveFileWithContentHash persists symbols/references for a file and tracks
+// the current file content hash for future cache checks.
+func (s *GOBSymbolStore) SaveFileWithContentHash(ctx context.Context, filePath string, contentHash string, symbols []Symbol, refs []Reference) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -130,6 +144,11 @@ func (s *GOBSymbolStore) SaveFile(ctx context.Context, filePath string, symbols 
 	}
 
 	s.fileIndex[filePath] = true
+	if contentHash != "" {
+		s.fileContentHashes[filePath] = contentHash
+	} else {
+		delete(s.fileContentHashes, filePath)
+	}
 	return nil
 }
 
@@ -182,6 +201,7 @@ func (s *GOBSymbolStore) deleteFileUnlocked(filePath string) {
 	s.index.CallGraph = filtered
 
 	delete(s.fileIndex, filePath)
+	delete(s.fileContentHashes, filePath)
 }
 
 // LookupSymbol finds symbol definitions by name.
@@ -350,4 +370,12 @@ func (s *GOBSymbolStore) IsFileIndexed(filePath string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.fileIndex[filePath]
+}
+
+// GetFileContentHash returns the stored content hash for a file when available.
+func (s *GOBSymbolStore) GetFileContentHash(filePath string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	hash, ok := s.fileContentHashes[filePath]
+	return hash, ok
 }

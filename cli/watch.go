@@ -368,7 +368,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, isBackgroundChild bool) (*indexer.IndexStats, error) {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool) (*indexer.IndexStats, error) {
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -412,19 +412,47 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		log.Println("Building symbol index...")
 	}
 	symbolCount := 0
-	files, _, _ := scanner.Scan()
+	files, _, err := scanner.ScanMetadata()
+	if err != nil {
+		log.Printf("Warning: failed to scan files for symbol index: %v", err)
+		return stats, nil
+	}
+
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Path))
 		if !isTracedLanguage(ext, tracedLanguages) {
 			continue
 		}
-		symbols, refs, err := extractor.ExtractAll(ctx, file.Path, file.Content)
+
+		// Skip files that are unchanged since the last index run and already tracked.
+		if !lastIndexTime.IsZero() {
+			fileModTime := time.Unix(file.ModTime, 0)
+			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
+				continue
+			}
+		}
+
+		fileInfo, err := scanner.ScanFile(file.Path)
 		if err != nil {
-			log.Printf("Warning: failed to extract symbols from %s: %v", file.Path, err)
+			log.Printf("Warning: failed to scan %s for symbols: %v", file.Path, err)
 			continue
 		}
-		if err := symbolStore.SaveFile(ctx, file.Path, symbols, refs); err != nil {
-			log.Printf("Warning: failed to save symbols for %s: %v", file.Path, err)
+		if fileInfo == nil {
+			continue
+		}
+
+		// Skip extraction when content hash matches what we already persisted.
+		if existingHash, ok := symbolStore.GetFileContentHash(fileInfo.Path); ok && existingHash == fileInfo.Hash {
+			continue
+		}
+
+		symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+		if err != nil {
+			log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, err)
+			continue
+		}
+		if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
+			log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, err)
 		}
 		symbolCount += len(symbols)
 	}
@@ -543,7 +571,7 @@ func runWatchForeground() error {
 	}
 
 	// Run initial scan and build symbol index
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild)
 	if err != nil {
 		return err
 	}
@@ -603,6 +631,16 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			return // File was skipped (binary, too large, etc.)
 		}
 
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
+			return
+		}
+
 		chunks, err := idx.IndexFile(ctx, *fileInfo)
 		if err != nil {
 			log.Printf("Failed to index %s: %v", event.Path, err)
@@ -626,7 +664,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
 			if err != nil {
 				log.Printf("Failed to extract symbols from %s: %v", event.Path, err)
-			} else if err := symbolStore.SaveFile(ctx, fileInfo.Path, symbols, refs); err != nil {
+			} else if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
 				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
 			} else {
 				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
@@ -1171,6 +1209,16 @@ func handleWorkspaceFileEvent(ctx context.Context, ws *config.Workspace, emb emb
 			return
 		}
 		if fileInfo == nil {
+			return
+		}
+
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
 			return
 		}
 
