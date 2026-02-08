@@ -79,6 +79,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\rDownloading [%s] %.0f%%", bar, percent)
 		}
 	})
+
+	// Ensure the progress line is cleared and a newline is printed, even on error.
+	fmt.Printf("\r%s\n", strings.Repeat(" ", 60)) // Clear progress line
+
 	if err != nil {
 		// Check for permission error and display user-friendly message
 		if isPermissionError(err) {
@@ -89,7 +93,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update failed: %w", err)
 	}
 
-	fmt.Printf("\r%s\n", strings.Repeat(" ", 60)) // Clear progress line
 	fmt.Printf("Successfully updated to %s!\n", result.LatestVersion)
 	fmt.Println("Please restart grepai to use the new version.")
 

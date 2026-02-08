@@ -403,12 +403,12 @@ func (u *Updater) replaceUnixBinary(execPath, newBinaryPath string) error {
 	os.Remove(backupPath)
 
 	// Rename current to backup
-	if err := os.Rename(execPath, backupPath); err != nil {
+	if err := safeRename(execPath, backupPath); err != nil {
 		return fmt.Errorf("failed to backup current binary: %w", err)
 	}
 
 	// Move new binary to target location
-	if err := os.Rename(newBinaryPath, execPath); err != nil {
+	if err := safeRename(newBinaryPath, execPath); err != nil {
 		// Try to restore backup (best effort, ignore error)
 		_ = os.Rename(backupPath, execPath)
 		return fmt.Errorf("failed to install new binary: %w", err)
@@ -461,6 +461,58 @@ func (u *Updater) replaceWindowsBinary(execPath, newBinaryPath string) error {
 	}
 
 	return nil
+}
+
+func safeRename(oldpath, newpath string) error {
+	err := os.Rename(oldpath, newpath)
+	if err == nil {
+		return nil
+	}
+
+	// Check if the error is "invalid cross-device link" (EXDEV)
+	// On Linux, this is often represented as "cross-device link"
+	// On other Unix-like systems, it might be slightly different, but the intent is the same.
+	if linkErr, ok := err.(*os.LinkError); ok && strings.Contains(linkErr.Error(), "cross-device link") {
+		// Fallback to copy and delete
+		// fmt.Printf("Warning: Rename failed with cross-device link error. Falling back to copy and delete for %s to %s\n", oldpath, newpath) // For debugging
+
+		// Open source file
+		src, err := os.Open(oldpath)
+		if err != nil {
+			return fmt.Errorf("failed to open source file for copy: %w", err)
+		}
+		defer src.Close()
+
+		// Create destination file
+		dst, err := os.OpenFile(newpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755) // Ensure correct permissions
+		if err != nil {
+			return fmt.Errorf("failed to create destination file for copy: %w", err)
+		}
+		defer dst.Close()
+
+		// Copy data
+		if _, err := io.Copy(dst, src); err != nil {
+			return fmt.Errorf("failed to copy file: %w", err)
+		}
+
+		// Sync to ensure data is written
+		if err := dst.Sync(); err != nil {
+			return fmt.Errorf("failed to sync destination file: %w", err)
+		}
+
+		// Close files before removing oldpath
+		src.Close()
+		dst.Close()
+
+		// Remove the old file
+		if err := os.Remove(oldpath); err != nil {
+			return fmt.Errorf("failed to remove old file after copy: %w", err)
+		}
+
+		return nil
+	}
+
+	return err // Return original error if not a cross-device link issue
 }
 
 func checkWritePermission(path string) error {
