@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +91,82 @@ func BenchmarkIndexAllWithProgress_BranchSwitchScenario(b *testing.B) {
 		if stats.FilesIndexed != 0 {
 			b.Fatalf("expected 0 indexed files, got %d", stats.FilesIndexed)
 		}
+	}
+}
+
+func TestIndexAllWithProgress_BinaryFileSkippedAfterMetadataPass(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Binary-like content: metadata pass includes this file, ScanFile should drop it.
+	binaryPath := filepath.Join(tmpDir, "binary.go")
+	if err := os.WriteFile(binaryPath, []byte("package main\x00"), 0644); err != nil {
+		t.Fatalf("failed to create binary fixture: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	mockStore := newMockStore()
+	mockEmbedder := newMockEmbedder()
+	scanner := NewScanner(tmpDir, ignoreMatcher)
+	chunker := NewChunker(512, 50)
+	idx := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, time.Time{})
+
+	stats, err := idx.IndexAllWithProgress(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("IndexAllWithProgress failed: %v", err)
+	}
+
+	if stats.FilesIndexed != 0 {
+		t.Fatalf("expected 0 indexed files, got %d", stats.FilesIndexed)
+	}
+	if !mockStore.listDocsCalled {
+		t.Fatal("expected ListDocuments to be called")
+	}
+	if mockEmbedder.embedCalled {
+		t.Fatal("expected embedder to not be called for binary file")
+	}
+}
+
+func TestIndexAllWithProgress_UnreadableFileSkippedAfterMetadataPass(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission behavior differs on windows")
+	}
+
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "restricted.go")
+	if err := os.WriteFile(srcPath, []byte("package main\n\nfunc x() {}\n"), 0644); err != nil {
+		t.Fatalf("failed to create fixture file: %v", err)
+	}
+	if err := os.Chmod(srcPath, 0o000); err != nil {
+		t.Fatalf("failed to chmod fixture file: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(srcPath, 0o644)
+	}()
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	mockStore := newMockStore()
+	mockEmbedder := newMockEmbedder()
+	scanner := NewScanner(tmpDir, ignoreMatcher)
+	chunker := NewChunker(512, 50)
+	idx := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, time.Time{})
+
+	stats, err := idx.IndexAllWithProgress(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("IndexAllWithProgress failed: %v", err)
+	}
+
+	if stats.FilesIndexed != 0 {
+		t.Fatalf("expected 0 indexed files, got %d", stats.FilesIndexed)
+	}
+	if mockEmbedder.embedCalled {
+		t.Fatal("expected embedder to not be called for unreadable file")
 	}
 }

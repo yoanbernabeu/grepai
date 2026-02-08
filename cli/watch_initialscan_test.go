@@ -336,3 +336,137 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 		t.Fatalf("expected workspace docs to remain unchanged, got total files %d", stats.TotalFiles)
 	}
 }
+
+func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+
+	srcPath := filepath.Join(projectRoot, "main.go")
+	srcContent := "package main\n\nfunc real() {}\n"
+	if err := os.WriteFile(srcPath, []byte(srcContent), 0644); err != nil {
+		t.Fatalf("failed to create source file: %v", err)
+	}
+
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	emb := &countingEmbedder{}
+	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+	chunker := indexer.NewChunker(512, 50)
+	vecStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
+	idx := indexer.NewIndexer(projectRoot, vecStore, emb, chunker, scanner, time.Time{})
+
+	// Seed old hash to force NeedsReindex == true.
+	fileInfo, err := scanner.ScanFile("main.go")
+	if err != nil || fileInfo == nil {
+		t.Fatalf("failed to scan source file: %v", err)
+	}
+	if err := vecStore.SaveDocument(ctx, store.Document{
+		Path:    "main.go",
+		Hash:    "old-hash",
+		ModTime: time.Unix(fileInfo.ModTime, 0),
+	}); err != nil {
+		t.Fatalf("failed to seed old document: %v", err)
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectRoot, "symbols.gob"))
+	defer symbolStore.Close()
+
+	cfg := config.DefaultConfig()
+	lastWrite := time.Time{}
+	handleFileEvent(
+		ctx,
+		idx,
+		scanner,
+		trace.NewRegexExtractor(),
+		symbolStore,
+		[]string{".go"},
+		projectRoot,
+		cfg,
+		&lastWrite,
+		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
+	)
+
+	if emb.embedCalls == 0 && emb.embedBatchCalls == 0 {
+		t.Fatal("expected changed file to trigger embedding")
+	}
+	if cfg.Watch.LastIndexTime.IsZero() {
+		t.Fatal("expected changed file to update config last index time")
+	}
+	if lastWrite.IsZero() {
+		t.Fatal("expected last config write timestamp to be updated")
+	}
+
+	realSymbols, err := symbolStore.LookupSymbol(ctx, "real")
+	if err != nil {
+		t.Fatalf("failed to lookup real symbol: %v", err)
+	}
+	if len(realSymbols) == 0 {
+		t.Fatal("expected symbols to be extracted and saved for changed file")
+	}
+}
+
+func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	emb := &countingEmbedder{}
+	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+	chunker := indexer.NewChunker(512, 50)
+	vecStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
+	idx := indexer.NewIndexer(projectRoot, vecStore, emb, chunker, scanner, time.Time{})
+
+	if err := vecStore.SaveDocument(ctx, store.Document{
+		Path: "main.go",
+		Hash: "hash",
+	}); err != nil {
+		t.Fatalf("failed to seed document: %v", err)
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectRoot, "symbols.gob"))
+	defer symbolStore.Close()
+	if err := symbolStore.SaveFile(ctx, "main.go", []trace.Symbol{
+		{
+			Name:     "sentinel",
+			Kind:     trace.KindFunction,
+			File:     "main.go",
+			Line:     1,
+			Language: "go",
+		},
+	}, nil); err != nil {
+		t.Fatalf("failed to seed symbol store: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	lastWrite := time.Time{}
+	handleFileEvent(
+		ctx,
+		idx,
+		scanner,
+		trace.NewRegexExtractor(),
+		symbolStore,
+		[]string{".go"},
+		projectRoot,
+		cfg,
+		&lastWrite,
+		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
+	)
+
+	doc, err := vecStore.GetDocument(ctx, "main.go")
+	if err != nil {
+		t.Fatalf("failed to read document: %v", err)
+	}
+	if doc != nil {
+		t.Fatal("expected document to be deleted on delete event")
+	}
+	if symbolStore.IsFileIndexed("main.go") {
+		t.Fatal("expected symbols to be deleted on delete event")
+	}
+}
