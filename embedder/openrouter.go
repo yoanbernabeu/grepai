@@ -196,13 +196,22 @@ func (e *OpenRouterEmbedder) Close() error {
 // Ping checks if OpenRouter API is reachable
 func (e *OpenRouterEmbedder) Ping(ctx context.Context) error {
 	url := fmt.Sprintf("%s/embeddings", e.endpoint)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{"model":"openai/text-embedding-3-small","input":"test"}`)))
+	pingReq := map[string]string{
+		"model": e.model,
+		"input": "test",
+	}
+	jsonData, err := json.Marshal(pingReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ping request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.apiKey))
 	req.Header.Set("HTTP-Referer", "grepai")
+	req.Header.Set("X-Title", "grepai")
 
 	resp, err := e.client.Do(req)
 	if err != nil {

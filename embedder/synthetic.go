@@ -188,7 +188,15 @@ func (e *SyntheticEmbedder) Close() error {
 // Ping checks if Synthetic API is reachable
 func (e *SyntheticEmbedder) Ping(ctx context.Context) error {
 	url := fmt.Sprintf("%s/embeddings", e.endpoint)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{"model":"hf:nomic-ai/nomic-embed-text-v1.5","input":"test"}`)))
+	pingReq := map[string]string{
+		"model": e.model,
+		"input": "test",
+	}
+	jsonData, err := json.Marshal(pingReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ping request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
