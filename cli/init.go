@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
 )
 
@@ -15,6 +16,7 @@ var (
 	initProvider       string
 	initBackend        string
 	initNonInteractive bool
+	initInherit        bool
 )
 
 const (
@@ -38,6 +40,7 @@ func init() {
 	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, or openai)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
+	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -54,9 +57,45 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := config.DefaultConfig()
+	skipPrompts := false
+
+	// Detect git worktree and offer config inheritance
+	gitInfo, gitErr := git.Detect(cwd)
+	if gitErr == nil && gitInfo.IsWorktree && config.Exists(gitInfo.MainWorktree) {
+		mainCfg, loadErr := config.Load(gitInfo.MainWorktree)
+		if loadErr == nil {
+			fmt.Printf("\nGit worktree detected.\n")
+			fmt.Printf("  Main worktree: %s\n", gitInfo.MainWorktree)
+			fmt.Printf("  Worktree ID:   %s\n", gitInfo.WorktreeID)
+			fmt.Printf("  Backend:       %s\n", mainCfg.Store.Backend)
+
+			shouldInherit := initInherit
+			if !shouldInherit && !initNonInteractive {
+				reader := bufio.NewReader(os.Stdin)
+				fmt.Print("\nInherit configuration from main worktree? [Y/n]: ")
+				input, _ := reader.ReadString('\n')
+				input = strings.TrimSpace(strings.ToLower(input))
+				shouldInherit = input == "" || input == "y" || input == "yes"
+			}
+
+			if shouldInherit {
+				cfg = mainCfg
+				skipPrompts = true
+
+				if cfg.Store.Backend == "gob" {
+					fmt.Println("\nNote: GOB backend creates an independent index per worktree.")
+					fmt.Println("For shared indexing across worktrees, consider using 'postgres' or 'qdrant' backend.")
+				} else {
+					fmt.Printf("\nUsing %s backend - each worktree maintains its own project scope within the shared store.\n", cfg.Store.Backend)
+				}
+			}
+		} else {
+			fmt.Printf("Warning: could not load main worktree config: %v\n", loadErr)
+		}
+	}
 
 	// Interactive mode
-	if !initNonInteractive {
+	if !skipPrompts && !initNonInteractive {
 		reader := bufio.NewReader(os.Stdin)
 
 		// Provider selection
@@ -172,7 +211,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			cfg.Store.Backend = initBackend
 		}
-	} else {
+	} else if !skipPrompts {
 		// Non-interactive with flags
 		if initProvider != "" {
 			cfg.Embedder.Provider = initProvider

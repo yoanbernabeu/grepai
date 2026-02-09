@@ -13,6 +13,7 @@ import (
 
 type GOBStore struct {
 	indexPath string
+	lockPath  string
 	chunks    map[string]Chunk    // id -> chunk
 	documents map[string]Document // path -> document
 	mu        sync.RWMutex
@@ -26,6 +27,7 @@ type gobData struct {
 func NewGOBStore(indexPath string) *GOBStore {
 	return &GOBStore{
 		indexPath: indexPath,
+		lockPath:  indexPath + ".lock",
 		chunks:    make(map[string]Chunk),
 		documents: make(map[string]Document),
 	}
@@ -128,10 +130,31 @@ func (s *GOBStore) Load(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Acquire shared (read) file lock for cross-process safety
+	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		// If we can't create lock file, proceed without locking (backward compat)
+		return s.loadUnlocked()
+	}
+	defer lockFile.Close()
+
+	if err := flockShared(lockFile); err != nil {
+		// If locking fails, proceed without locking (backward compat)
+		return s.loadUnlocked()
+	}
+	defer func() {
+		_ = funlock(lockFile)
+	}()
+
+	return s.loadUnlocked()
+}
+
+// loadUnlocked performs the actual load without any locking.
+func (s *GOBStore) loadUnlocked() error {
 	file, err := os.Open(s.indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // No existing index, start fresh
+			return nil
 		}
 		return fmt.Errorf("failed to open index file: %w", err)
 	}
@@ -160,6 +183,27 @@ func (s *GOBStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Acquire exclusive (write) file lock for cross-process safety
+	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		// If we can't create lock file, proceed without locking (backward compat)
+		return s.persistUnlocked()
+	}
+	defer lockFile.Close()
+
+	if err := flockExclusive(lockFile); err != nil {
+		// If locking fails, proceed without locking (backward compat)
+		return s.persistUnlocked()
+	}
+	defer func() {
+		_ = funlock(lockFile)
+	}()
+
+	return s.persistUnlocked()
+}
+
+// persistUnlocked performs the actual persist without any locking.
+func (s *GOBStore) persistUnlocked() error {
 	file, err := os.Create(s.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to create index file: %w", err)

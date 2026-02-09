@@ -69,8 +69,8 @@ func ExampleReadPIDFile() {
 func ExampleSpawnBackground() {
 	logDir := "/tmp/grepai-logs"
 
-	// Spawn background process
-	pid, err := daemon.SpawnBackground(logDir, []string{"watch"})
+	// Spawn background process (exitCh signals when child exits)
+	pid, _, err := daemon.SpawnBackground(logDir, []string{"watch"})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func ExampleSpawnBackground() {
 	fmt.Printf("Started background watcher with PID %d\n", pid)
 	fmt.Printf("Logs: %s\n", filepath.Join(logDir, "grepai-watch.log"))
 
-	// In real usage, poll for IsReady() to verify successful startup
+	// In real usage, poll for IsReady() and check exitCh to verify successful startup
 }
 
 // ExampleWritePIDFile demonstrates how to write the current process PID to a file.

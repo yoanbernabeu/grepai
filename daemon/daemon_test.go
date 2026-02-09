@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,6 +266,219 @@ func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Error("Lock file still exists after removal")
+	}
+}
+
+func TestWorktreePIDLifecycle(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-main"
+
+	pid, err := ReadWorktreePIDFile(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("ReadWorktreePIDFile() failed: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("ReadWorktreePIDFile() = %d, want 0", pid)
+	}
+
+	if err := WriteWorktreePIDFile(logDir, worktreeID); err != nil {
+		t.Fatalf("WriteWorktreePIDFile() failed: %v", err)
+	}
+
+	pid, err = ReadWorktreePIDFile(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("ReadWorktreePIDFile() failed: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("ReadWorktreePIDFile() = %d, want %d", pid, os.Getpid())
+	}
+
+	runningPID, err := GetRunningWorktreePID(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("GetRunningWorktreePID() failed: %v", err)
+	}
+	if runningPID != os.Getpid() {
+		t.Fatalf("GetRunningWorktreePID() = %d, want %d", runningPID, os.Getpid())
+	}
+
+	if err := RemoveWorktreePIDFile(logDir, worktreeID); err != nil {
+		t.Fatalf("RemoveWorktreePIDFile() failed: %v", err)
+	}
+
+	pid, err = ReadWorktreePIDFile(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("ReadWorktreePIDFile() failed: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("ReadWorktreePIDFile() = %d after remove, want 0", pid)
+	}
+}
+
+func TestReadWorktreePIDFileInvalidContent(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-invalid"
+
+	pidPath := GetWorktreePIDFile(logDir, worktreeID)
+	if err := os.WriteFile(pidPath, []byte("not-a-pid\n"), 0644); err != nil {
+		t.Fatalf("failed to write invalid PID file: %v", err)
+	}
+
+	_, err := ReadWorktreePIDFile(logDir, worktreeID)
+	if err == nil {
+		t.Fatal("ReadWorktreePIDFile() should fail for invalid content")
+	}
+}
+
+func TestGetRunningWorktreePIDCleansStaleFile(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-stale"
+
+	pidPath := GetWorktreePIDFile(logDir, worktreeID)
+	if err := os.WriteFile(pidPath, []byte("9999999\n"), 0644); err != nil {
+		t.Fatalf("failed to write stale PID file: %v", err)
+	}
+
+	pid, err := GetRunningWorktreePID(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("GetRunningWorktreePID() failed: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("GetRunningWorktreePID() = %d, want 0 for stale PID", pid)
+	}
+
+	if !IsProcessRunning(9999999) {
+		if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+			t.Fatal("stale worktree PID file was not removed")
+		}
+	}
+}
+
+func TestWorktreeReadyFileLifecycle(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-ready"
+
+	if IsWorktreeReady(logDir, worktreeID) {
+		t.Fatal("IsWorktreeReady() should be false before write")
+	}
+
+	if err := WriteWorktreeReadyFile(logDir, worktreeID); err != nil {
+		t.Fatalf("WriteWorktreeReadyFile() failed: %v", err)
+	}
+	if !IsWorktreeReady(logDir, worktreeID) {
+		t.Fatal("IsWorktreeReady() should be true after write")
+	}
+
+	if err := RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
+		t.Fatalf("RemoveWorktreeReadyFile() failed: %v", err)
+	}
+	if IsWorktreeReady(logDir, worktreeID) {
+		t.Fatal("IsWorktreeReady() should be false after remove")
+	}
+}
+
+func TestSpawnBackgroundErrors(t *testing.T) {
+	base := t.TempDir()
+	logDirFile := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(logDirFile, []byte("x"), 0600); err != nil {
+		t.Fatalf("failed to create log dir blocker file: %v", err)
+	}
+
+	if _, _, err := SpawnBackground(logDirFile, []string{"watch"}); err == nil {
+		t.Fatal("SpawnBackground() should fail when logDir is a file")
+	}
+	if _, _, err := SpawnWorktreeBackground(logDirFile, "wt", nil); err == nil {
+		t.Fatal("SpawnWorktreeBackground() should fail when logDir is a file")
+	}
+}
+
+func TestSpawnBackgroundWithLogOpenError(t *testing.T) {
+	logDir := t.TempDir()
+	logPath := filepath.Join(logDir, "missing-dir", "watch.log")
+
+	if _, _, err := spawnBackgroundWithLog(logDir, logPath, []string{"watch"}); err == nil {
+		t.Fatal("spawnBackgroundWithLog() should fail when log file parent does not exist")
+	}
+}
+
+func TestStopProcessInvalidPID(t *testing.T) {
+	tests := []int{0, -1}
+	for _, pid := range tests {
+		if err := StopProcess(pid); err == nil {
+			t.Fatalf("StopProcess(%d) should fail", pid)
+		}
+	}
+}
+
+func TestWorktreePathHelpers(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "feature-123"
+
+	wantPID := filepath.Join(logDir, "grepai-worktree-"+worktreeID+".pid")
+	wantLog := filepath.Join(logDir, "grepai-worktree-"+worktreeID+".log")
+	wantReady := filepath.Join(logDir, "grepai-worktree-"+worktreeID+".ready")
+
+	if got := GetWorktreePIDFile(logDir, worktreeID); got != wantPID {
+		t.Fatalf("GetWorktreePIDFile() = %q, want %q", got, wantPID)
+	}
+	if got := GetWorktreeLogFile(logDir, worktreeID); got != wantLog {
+		t.Fatalf("GetWorktreeLogFile() = %q, want %q", got, wantLog)
+	}
+	if got := GetWorktreeReadyFile(logDir, worktreeID); got != wantReady {
+		t.Fatalf("GetWorktreeReadyFile() = %q, want %q", got, wantReady)
+	}
+}
+
+func TestReadWorktreePIDFileNotExists(t *testing.T) {
+	logDir := t.TempDir()
+	pid, err := ReadWorktreePIDFile(logDir, "missing")
+	if err != nil {
+		t.Fatalf("ReadWorktreePIDFile() failed: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("ReadWorktreePIDFile() = %d, want 0", pid)
+	}
+}
+
+func TestRemoveWorktreePIDFileNotExists(t *testing.T) {
+	logDir := t.TempDir()
+	if err := RemoveWorktreePIDFile(logDir, "missing"); err != nil {
+		t.Fatalf("RemoveWorktreePIDFile() failed: %v", err)
+	}
+}
+
+func TestRemoveWorktreeReadyFileNotExists(t *testing.T) {
+	logDir := t.TempDir()
+	if err := RemoveWorktreeReadyFile(logDir, "missing"); err != nil {
+		t.Fatalf("RemoveWorktreeReadyFile() failed: %v", err)
+	}
+}
+
+func TestGetRunningWorktreePIDNotExists(t *testing.T) {
+	logDir := t.TempDir()
+	pid, err := GetRunningWorktreePID(logDir, "missing")
+	if err != nil {
+		t.Fatalf("GetRunningWorktreePID() failed: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("GetRunningWorktreePID() = %d, want 0", pid)
+	}
+}
+
+func TestReadWorktreePIDFileCurrentPIDManualWrite(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-manual"
+	pidPath := GetWorktreePIDFile(logDir, worktreeID)
+	content := strconv.Itoa(os.Getpid()) + "\n"
+	if err := os.WriteFile(pidPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write PID file: %v", err)
+	}
+
+	pid, err := ReadWorktreePIDFile(logDir, worktreeID)
+	if err != nil {
+		t.Fatalf("ReadWorktreePIDFile() failed: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("ReadWorktreePIDFile() = %d, want %d", pid, os.Getpid())
 	}
 }
 
