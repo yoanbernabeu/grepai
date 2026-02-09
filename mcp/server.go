@@ -413,59 +413,7 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 
 // createWorkspaceEmbedder creates an embedder based on workspace configuration.
 func (s *Server) createWorkspaceEmbedder(ws *config.Workspace) (embedder.Embedder, error) {
-	switch ws.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
-			embedder.WithOllamaModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*ws.Embedder.Dimensions))
-		}
-		return embedder.NewOllamaEmbedder(opts...), nil
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(ws.Embedder.Model),
-			embedder.WithOpenAIKey(ws.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
-			embedder.WithOpenAIParallelism(ws.Embedder.Parallelism),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*ws.Embedder.Dimensions))
-		}
-		return embedder.NewOpenAIEmbedder(opts...)
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
-			embedder.WithLMStudioModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*ws.Embedder.Dimensions))
-		}
-		return embedder.NewLMStudioEmbedder(opts...), nil
-	case "synthetic":
-		opts := []embedder.SyntheticOption{
-			embedder.WithSyntheticModel(ws.Embedder.Model),
-			embedder.WithSyntheticKey(ws.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithSyntheticDimensions(*ws.Embedder.Dimensions))
-		}
-		return embedder.NewSyntheticEmbedder(opts...)
-	case "openrouter":
-		opts := []embedder.OpenRouterOption{
-			embedder.WithOpenRouterModel(ws.Embedder.Model),
-			embedder.WithOpenRouterKey(ws.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenRouterDimensions(*ws.Embedder.Dimensions))
-		}
-		return embedder.NewOpenRouterEmbedder(opts...)
-	default:
-		return nil, fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
-	}
+	return embedder.NewFromWorkspaceConfig(ws)
 }
 
 // createWorkspaceStore creates a vector store based on workspace configuration.
@@ -844,59 +792,7 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 
 // createEmbedder creates an embedder based on configuration.
 func (s *Server) createEmbedder(cfg *config.Config) (embedder.Embedder, error) {
-	switch cfg.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewOllamaEmbedder(opts...), nil
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOpenAIParallelism(cfg.Embedder.Parallelism),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewOpenAIEmbedder(opts...)
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewLMStudioEmbedder(opts...), nil
-	case "synthetic":
-		opts := []embedder.SyntheticOption{
-			embedder.WithSyntheticModel(cfg.Embedder.Model),
-			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithSyntheticDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewSyntheticEmbedder(opts...)
-	case "openrouter":
-		opts := []embedder.OpenRouterOption{
-			embedder.WithOpenRouterModel(cfg.Embedder.Model),
-			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewOpenRouterEmbedder(opts...)
-	default:
-		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
-	}
+	return embedder.NewFromConfig(cfg)
 }
 
 // createStore creates a vector store based on configuration.

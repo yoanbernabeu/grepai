@@ -96,70 +96,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize embedder
-	var emb embedder.Embedder
-	switch cfg.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*cfg.Embedder.Dimensions))
-		}
-		emb = embedder.NewOllamaEmbedder(opts...)
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*cfg.Embedder.Dimensions))
-		}
-		var err error
-		emb, err = embedder.NewOpenAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
-		}
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
-		}
-		emb = embedder.NewLMStudioEmbedder(opts...)
-	case "synthetic":
-		opts := []embedder.SyntheticOption{
-			embedder.WithSyntheticModel(cfg.Embedder.Model),
-			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithSyntheticDimensions(*cfg.Embedder.Dimensions))
-		}
-		var err error
-		emb, err = embedder.NewSyntheticEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize Synthetic embedder: %w", err)
-		}
-	case "openrouter":
-		opts := []embedder.OpenRouterOption{
-			embedder.WithOpenRouterModel(cfg.Embedder.Model),
-			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
-		}
-		var err error
-		emb, err = embedder.NewOpenRouterEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenRouter embedder: %w", err)
-		}
-	default:
-		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
+	emb, err := embedder.NewFromConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 	defer emb.Close()
 
@@ -363,46 +302,9 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		return nil, err
 	}
 
-	var emb embedder.Embedder
-	switch cfg.Embedder.Provider {
-	case "ollama":
-		emb = embedder.NewOllamaEmbedder(
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
-		)
-	case "openai":
-		var err error
-		emb, err = embedder.NewOpenAIEmbedder(
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-		)
-		if err != nil {
-			return nil, err
-		}
-	case "lmstudio":
-		emb = embedder.NewLMStudioEmbedder(
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
-		)
-	case "synthetic":
-		emb, err = embedder.NewSyntheticEmbedder(
-			embedder.WithSyntheticModel(cfg.Embedder.Model),
-			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
-		)
-		if err != nil {
-			return nil, err
-		}
-	case "openrouter":
-		emb, err = embedder.NewOpenRouterEmbedder(
-			embedder.WithOpenRouterModel(cfg.Embedder.Model),
-			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-		)
-		if err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("unknown provider: %s", cfg.Embedder.Provider)
+	emb, err := embedder.NewFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	defer emb.Close()
 
@@ -456,67 +358,9 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	}
 
 	// Initialize embedder
-	var emb embedder.Embedder
-	switch ws.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
-			embedder.WithOllamaModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*ws.Embedder.Dimensions))
-		}
-		emb = embedder.NewOllamaEmbedder(opts...)
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(ws.Embedder.Model),
-			embedder.WithOpenAIKey(ws.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*ws.Embedder.Dimensions))
-		}
-		emb, err = embedder.NewOpenAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
-		}
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
-			embedder.WithLMStudioModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*ws.Embedder.Dimensions))
-		}
-		emb = embedder.NewLMStudioEmbedder(opts...)
-	case "synthetic":
-		opts := []embedder.SyntheticOption{
-			embedder.WithSyntheticModel(ws.Embedder.Model),
-			embedder.WithSyntheticKey(ws.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithSyntheticDimensions(*ws.Embedder.Dimensions))
-		}
-		emb, err = embedder.NewSyntheticEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize Synthetic embedder: %w", err)
-		}
-	case "openrouter":
-		opts := []embedder.OpenRouterOption{
-			embedder.WithOpenRouterModel(ws.Embedder.Model),
-			embedder.WithOpenRouterKey(ws.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenRouterDimensions(*ws.Embedder.Dimensions))
-		}
-		emb, err = embedder.NewOpenRouterEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenRouter embedder: %w", err)
-		}
-	default:
-		return fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
+	emb, err := embedder.NewFromWorkspaceConfig(ws)
+	if err != nil {
+		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 	defer emb.Close()
 

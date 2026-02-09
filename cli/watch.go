@@ -252,81 +252,31 @@ func startBackgroundWatch(logDir string) error {
 }
 
 func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embedder, error) {
+	emb, err := embedder.NewFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	type pinger interface {
+		Ping(ctx context.Context) error
+	}
+
 	switch cfg.Embedder.Provider {
 	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
+		if p, ok := emb.(pinger); ok {
+			if err := p.Ping(ctx); err != nil {
+				return nil, fmt.Errorf("cannot connect to Ollama: %w\nMake sure Ollama is running and has the %s model", err, cfg.Embedder.Model)
+			}
 		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*cfg.Embedder.Dimensions))
-		}
-		ollamaEmb := embedder.NewOllamaEmbedder(opts...)
-		if err := ollamaEmb.Ping(ctx); err != nil {
-			return nil, fmt.Errorf("cannot connect to Ollama: %w\nMake sure Ollama is running and has the %s model", err, cfg.Embedder.Model)
-		}
-		return ollamaEmb, nil
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOpenAIParallelism(cfg.Embedder.Parallelism),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*cfg.Embedder.Dimensions))
-		}
-		return embedder.NewOpenAIEmbedder(opts...)
 	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
+		if p, ok := emb.(pinger); ok {
+			if err := p.Ping(ctx); err != nil {
+				return nil, fmt.Errorf("cannot connect to LM Studio: %w\nMake sure LM Studio is running with the %s model loaded", err, cfg.Embedder.Model)
+			}
 		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
-		}
-		lmstudioEmb := embedder.NewLMStudioEmbedder(opts...)
-		if err := lmstudioEmb.Ping(ctx); err != nil {
-			return nil, fmt.Errorf("cannot connect to LM Studio: %w\nMake sure LM Studio is running with the %s model loaded", err, cfg.Embedder.Model)
-		}
-		return lmstudioEmb, nil
-	case "synthetic":
-		opts := []embedder.SyntheticOption{
-			embedder.WithSyntheticModel(cfg.Embedder.Model),
-			embedder.WithSyntheticKey(cfg.Embedder.APIKey),
-			embedder.WithSyntheticEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithSyntheticDimensions(*cfg.Embedder.Dimensions))
-		}
-		syntheticEmb, err := embedder.NewSyntheticEmbedder(opts...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Synthetic embedder: %w", err)
-		}
-		if err := syntheticEmb.Ping(ctx); err != nil {
-			return nil, fmt.Errorf("cannot connect to Synthetic API: %w\nMake sure your SYNTHETIC_API_KEY or OPENAI_API_KEY is set", err)
-		}
-		return syntheticEmb, nil
-	case "openrouter":
-		opts := []embedder.OpenRouterOption{
-			embedder.WithOpenRouterModel(cfg.Embedder.Model),
-			embedder.WithOpenRouterKey(cfg.Embedder.APIKey),
-			embedder.WithOpenRouterEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenRouterDimensions(*cfg.Embedder.Dimensions))
-		}
-		openrouterEmb, err := embedder.NewOpenRouterEmbedder(opts...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OpenRouter embedder: %w", err)
-		}
-		if err := openrouterEmb.Ping(ctx); err != nil {
-			return nil, fmt.Errorf("cannot connect to OpenRouter API: %w\nMake sure your OPENROUTER_API_KEY or OPENAI_API_KEY is set", err)
-		}
-		return openrouterEmb, nil
-	default:
-		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}
+
+	return emb, nil
 }
 
 func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string) (store.VectorStore, error) {
