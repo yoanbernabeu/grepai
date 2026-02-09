@@ -31,6 +31,7 @@ Output:
 Starting grepai watch in /path/to/project
 Provider: ollama (nomic-embed-text)
 Backend: gob
+RPG: disabled
 
 Performing initial scan...
 Indexing [================] 100% (245/245) src/auth/handler.go
@@ -57,9 +58,10 @@ Watching for changes... (Press Ctrl+C to stop)
 ```
 
 1. **Initial scan**: Compares disk state with existing index, removes obsolete entries, indexes new files
-2. **File watching**: Monitors filesystem events (create, modify, delete, rename)
-3. **Debouncing**: Batches rapid changes to avoid redundant indexing
-4. **Atomic updates**: Prevents duplicate vectors during updates
+2. **RPG bootstrap (optional)**: When `rpg.enabled: true`, builds the RPG graph after symbol extraction
+3. **File watching**: Monitors filesystem events (create, modify, delete, rename)
+4. **Debouncing**: Batches rapid changes to avoid redundant indexing
+5. **Atomic updates**: Prevents duplicate vectors during updates
 
 ### What Gets Indexed
 

@@ -268,6 +268,19 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 	}
 	queue := []queueItem{{symbolName, 0}}
 
+	shouldTraverse := func(name string, isRoot bool) bool {
+		symbols := s.index.Symbols[name]
+		if len(symbols) == 0 {
+			return false
+		}
+		// Root is explicitly requested by user and may be ambiguous.
+		if isRoot {
+			return true
+		}
+		// Avoid exploding through name-collided symbols (e.g. Load, Init).
+		return len(symbols) == 1
+	}
+
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -291,7 +304,7 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 					graph.Edges = append(graph.Edges, edge)
 					edgeSeen[edgeKey] = true
 				}
-				if !visited[edge.Callee] {
+				if !visited[edge.Callee] && shouldTraverse(edge.Callee, false) {
 					queue = append(queue, queueItem{edge.Callee, current.depth + 1})
 				}
 			}
@@ -301,7 +314,7 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 					graph.Edges = append(graph.Edges, edge)
 					edgeSeen[edgeKey] = true
 				}
-				if !visited[edge.Caller] {
+				if !visited[edge.Caller] && shouldTraverse(edge.Caller, false) {
 					queue = append(queue, queueItem{edge.Caller, current.depth + 1})
 				}
 			}
