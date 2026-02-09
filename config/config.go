@@ -272,7 +272,7 @@ func (c *Config) applyDefaults() {
 		}
 	}
 
-	// Only set default dimensions for local embedders (Ollama, LMStudio, Synthetic).
+	// Only set default dimensions for specific embedders (Ollama, LMStudio, Synthetic).
 	// For OpenAI, leave nil to let the API use the model's native dimensions.
 	if c.Embedder.Dimensions == nil {
 		switch c.Embedder.Provider {
