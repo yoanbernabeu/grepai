@@ -561,6 +561,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 // discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
 // Only discovers from the main worktree; returns nil for linked worktrees.
 func discoverWorktreesForWatch(projectRoot string) []string {
+	projectRootCanonical := canonicalPath(projectRoot)
+
 	gitInfo, err := git.Detect(projectRoot)
 	if err != nil {
 		return nil
@@ -585,25 +587,36 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 	for _, line := range strings.Split(string(output), "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			wtPath := strings.TrimPrefix(line, "worktree ")
+			wtPathCanonical := canonicalPath(wtPath)
 			// Skip the main worktree itself
-			if wtPath == projectRoot {
+			if wtPathCanonical == projectRootCanonical {
 				continue
 			}
 			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
 			// from within the worktree, but we're not in it, so init manually)
-			localGrepai := filepath.Join(wtPath, ".grepai")
+			localGrepai := filepath.Join(wtPathCanonical, ".grepai")
 			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
 				// Auto-init from main
-				if initErr := config.AutoInitWorktree(wtPath, projectRoot); initErr != nil {
-					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPath, initErr)
+				if initErr := config.AutoInitWorktree(wtPathCanonical, projectRootCanonical); initErr != nil {
+					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPathCanonical, initErr)
 					continue
 				}
-				log.Printf("Auto-initialized worktree: %s", wtPath)
+				log.Printf("Auto-initialized worktree: %s", wtPathCanonical)
 			}
-			worktrees = append(worktrees, wtPath)
+			worktrees = append(worktrees, wtPathCanonical)
 		}
 	}
 	return worktrees
+}
+
+func canonicalPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
 }
 
 // watchProject runs the full watch lifecycle for a single project.
@@ -720,6 +733,28 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
 		}
 	}
+}
+
+type watchProjectRunner func(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error
+
+func startProjectWatch(g *errgroup.Group, gCtx context.Context, projectRoot string, emb embedder.Embedder, makeOnReady func() func(), startFn watchProjectRunner) {
+	g.Go(func() error {
+		onReady := makeOnReady()
+		return startFn(gCtx, projectRoot, emb, true, onReady)
+	})
+}
+
+func waitForProjectsReady(ctx context.Context, total int, readyCh <-chan struct{}) error {
+	ready := 0
+	for ready < total {
+		select {
+		case <-readyCh:
+			ready++
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 func runWatchForeground() error {
@@ -887,47 +922,31 @@ func runWatchForeground() error {
 	// Multi-worktree mode: run all projects in parallel using errgroup
 	g, gCtx := errgroup.WithContext(watchCtx)
 
-	// WaitGroup to track when all projects finish initial indexing + watcher start.
-	// Each goroutine uses sync.Once to guarantee exactly one Done() call, even on error.
-	var readyWg sync.WaitGroup
 	totalProjects := 1 + len(linkedWorktrees)
-	readyWg.Add(totalProjects)
+	readyCh := make(chan struct{}, totalProjects)
 
 	makeOnReady := func() func() {
 		var once sync.Once
-		return func() { once.Do(readyWg.Done) }
+		return func() {
+			once.Do(func() {
+				readyCh <- struct{}{}
+			})
+		}
 	}
 
 	// Main project
-	g.Go(func() error {
-		onReady := makeOnReady()
-		defer onReady() // ensure Done() even if watchProject fails before calling onReady
-		return watchProject(gCtx, projectRoot, emb, true, onReady)
-	})
+	startProjectWatch(g, gCtx, projectRoot, emb, makeOnReady, watchProject)
 
 	// Linked worktrees
 	for _, wt := range linkedWorktrees {
-		wt := wt
-		g.Go(func() error {
-			onReady := makeOnReady()
-			defer onReady()
-			return watchProject(gCtx, wt, emb, true, onReady)
-		})
+		startProjectWatch(g, gCtx, wt, emb, makeOnReady, watchProject)
 	}
 
 	// Write ready file after all watchers have actually started (or failed).
 	// Uses select to also unblock on context cancellation.
 	g.Go(func() error {
-		done := make(chan struct{})
-		go func() {
-			readyWg.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-			// All projects signaled ready (success or failure)
-		case <-gCtx.Done():
-			return gCtx.Err()
+		if err := waitForProjectsReady(gCtx, totalProjects, readyCh); err != nil {
+			return err
 		}
 		if isBackgroundChild {
 			if worktreeID != "" {
