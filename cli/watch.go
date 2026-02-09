@@ -554,26 +554,44 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 		return nil
 	}
 
+	normalizePath := func(p string) string {
+		if resolved, resolveErr := filepath.EvalSymlinks(p); resolveErr == nil {
+			p = resolved
+		}
+		if abs, absErr := filepath.Abs(p); absErr == nil {
+			p = abs
+		}
+		return filepath.Clean(p)
+	}
+
+	normalizedRoot := normalizePath(projectRoot)
 	var worktrees []string
+	seen := make(map[string]bool)
 	for _, line := range strings.Split(string(output), "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			wtPath := strings.TrimPrefix(line, "worktree ")
+			normalizedWorktree := normalizePath(wtPath)
 			// Skip the main worktree itself
-			if wtPath == projectRoot {
+			if normalizedWorktree == normalizedRoot {
 				continue
 			}
+			// Guard against duplicated aliases pointing to the same path.
+			if seen[normalizedWorktree] {
+				continue
+			}
+			seen[normalizedWorktree] = true
 			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
 			// from within the worktree, but we're not in it, so init manually)
-			localGrepai := filepath.Join(wtPath, ".grepai")
+			localGrepai := filepath.Join(normalizedWorktree, ".grepai")
 			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
 				// Auto-init from main
-				if initErr := config.AutoInitWorktree(wtPath, projectRoot); initErr != nil {
-					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPath, initErr)
+				if initErr := config.AutoInitWorktree(normalizedWorktree, projectRoot); initErr != nil {
+					log.Printf("Warning: failed to auto-init worktree %s: %v", normalizedWorktree, initErr)
 					continue
 				}
-				log.Printf("Auto-initialized worktree: %s", wtPath)
+				log.Printf("Auto-initialized worktree: %s", normalizedWorktree)
 			}
-			worktrees = append(worktrees, wtPath)
+			worktrees = append(worktrees, normalizedWorktree)
 		}
 	}
 	return worktrees
