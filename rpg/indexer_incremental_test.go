@@ -3,6 +3,7 @@ package rpg
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/trace"
@@ -168,4 +169,74 @@ func hasEdge(graph *Graph, fromID, toID string, edgeType EdgeType) bool {
 		}
 	}
 	return false
+}
+
+func TestRPGIndexer_ConcurrentHandleAndDerivedRefresh(t *testing.T) {
+	ctx := context.Background()
+	graph := NewGraph()
+	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: graph}
+	indexer := NewRPGIndexer(rpgStore, NewLocalExtractor(), t.TempDir(), RPGIndexerConfig{
+		DriftThreshold:       0.35,
+		FeatureGroupStrategy: "sample",
+	})
+
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	if err := symbolStore.SaveFile(ctx, "a.go", []trace.Symbol{
+		{Name: "Caller", File: "a.go", Line: 1, EndLine: 30, Language: "go"},
+		{Name: "Temp", File: "a.go", Line: 31, EndLine: 40, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "Callee", File: "a.go", Line: 10, CallerName: "Caller"},
+	}); err != nil {
+		t.Fatalf("failed to seed symbol store for a.go: %v", err)
+	}
+	if err := symbolStore.SaveFile(ctx, "b.go", []trace.Symbol{
+		{Name: "Callee", File: "b.go", Line: 1, EndLine: 20, Language: "go"},
+	}, nil); err != nil {
+		t.Fatalf("failed to seed symbol store for b.go: %v", err)
+	}
+
+	if err := indexer.HandleFileEvent(ctx, "create", "a.go", []trace.Symbol{
+		{Name: "Caller", File: "a.go", Line: 1, EndLine: 30, Language: "go"},
+	}); err != nil {
+		t.Fatalf("initial create for a.go failed: %v", err)
+	}
+	if err := indexer.HandleFileEvent(ctx, "create", "b.go", []trace.Symbol{
+		{Name: "Callee", File: "b.go", Line: 1, EndLine: 20, Language: "go"},
+	}); err != nil {
+		t.Fatalf("initial create for b.go failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			symbols := []trace.Symbol{
+				{Name: "Caller", File: "a.go", Line: 1, EndLine: 30, Language: "go"},
+			}
+			// Alternate symbol set to force add/remove mutations in graph maps.
+			if i%2 == 0 {
+				symbols = append(symbols, trace.Symbol{Name: "Temp", File: "a.go", Line: 31, EndLine: 40, Language: "go"})
+			}
+			if err := indexer.HandleFileEvent(ctx, "modify", "a.go", symbols); err != nil {
+				t.Errorf("HandleFileEvent failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			if err := indexer.RefreshDerivedEdgesIncremental(ctx, symbolStore, []string{"a.go"}); err != nil {
+				t.Errorf("RefreshDerivedEdgesIncremental failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
 }

@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yoanbernabeu/grepai/store"
@@ -29,6 +30,7 @@ type RPGIndexer struct {
 	evolver     *Evolver
 	projectRoot string
 	cfg         RPGIndexerConfig
+	mu          sync.Mutex
 }
 
 // RPGIndexerConfig configures the RPG indexer behavior.
@@ -56,6 +58,9 @@ func NewRPGIndexer(rpgStore RPGStore, extractor FeatureExtractor, projectRoot st
 
 // BuildFull performs a complete rebuild of the RPG graph from scratch.
 func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolStore, vectorStore store.VectorStore) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
 	graph := idx.store.GetGraph()
 
 	// Clear existing graph data in-place (not reassigning the pointer)
@@ -126,7 +131,7 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 	}
 
 	// Step 2: Rebuild derived edges (invokes/imports/semantic).
-	if err := idx.RefreshDerivedEdgesFull(ctx, symbolStore); err != nil {
+	if err := idx.refreshDerivedEdgesFullLocked(ctx, symbolStore); err != nil {
 		return fmt.Errorf("failed to refresh derived edges: %w", err)
 	}
 
@@ -159,6 +164,9 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 // HandleFileEvent handles incremental updates for file events.
 // The caller is responsible for persisting the store after updates.
 func (idx *RPGIndexer) HandleFileEvent(ctx context.Context, eventType string, filePath string, symbols []trace.Symbol) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
 	switch strings.ToLower(eventType) {
 	case "create":
 		idx.evolver.HandleAdd(filePath, symbols)
@@ -175,6 +183,21 @@ func (idx *RPGIndexer) HandleFileEvent(ctx context.Context, eventType string, fi
 
 // RefreshDerivedEdgesFull rebuilds all derived edges from current graph nodes.
 func (idx *RPGIndexer) RefreshDerivedEdgesFull(ctx context.Context, symbolStore trace.SymbolStore) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	return idx.refreshDerivedEdgesFullLocked(ctx, symbolStore)
+}
+
+// RefreshDerivedEdgesIncremental updates derived edges for changed files.
+func (idx *RPGIndexer) RefreshDerivedEdgesIncremental(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	return idx.refreshDerivedEdgesIncrementalLocked(ctx, symbolStore, changedFiles)
+}
+
+func (idx *RPGIndexer) refreshDerivedEdgesFullLocked(ctx context.Context, symbolStore trace.SymbolStore) error {
 	graph := idx.store.GetGraph()
 	graph.RemoveEdgesIf(func(e *Edge) bool {
 		return isDerivedEdgeType(e.Type)
@@ -192,8 +215,7 @@ func (idx *RPGIndexer) RefreshDerivedEdgesFull(ctx context.Context, symbolStore 
 	return nil
 }
 
-// RefreshDerivedEdgesIncremental updates derived edges for changed files.
-func (idx *RPGIndexer) RefreshDerivedEdgesIncremental(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
+func (idx *RPGIndexer) refreshDerivedEdgesIncrementalLocked(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
 	if len(changedFiles) == 0 {
 		return nil
 	}
@@ -244,6 +266,9 @@ func (idx *RPGIndexer) RefreshDerivedEdgesIncremental(ctx context.Context, symbo
 // LinkChunksForFile links vector chunks to overlapping symbols in the graph.
 // The caller is responsible for persisting the store after updates.
 func (idx *RPGIndexer) LinkChunksForFile(ctx context.Context, filePath string, chunks []store.Chunk) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
 	graph := idx.store.GetGraph()
 
 	if err := idx.linkChunksToSymbols(graph, filePath, chunks); err != nil {
