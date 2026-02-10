@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,10 +17,12 @@ import (
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
 	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 	"github.com/yoanbernabeu/grepai/watcher"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -100,23 +104,44 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		return runWorkspaceWatch(logDir)
 	}
 
+	// Detect worktree
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	gitInfo, gitErr := git.Detect(cwd)
+	var worktreeID string
+	if gitErr == nil && gitInfo.WorktreeID != "" {
+		worktreeID = gitInfo.WorktreeID
+	}
+
 	// Handle --status flag
 	if watchStatus {
-		return showWatchStatus(logDir)
+		return showWatchStatus(logDir, worktreeID)
 	}
 
 	// Handle --stop flag
 	if watchStop {
-		return stopWatchDaemon(logDir)
+		return stopWatchDaemon(logDir, worktreeID)
 	}
 
 	// Handle --background flag
 	if watchBackground {
-		return startBackgroundWatch(logDir)
+		return startBackgroundWatch(logDir, worktreeID)
 	}
 
 	// Check if already running in background (automatically cleans up stale PIDs)
-	pid, err := daemon.GetRunningPID(logDir)
+	var pid int
+	if worktreeID != "" {
+		pid, err = daemon.GetRunningWorktreePID(logDir, worktreeID)
+		if pid == 0 && err == nil {
+			// Fallback: check regular PID file for backward compatibility
+			pid, err = daemon.GetRunningPID(logDir)
+		}
+	} else {
+		pid, err = daemon.GetRunningPID(logDir)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to check running status: %w", err)
 	}
@@ -128,9 +153,20 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	return runWatchForeground()
 }
 
-func showWatchStatus(logDir string) error {
+func showWatchStatus(logDir, worktreeID string) error {
 	// Get running PID (automatically cleans up stale PIDs)
-	pid, err := daemon.GetRunningPID(logDir)
+	var pid int
+	var err error
+	var logFile string
+
+	if worktreeID != "" {
+		pid, err = daemon.GetRunningWorktreePID(logDir, worktreeID)
+		logFile = daemon.GetWorktreeLogFile(logDir, worktreeID)
+	} else {
+		pid, err = daemon.GetRunningPID(logDir)
+		logFile = filepath.Join(logDir, "grepai-watch.log")
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to read PID file: %w", err)
 	}
@@ -138,20 +174,37 @@ func showWatchStatus(logDir string) error {
 	if pid == 0 {
 		fmt.Println("Status: not running")
 		fmt.Printf("Log directory: %s\n", logDir)
+		if worktreeID != "" {
+			fmt.Printf("Worktree ID: %s\n", worktreeID)
+		}
 		return nil
 	}
 
 	fmt.Println("Status: running")
 	fmt.Printf("PID: %d\n", pid)
 	fmt.Printf("Log directory: %s\n", logDir)
-	fmt.Printf("Log file: %s\n", filepath.Join(logDir, "grepai-watch.log"))
+	fmt.Printf("Log file: %s\n", logFile)
+	if worktreeID != "" {
+		fmt.Printf("Worktree ID: %s\n", worktreeID)
+	}
 
 	return nil
 }
 
-func stopWatchDaemon(logDir string) error {
+func stopWatchDaemon(logDir, worktreeID string) error {
 	// Get running PID (automatically cleans up stale PIDs)
-	pid, err := daemon.GetRunningPID(logDir)
+	var pid int
+	var err error
+	var logFile string
+
+	if worktreeID != "" {
+		pid, err = daemon.GetRunningWorktreePID(logDir, worktreeID)
+		logFile = daemon.GetWorktreeLogFile(logDir, worktreeID)
+	} else {
+		pid, err = daemon.GetRunningPID(logDir)
+		logFile = filepath.Join(logDir, "grepai-watch.log")
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to read PID file: %w", err)
 	}
@@ -189,21 +242,38 @@ func stopWatchDaemon(logDir string) error {
 	// Verify the process actually stopped
 	if daemon.IsProcessRunning(pid) {
 		return fmt.Errorf("process did not stop within %v\nStill running? Try: kill -9 %d\nOr check logs at: %s",
-			shutdownTimeout, pid, filepath.Join(logDir, "grepai-watch.log"))
+			shutdownTimeout, pid, logFile)
 	}
 
 	// Clean up PID file
-	if err := daemon.RemovePIDFile(logDir); err != nil {
-		return fmt.Errorf("failed to remove PID file: %w", err)
+	if worktreeID != "" {
+		if err := daemon.RemoveWorktreePIDFile(logDir, worktreeID); err != nil {
+			return fmt.Errorf("failed to remove PID file: %w", err)
+		}
+	} else {
+		if err := daemon.RemovePIDFile(logDir); err != nil {
+			return fmt.Errorf("failed to remove PID file: %w", err)
+		}
 	}
 
 	fmt.Println("Background watcher stopped")
 	return nil
 }
 
-func startBackgroundWatch(logDir string) error {
+func startBackgroundWatch(logDir, worktreeID string) error {
 	// Check if already running (automatically cleans up stale PIDs)
-	pid, err := daemon.GetRunningPID(logDir)
+	var pid int
+	var err error
+	var logFile string
+
+	if worktreeID != "" {
+		pid, err = daemon.GetRunningWorktreePID(logDir, worktreeID)
+		logFile = daemon.GetWorktreeLogFile(logDir, worktreeID)
+	} else {
+		pid, err = daemon.GetRunningPID(logDir)
+		logFile = filepath.Join(logDir, "grepai-watch.log")
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to check running status: %w", err)
 	}
@@ -218,37 +288,56 @@ func startBackgroundWatch(logDir string) error {
 	}
 
 	// Spawn background process
-	childPID, err := daemon.SpawnBackground(logDir, args)
+	var childPID int
+	var exitCh <-chan struct{}
+	if worktreeID != "" {
+		childPID, exitCh, err = daemon.SpawnWorktreeBackground(logDir, worktreeID, args)
+	} else {
+		childPID, exitCh, err = daemon.SpawnBackground(logDir, args)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to start background process: %w", err)
 	}
 
 	// Wait for process to become ready or fail
-	// Poll for ready file with timeout
+	// Poll for ready file with timeout, also checking for early child exit
 	const startupTimeout = 30 * time.Second
 	const pollInterval = 250 * time.Millisecond
 	deadline := time.Now().Add(startupTimeout)
 
 	for time.Now().Before(deadline) {
 		// Check if ready file exists (initialization succeeded)
-		if daemon.IsReady(logDir) {
+		var isReady bool
+		if worktreeID != "" {
+			isReady = daemon.IsWorktreeReady(logDir, worktreeID)
+		} else {
+			isReady = daemon.IsReady(logDir)
+		}
+
+		if isReady {
 			fmt.Printf("Background watcher started (PID %d)\n", childPID)
-			fmt.Printf("Logs: %s\n", filepath.Join(logDir, "grepai-watch.log"))
+			fmt.Printf("Logs: %s\n", logFile)
+			if worktreeID != "" {
+				fmt.Printf("Worktree ID: %s\n", worktreeID)
+			}
 			fmt.Printf("\nUse 'grepai watch --status' to check status\n")
 			fmt.Printf("Use 'grepai watch --stop' to stop the watcher\n")
 			return nil
 		}
 
-		// Check if process exited (initialization failed)
-		if !daemon.IsProcessRunning(childPID) {
-			return fmt.Errorf("background process failed to start (check logs at %s)", filepath.Join(logDir, "grepai-watch.log"))
+		// Check if child process exited early (detects failures immediately,
+		// unlike kill(0) which reports zombies as alive)
+		select {
+		case <-exitCh:
+			return fmt.Errorf("background process failed to start (check logs at %s)", logFile)
+		default:
 		}
 
 		time.Sleep(pollInterval)
 	}
 
 	// Timeout - process is still running but hasn't become ready
-	return fmt.Errorf("timeout waiting for process to become ready after %v (check logs at %s)", startupTimeout, filepath.Join(logDir, "grepai-watch.log"))
+	return fmt.Errorf("timeout waiting for process to become ready after %v (check logs at %s)", startupTimeout, logFile)
 }
 
 func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embedder, error) {
@@ -319,6 +408,7 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 
 const configWriteThrottle = 30 * time.Second
 
+//nolint:unused // Retained for upcoming watch-loop refactor across fg/bg modes.
 func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool) error {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
@@ -368,7 +458,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, isBackgroundChild bool) (*indexer.IndexStats, error) {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool) (*indexer.IndexStats, error) {
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -412,19 +502,47 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		log.Println("Building symbol index...")
 	}
 	symbolCount := 0
-	files, _, _ := scanner.Scan()
+	files, _, err := scanner.ScanMetadata()
+	if err != nil {
+		log.Printf("Warning: failed to scan files for symbol index: %v", err)
+		return stats, nil
+	}
+
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Path))
 		if !isTracedLanguage(ext, tracedLanguages) {
 			continue
 		}
-		symbols, refs, err := extractor.ExtractAll(ctx, file.Path, file.Content)
+
+		// Skip files that are unchanged since the last index run and already tracked.
+		if !lastIndexTime.IsZero() {
+			fileModTime := time.Unix(file.ModTime, 0)
+			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
+				continue
+			}
+		}
+
+		fileInfo, err := scanner.ScanFile(file.Path)
 		if err != nil {
-			log.Printf("Warning: failed to extract symbols from %s: %v", file.Path, err)
+			log.Printf("Warning: failed to scan %s for symbols: %v", file.Path, err)
 			continue
 		}
-		if err := symbolStore.SaveFile(ctx, file.Path, symbols, refs); err != nil {
-			log.Printf("Warning: failed to save symbols for %s: %v", file.Path, err)
+		if fileInfo == nil {
+			continue
+		}
+
+		// Skip extraction when content hash matches what we already persisted.
+		if existingHash, ok := symbolStore.GetFileContentHash(fileInfo.Path); ok && existingHash == fileInfo.Hash {
+			continue
+		}
+
+		symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+		if err != nil {
+			log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, err)
+			continue
+		}
+		if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
+			log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, err)
 		}
 		symbolCount += len(symbols)
 	}
@@ -440,70 +558,78 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 	return stats, nil
 }
 
-func runWatchForeground() error {
-	ctx, cancel := context.WithCancel(context.Background())
+// discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
+// Only discovers from the main worktree; returns nil for linked worktrees.
+func discoverWorktreesForWatch(projectRoot string) []string {
+	projectRootCanonical := canonicalPath(projectRoot)
+
+	gitInfo, err := git.Detect(projectRoot)
+	if err != nil {
+		return nil
+	}
+
+	// Only the main worktree discovers linked worktrees
+	if gitInfo.IsWorktree {
+		return nil
+	}
+
+	// Run git worktree list
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Detect if running as background child process
-	isBackgroundChild := os.Getenv("GREPAI_BACKGROUND") == "1"
-
-	// If running in background, determine log directory and write PID file
-	var logDir string
-	if isBackgroundChild {
-		// Configure structured logging with timestamps for daemon mode
-		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-		log.SetPrefix("[grepai-watch] ")
-
-		var err error
-		logDir = watchLogDir
-		if logDir == "" {
-			logDir, err = daemon.GetDefaultLogDir()
-			if err != nil {
-				return fmt.Errorf("failed to get default log directory: %w", err)
-			}
-		}
-
-		// Write PID file
-		if err := daemon.WritePIDFile(logDir); err != nil {
-			return fmt.Errorf("failed to write PID file: %w", err)
-		}
-
-		// Ensure PID file is removed on exit
-		defer func() {
-			if err := daemon.RemovePIDFile(logDir); err != nil {
-				log.Printf("Warning: failed to remove PID file on exit: %v", err)
-			}
-		}()
-	}
-
-	// Find project root
-	projectRoot, err := config.FindProjectRoot()
+	cmd := exec.CommandContext(ctx, "git", "-C", projectRoot, "worktree", "list", "--porcelain")
+	output, err := cmd.Output()
 	if err != nil {
-		return err
+		return nil
 	}
 
+	var worktrees []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			wtPath := strings.TrimPrefix(line, "worktree ")
+			wtPathCanonical := canonicalPath(wtPath)
+			// Skip the main worktree itself
+			if wtPathCanonical == projectRootCanonical {
+				continue
+			}
+			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
+			// from within the worktree, but we're not in it, so init manually)
+			localGrepai := filepath.Join(wtPathCanonical, ".grepai")
+			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
+				// Auto-init from main
+				if initErr := config.AutoInitWorktree(wtPathCanonical, projectRootCanonical); initErr != nil {
+					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPathCanonical, initErr)
+					continue
+				}
+				log.Printf("Auto-initialized worktree: %s", wtPathCanonical)
+			}
+			worktrees = append(worktrees, wtPathCanonical)
+		}
+	}
+	return worktrees
+}
+
+func canonicalPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
+}
+
+// watchProject runs the full watch lifecycle for a single project.
+// The embedder is shared across all projects to avoid duplicate connections.
+// If onReady is non-nil, it is called once after initial indexing and watcher start.
+func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error {
 	// Load configuration
 	cfg, err := config.Load(projectRoot)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return fmt.Errorf("failed to load config for %s: %w", projectRoot, err)
 	}
 
-	if !isBackgroundChild {
-		fmt.Printf("Starting grepai watch in %s\n", projectRoot)
-		fmt.Printf("Provider: %s (%s)\n", cfg.Embedder.Provider, cfg.Embedder.Model)
-		fmt.Printf("Backend: %s\n", cfg.Store.Backend)
-	} else {
-		log.Printf("Starting grepai watch in %s", projectRoot)
-		log.Printf("Provider: %s (%s)", cfg.Embedder.Provider, cfg.Embedder.Model)
-		log.Printf("Backend: %s", cfg.Store.Backend)
-	}
-
-	// Initialize embedder
-	emb, err := initializeEmbedder(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer emb.Close()
+	log.Printf("Watching project: %s (backend: %s)", projectRoot, cfg.Store.Backend)
 
 	// Initialize store
 	st, err := initializeStore(ctx, cfg, projectRoot)
@@ -530,13 +656,12 @@ func runWatchForeground() error {
 	// Initialize symbol store and extractor
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
 	if err := symbolStore.Load(ctx); err != nil {
-		log.Printf("Warning: failed to load symbol index: %v", err)
+		log.Printf("Warning: failed to load symbol index for %s: %v", projectRoot, err)
 	}
 	defer symbolStore.Close()
 
 	extractor := trace.NewRegexExtractor()
 
-	// Use default trace languages if not configured
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
 		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
@@ -554,13 +679,13 @@ func runWatchForeground() error {
 		}()
 	}
 
-	// Run initial scan and build symbol index
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, isBackgroundChild)
+	// Run initial scan and build symbol index.
+	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild)
 	if err != nil {
 		return err
 	}
 
-	// Update lastIndexTime in config if files were indexed
 	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
 		cfg.Watch.LastIndexTime = time.Now()
 		if err := cfg.Save(projectRoot); err != nil {
@@ -568,7 +693,6 @@ func runWatchForeground() error {
 		}
 	}
 
-	// Save index after initial scan
 	if err := st.Persist(ctx); err != nil {
 		log.Printf("Warning: failed to persist index: %v", err)
 	}
@@ -576,16 +700,291 @@ func runWatchForeground() error {
 	// Initialize watcher
 	w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
 	if err != nil {
-		return fmt.Errorf("failed to initialize watcher: %w", err)
+		return fmt.Errorf("failed to initialize watcher for %s: %w", projectRoot, err)
 	}
 	defer w.Close()
 
 	if err := w.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start watcher: %w", err)
+		return fmt.Errorf("failed to start watcher for %s: %w", projectRoot, err)
 	}
 
-	// Run the watch event loop
-	return runWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg, isBackgroundChild)
+	if onReady != nil {
+		onReady()
+	}
+
+	// Run watch loop (responds to ctx.Done() for graceful shutdown)
+	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, tracedLanguages, projectRoot, cfg)
+}
+
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config) error {
+	persistTicker := time.NewTicker(30 * time.Second)
+	defer persistTicker.Stop()
+
+	var lastConfigWrite time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index on shutdown for %s: %v", projectRoot, err)
+			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", projectRoot, err)
+			}
+			return nil
+
+		case <-persistTicker.C:
+			if err := st.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist index for %s: %v", projectRoot, err)
+			}
+			if err := symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index for %s: %v", projectRoot, err)
+			}
+
+		case event := <-w.Events():
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
+		}
+	}
+}
+
+type watchProjectRunner func(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error
+
+func startProjectWatch(g *errgroup.Group, gCtx context.Context, projectRoot string, emb embedder.Embedder, makeOnReady func() func(), startFn watchProjectRunner) {
+	g.Go(func() error {
+		onReady := makeOnReady()
+		return startFn(gCtx, projectRoot, emb, true, onReady)
+	})
+}
+
+func waitForProjectsReady(ctx context.Context, total int, readyCh <-chan struct{}) error {
+	ready := 0
+	for ready < total {
+		select {
+		case <-readyCh:
+			ready++
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func runWatchForeground() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Detect if running as background child process
+	isBackgroundChild := os.Getenv("GREPAI_BACKGROUND") == "1"
+
+	// If running in background, determine log directory and write PID file
+	var logDir string
+	var worktreeID string
+	if isBackgroundChild {
+		// Configure structured logging with timestamps for daemon mode
+		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+		log.SetPrefix("[grepai-watch] ")
+
+		var err error
+		logDir = watchLogDir
+		if logDir == "" {
+			logDir, err = daemon.GetDefaultLogDir()
+			if err != nil {
+				return fmt.Errorf("failed to get default log directory: %w", err)
+			}
+		}
+
+		// Detect worktree
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		gitInfo, gitErr := git.Detect(cwd)
+		if gitErr == nil && gitInfo.WorktreeID != "" {
+			worktreeID = gitInfo.WorktreeID
+		}
+
+		// Write PID file
+		if worktreeID != "" {
+			if err := daemon.WriteWorktreePIDFile(logDir, worktreeID); err != nil {
+				return fmt.Errorf("failed to write PID file: %w", err)
+			}
+		} else {
+			if err := daemon.WritePIDFile(logDir); err != nil {
+				return fmt.Errorf("failed to write PID file: %w", err)
+			}
+		}
+
+		// Ensure PID file is removed on exit
+		defer func() {
+			if worktreeID != "" {
+				if err := daemon.RemoveWorktreePIDFile(logDir, worktreeID); err != nil {
+					log.Printf("Warning: failed to remove PID file on exit: %v", err)
+				}
+			} else {
+				if err := daemon.RemovePIDFile(logDir); err != nil {
+					log.Printf("Warning: failed to remove PID file on exit: %v", err)
+				}
+			}
+		}()
+	}
+
+	// Find project root
+	projectRoot, err := config.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+
+	// Load configuration
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if !isBackgroundChild {
+		fmt.Printf("Starting grepai watch in %s\n", projectRoot)
+		fmt.Printf("Provider: %s (%s)\n", cfg.Embedder.Provider, cfg.Embedder.Model)
+		fmt.Printf("Backend: %s\n", cfg.Store.Backend)
+	} else {
+		log.Printf("Starting grepai watch in %s", projectRoot)
+		log.Printf("Provider: %s (%s)", cfg.Embedder.Provider, cfg.Embedder.Model)
+		log.Printf("Backend: %s", cfg.Store.Backend)
+	}
+
+	// Initialize shared embedder (reused across all worktrees)
+	emb, err := initializeEmbedder(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer emb.Close()
+
+	// Discover linked worktrees (only from main worktree)
+	linkedWorktrees := discoverWorktreesForWatch(projectRoot)
+	if len(linkedWorktrees) > 0 {
+		if !isBackgroundChild {
+			fmt.Printf("Detected %d linked worktree(s), watching all:\n", len(linkedWorktrees))
+			for _, wt := range linkedWorktrees {
+				fmt.Printf("  - %s\n", wt)
+			}
+		} else {
+			log.Printf("Detected %d linked worktree(s), watching all", len(linkedWorktrees))
+			for _, wt := range linkedWorktrees {
+				log.Printf("  - %s", wt)
+			}
+		}
+	}
+
+	// Handle signals at top level
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Create cancellable context for all watchers
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	defer watchCancel()
+
+	go func() {
+		select {
+		case <-sigChan:
+			if !isBackgroundChild {
+				fmt.Println("\nShutting down...")
+			} else {
+				log.Println("Shutting down...")
+			}
+			watchCancel()
+		case <-watchCtx.Done():
+		}
+	}()
+
+	// If no linked worktrees, run the main project directly using watchProject
+	// (BUG FIX: deduplicated - previously this duplicated watchProject logic inline)
+	if len(linkedWorktrees) == 0 {
+		onReady := func() {
+			if isBackgroundChild {
+				if worktreeID != "" {
+					if err := daemon.WriteWorktreeReadyFile(logDir, worktreeID); err != nil {
+						log.Printf("Warning: failed to write ready file: %v", err)
+					}
+				} else {
+					if err := daemon.WriteReadyFile(logDir); err != nil {
+						log.Printf("Warning: failed to write ready file: %v", err)
+					}
+				}
+			} else {
+				fmt.Println("\nWatching for changes... (Press Ctrl+C to stop)")
+			}
+		}
+
+		if isBackgroundChild {
+			defer func() {
+				if worktreeID != "" {
+					if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
+						log.Printf("Warning: failed to remove ready file on exit: %v", err)
+					}
+				} else {
+					if err := daemon.RemoveReadyFile(logDir); err != nil {
+						log.Printf("Warning: failed to remove ready file on exit: %v", err)
+					}
+				}
+			}()
+		}
+
+		return watchProject(watchCtx, projectRoot, emb, isBackgroundChild, onReady)
+	}
+
+	// Multi-worktree mode: run all projects in parallel using errgroup
+	g, gCtx := errgroup.WithContext(watchCtx)
+
+	totalProjects := 1 + len(linkedWorktrees)
+	readyCh := make(chan struct{}, totalProjects)
+
+	makeOnReady := func() func() {
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				readyCh <- struct{}{}
+			})
+		}
+	}
+
+	// Main project
+	startProjectWatch(g, gCtx, projectRoot, emb, makeOnReady, watchProject)
+
+	// Linked worktrees
+	for _, wt := range linkedWorktrees {
+		startProjectWatch(g, gCtx, wt, emb, makeOnReady, watchProject)
+	}
+
+	// Write ready file after all watchers have actually started (or failed).
+	// Uses select to also unblock on context cancellation.
+	g.Go(func() error {
+		if err := waitForProjectsReady(gCtx, totalProjects, readyCh); err != nil {
+			return err
+		}
+		if isBackgroundChild {
+			if worktreeID != "" {
+				return daemon.WriteWorktreeReadyFile(logDir, worktreeID)
+			}
+			return daemon.WriteReadyFile(logDir)
+		}
+		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", totalProjects)
+		return nil
+	})
+
+	if isBackgroundChild {
+		defer func() {
+			if worktreeID != "" {
+				if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
+					log.Printf("Warning: failed to remove ready file on exit: %v", err)
+				}
+			} else {
+				if err := daemon.RemoveReadyFile(logDir); err != nil {
+					log.Printf("Warning: failed to remove ready file on exit: %v", err)
+				}
+			}
+		}()
+	}
+
+	return g.Wait()
 }
 
 func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, event watcher.FileEvent) {
@@ -600,6 +999,16 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		}
 		if fileInfo == nil {
 			return // File was skipped (binary, too large, etc.)
+		}
+
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
+			return
 		}
 
 		chunks, err := idx.IndexFile(ctx, *fileInfo)
@@ -625,7 +1034,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
 			if err != nil {
 				log.Printf("Failed to extract symbols from %s: %v", event.Path, err)
-			} else if err := symbolStore.SaveFile(ctx, fileInfo.Path, symbols, refs); err != nil {
+			} else if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
 				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
 			} else {
 				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
@@ -667,7 +1076,7 @@ func printProgress(current, total int, filePath string) {
 	// Build progress bar (20 chars width)
 	barWidth := 20
 	filled := int(float64(barWidth) * float64(current) / float64(total))
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	bar := strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", barWidth-filled)
 
 	// Truncate file path if too long
 	maxPathLen := 35
@@ -689,7 +1098,7 @@ func printBatchProgress(info indexer.BatchProgressInfo) {
 		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
 		barWidth := 20
 		filled := int(float64(barWidth) * float64(info.CompletedChunks) / float64(info.TotalChunks))
-		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+		bar := strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", barWidth-filled)
 		fmt.Printf("\rEmbedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks)
 	}
 }
@@ -838,7 +1247,7 @@ func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
 	}
 
 	// Spawn background process
-	childPID, err := daemon.SpawnWorkspaceBackground(logDir, ws.Name, extraArgs)
+	childPID, exitCh, err := daemon.SpawnWorkspaceBackground(logDir, ws.Name, extraArgs)
 	if err != nil {
 		return fmt.Errorf("failed to start background process: %w", err)
 	}
@@ -848,23 +1257,27 @@ func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
 	const pollInterval = 250 * time.Millisecond
 	deadline := time.Now().Add(startupTimeout)
 
+	wsLogFile := daemon.GetWorkspaceLogFile(logDir, ws.Name)
+
 	for time.Now().Before(deadline) {
 		if daemon.IsWorkspaceReady(logDir, ws.Name) {
 			fmt.Printf("Workspace watcher %s started (PID %d)\n", ws.Name, childPID)
-			fmt.Printf("Logs: %s\n", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+			fmt.Printf("Logs: %s\n", wsLogFile)
 			fmt.Printf("\nUse 'grepai watch --workspace %s --status' to check status\n", ws.Name)
 			fmt.Printf("Use 'grepai watch --workspace %s --stop' to stop the watcher\n", ws.Name)
 			return nil
 		}
 
-		if !daemon.IsProcessRunning(childPID) {
-			return fmt.Errorf("background process failed to start (check logs at %s)", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+		select {
+		case <-exitCh:
+			return fmt.Errorf("background process failed to start (check logs at %s)", wsLogFile)
+		default:
 		}
 
 		time.Sleep(pollInterval)
 	}
 
-	return fmt.Errorf("timeout waiting for process to become ready (check logs at %s)", daemon.GetWorkspaceLogFile(logDir, ws.Name))
+	return fmt.Errorf("timeout waiting for process to become ready (check logs at %s)", wsLogFile)
 }
 
 func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
@@ -1230,6 +1643,16 @@ func handleWorkspaceFileEvent(ctx context.Context, project config.ProjectEntry, 
 			return
 		}
 		if fileInfo == nil {
+			return
+		}
+
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
 			return
 		}
 

@@ -29,7 +29,8 @@ export const navigation: NavSection[] = [
       { label: 'AI Agent Skills', href: '/grepai/skills/', order: 6 },
       { label: 'Search Boost', href: '/grepai/search-boost/', order: 7 },
       { label: 'Hybrid Search', href: '/grepai/hybrid-search/', order: 8 },
-      { label: 'Workspace Management', href: '/grepai/workspace/', order: 9 },
+      { label: 'Git Worktrees', href: '/grepai/git-worktrees/', order: 9 },
+      { label: 'Workspace Management', href: '/grepai/workspace/', order: 10 },
     ],
   },
   {
