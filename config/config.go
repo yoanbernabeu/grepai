@@ -275,7 +275,7 @@ func DefaultConfig() *Config {
 			DriftThreshold:       DefaultRPGDriftThreshold,
 			MaxTraversalDepth:    DefaultRPGMaxTraversalDepth,
 			LLMProvider:          "ollama",
-			LLMModel:             "lfm2.5-thinking",
+			LLMModel:             "",
 			LLMEndpoint:          "http://localhost:11434/v1",
 			LLMTimeoutMs:         DefaultRPGLLMTimeoutMs,
 			FeatureGroupStrategy: DefaultRPGFeatureGroupStrategy,
@@ -339,7 +339,7 @@ func Load(projectRoot string) (*Config, error) {
 	// Apply defaults for missing values (backward compatibility)
 	cfg.applyDefaults()
 
-	// Validate RPG config when enabled
+	// Validate watch timing configuration
 	if err := ValidateWatchConfig(cfg.Watch); err != nil {
 		return nil, fmt.Errorf("invalid watch configuration: %w", err)
 	}
@@ -426,7 +426,7 @@ func (c *Config) applyDefaults() {
 	if c.RPG.FeatureMode == "" {
 		c.RPG.FeatureMode = DefaultRPGFeatureMode
 	}
-	if c.RPG.DriftThreshold < 0 {
+	if c.RPG.DriftThreshold == 0 {
 		c.RPG.DriftThreshold = DefaultRPGDriftThreshold
 	}
 	if c.RPG.MaxTraversalDepth <= 0 {
@@ -435,9 +435,9 @@ func (c *Config) applyDefaults() {
 	if c.RPG.LLMProvider == "" {
 		c.RPG.LLMProvider = "ollama"
 	}
-	if c.RPG.LLMModel == "" {
-		c.RPG.LLMModel = "lfm2.5-thinking"
-	}
+	// LLMModel intentionally left empty when unset — user must configure
+	// explicitly. The watch/mcp code falls back to the local extractor when
+	// LLMModel is empty.
 	if c.RPG.LLMEndpoint == "" {
 		c.RPG.LLMEndpoint = "http://localhost:11434/v1"
 	}

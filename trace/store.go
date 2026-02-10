@@ -111,6 +111,8 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	return nil
 }
 
+// ensureParentDir creates parent directories if missing.
+// Duplicated in store/ and rpg/ to avoid cross-package dependency for a trivial helper.
 func ensureParentDir(filePath string) error {
 	dir := filepath.Dir(filePath)
 	return os.MkdirAll(dir, 0755)

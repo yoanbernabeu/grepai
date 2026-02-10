@@ -228,6 +228,8 @@ func (s *GOBStore) persistUnlocked() error {
 	return nil
 }
 
+// ensureParentDir creates parent directories if missing.
+// Duplicated in trace/ and rpg/ to avoid cross-package dependency for a trivial helper.
 func ensureParentDir(filePath string) error {
 	dir := filepath.Dir(filePath)
 	return os.MkdirAll(dir, 0755)
