@@ -134,17 +134,11 @@ grepai/
 ├── cmd/grepai/      # CLI entry point
 ├── cli/             # Cobra commands
 ├── config/          # Configuration management
-├── daemon/          # Background daemon management
-├── docs/            # Documentation
-├── embedder/        # Embedding providers (Ollama, OpenAI, LMStudio)
+├── embedder/        # Embedding providers (Ollama, OpenAI)
+├── store/           # Vector storage backends (GOB, Postgres)
 ├── indexer/         # File scanning and chunking
-├── mcp/             # MCP (Model Context Protocol) server
-├── rpg/             # RPG semantic graph (feature hierarchy, query engine)
-├── search/          # Search functionality (vector + hybrid)
-├── store/           # Vector storage backends (GOB, Postgres, Qdrant)
-├── trace/           # Symbol extraction and call graph tracing
-├── updater/         # Self-update mechanism
-└── watcher/         # File system watcher
+├── watcher/         # File system watcher
+└── search/          # Search functionality
 ```
 
 ## Adding New Features
