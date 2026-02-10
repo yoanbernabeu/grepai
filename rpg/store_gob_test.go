@@ -353,3 +353,16 @@ func TestGOBRPGStore_LargeGraph(t *testing.T) {
 		t.Errorf("Expected %d nodes after load, got %d", numNodes, len(graph2.Nodes))
 	}
 }
+
+func TestGOBRPGStore_PersistCreatesMissingParentDir(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "missing", ".grepai", "rpg.gob")
+
+	store := NewGOBRPGStore(indexPath)
+	if err := store.Persist(context.Background()); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+
+	if _, err := os.Stat(indexPath); err != nil {
+		t.Fatalf("expected persisted rpg index file at %s: %v", indexPath, err)
+	}
+}

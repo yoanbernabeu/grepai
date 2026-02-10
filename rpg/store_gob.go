@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -67,6 +68,10 @@ func (s *GOBRPGStore) Persist(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := ensureParentDir(s.indexPath); err != nil {
+		return fmt.Errorf("failed to prepare rpg index directory: %w", err)
+	}
+
 	file, err := os.Create(s.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to create rpg index file: %w", err)
@@ -83,6 +88,11 @@ func (s *GOBRPGStore) Persist(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func ensureParentDir(filePath string) error {
+	dir := filepath.Dir(filePath)
+	return os.MkdirAll(dir, 0755)
 }
 
 // Close cleanly shuts down the store by persisting data.

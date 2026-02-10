@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -86,6 +87,10 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if err := ensureParentDir(s.indexPath); err != nil {
+		return fmt.Errorf("failed to prepare symbol index directory: %w", err)
+	}
+
 	file, err := os.Create(s.indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to create symbol index file: %w", err)
@@ -104,6 +109,11 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func ensureParentDir(filePath string) error {
+	dir := filepath.Dir(filePath)
+	return os.MkdirAll(dir, 0755)
 }
 
 // SaveFile persists symbols and references for a file.
