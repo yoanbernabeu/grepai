@@ -245,6 +245,7 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -390,6 +391,7 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -462,6 +464,7 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
 	)
 

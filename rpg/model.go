@@ -274,6 +274,39 @@ func (g *Graph) RemoveEdgesBetween(from, to string) {
 	}
 }
 
+// RemoveEdgesIf removes edges that match the predicate and rebuilds edge indexes.
+func (g *Graph) RemoveEdgesIf(predicate func(*Edge) bool) {
+	if predicate == nil {
+		return
+	}
+
+	filtered := make([]*Edge, 0, len(g.Edges))
+	removed := false
+	for _, e := range g.Edges {
+		if predicate(e) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+
+	if !removed {
+		return
+	}
+
+	g.Edges = filtered
+	g.RebuildIndexes()
+}
+
+// NodePath returns the file path for a node ID when present.
+func (g *Graph) NodePath(id string) (string, bool) {
+	n := g.GetNode(id)
+	if n == nil || n.Path == "" {
+		return "", false
+	}
+	return n.Path, true
+}
+
 // GetNode returns a node by ID.
 func (g *Graph) GetNode(id string) *Node {
 	return g.Nodes[id]

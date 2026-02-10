@@ -408,6 +408,225 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 }
 
 const configWriteThrottle = 30 * time.Second
+const rpgDerivedFailureThreshold = 3
+
+type rpgRealtimeManager struct {
+	mu               sync.Mutex
+	dirtyFiles       map[string]struct{}
+	dirtyDerived     bool
+	dirtyPersist     bool
+	forceFull        bool
+	lastDerivedRun   time.Time
+	lastPersistRun   time.Time
+	derivedFailures  int
+	maxDirtyFileSize int
+}
+
+func newRPGRealtimeManager(maxDirtyFiles int) *rpgRealtimeManager {
+	if maxDirtyFiles < 1 {
+		maxDirtyFiles = 1
+	}
+	return &rpgRealtimeManager{
+		dirtyFiles:       make(map[string]struct{}),
+		maxDirtyFileSize: maxDirtyFiles,
+	}
+}
+
+func (m *rpgRealtimeManager) MarkFileDirty(filePath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.dirtyDerived = true
+	m.dirtyPersist = true
+	if filePath != "" {
+		m.dirtyFiles[filePath] = struct{}{}
+	}
+	if len(m.dirtyFiles) > m.maxDirtyFileSize {
+		m.forceFull = true
+		m.dirtyFiles = make(map[string]struct{})
+	}
+}
+
+func (m *rpgRealtimeManager) MarkPersistDirty() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dirtyPersist = true
+}
+
+func (m *rpgRealtimeManager) ShouldPersist() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.dirtyPersist
+}
+
+func (m *rpgRealtimeManager) MarkPersisted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dirtyPersist = false
+	m.lastPersistRun = time.Now()
+}
+
+func (m *rpgRealtimeManager) ScheduleFullReconcile() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forceFull = true
+	m.dirtyDerived = true
+}
+
+func (m *rpgRealtimeManager) NextDerivedBatch(maxBatch int) ([]string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if maxBatch < 1 {
+		maxBatch = 1
+	}
+
+	if !m.dirtyDerived && !m.forceFull {
+		return nil, false
+	}
+
+	if m.forceFull {
+		files := make([]string, 0, len(m.dirtyFiles))
+		for f := range m.dirtyFiles {
+			files = append(files, f)
+		}
+		m.forceFull = false
+		m.dirtyDerived = false
+		m.dirtyFiles = make(map[string]struct{})
+		return files, true
+	}
+
+	files := make([]string, 0, maxBatch)
+	for f := range m.dirtyFiles {
+		files = append(files, f)
+		delete(m.dirtyFiles, f)
+		if len(files) >= maxBatch {
+			break
+		}
+	}
+	m.dirtyDerived = len(m.dirtyFiles) > 0
+	return files, false
+}
+
+func (m *rpgRealtimeManager) MarkDerivedSuccess() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.derivedFailures = 0
+	m.lastDerivedRun = time.Now()
+}
+
+func (m *rpgRealtimeManager) MarkDerivedFailure(files []string, full bool) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.dirtyDerived = true
+	if full {
+		m.forceFull = true
+	}
+	for _, f := range files {
+		if f != "" {
+			m.dirtyFiles[f] = struct{}{}
+		}
+	}
+	m.derivedFailures++
+	return m.derivedFailures
+}
+
+func (m *rpgRealtimeManager) Snapshot() (dirtyFiles int, dirtyPersist bool, lastDerivedRun, lastPersistRun time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.dirtyFiles), m.dirtyPersist, m.lastDerivedRun, m.lastPersistRun
+}
+
+func startRPGRealtimeWorkers(ctx context.Context, projectLabel string, symbolStore trace.SymbolStore, rpgIndexer *rpg.RPGIndexer, rpgStore rpg.RPGStore, watchCfg config.WatchConfig, manager *rpgRealtimeManager) {
+	if manager == nil || rpgIndexer == nil || rpgStore == nil || symbolStore == nil {
+		return
+	}
+
+	go func() {
+		derivedTicker := time.NewTicker(time.Duration(watchCfg.RPGDerivedDebounceMs) * time.Millisecond)
+		persistTicker := time.NewTicker(time.Duration(watchCfg.RPGPersistIntervalMs) * time.Millisecond)
+		reconcileTicker := time.NewTicker(time.Duration(watchCfg.RPGFullReconcileIntervalSec) * time.Second)
+		defer derivedTicker.Stop()
+		defer persistTicker.Stop()
+		defer reconcileTicker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			case <-reconcileTicker.C:
+				manager.ScheduleFullReconcile()
+				log.Printf("rpg_full_reconcile_triggered=true project=%s reason=periodic", projectLabel)
+
+			case <-derivedTicker.C:
+				changedFiles, full := manager.NextDerivedBatch(watchCfg.RPGMaxDirtyFilesPerBatch)
+				if !full && len(changedFiles) == 0 {
+					continue
+				}
+
+				start := time.Now()
+				var err error
+				mode := "incremental"
+				if full {
+					mode = "full"
+					err = rpgIndexer.RefreshDerivedEdgesFull(ctx, symbolStore)
+				} else {
+					err = rpgIndexer.RefreshDerivedEdgesIncremental(ctx, symbolStore, changedFiles)
+				}
+
+				if err != nil {
+					failures := manager.MarkDerivedFailure(changedFiles, full)
+					if failures >= rpgDerivedFailureThreshold {
+						manager.ScheduleFullReconcile()
+						log.Printf("rpg_full_reconcile_triggered=true project=%s reason=retry_threshold failures=%d", projectLabel, failures)
+					}
+					dirtyCount, _, _, _ := manager.Snapshot()
+					log.Printf("Warning: rpg_derived_refresh_ms=%d project=%s mode=%s changed_files=%d rpg_dirty_files_count=%d err=%v",
+						time.Since(start).Milliseconds(),
+						projectLabel,
+						mode,
+						len(changedFiles),
+						dirtyCount,
+						err,
+					)
+					continue
+				}
+
+				manager.MarkDerivedSuccess()
+				manager.MarkPersistDirty()
+				dirtyCount, _, _, _ := manager.Snapshot()
+				log.Printf("rpg_derived_refresh_ms=%d project=%s mode=%s changed_files=%d rpg_dirty_files_count=%d",
+					time.Since(start).Milliseconds(),
+					projectLabel,
+					mode,
+					len(changedFiles),
+					dirtyCount,
+				)
+
+			case <-persistTicker.C:
+				if !manager.ShouldPersist() {
+					continue
+				}
+
+				start := time.Now()
+				if err := rpgStore.Persist(ctx); err != nil {
+					log.Printf("Warning: rpg_persist_ms=%d project=%s err=%v", time.Since(start).Milliseconds(), projectLabel, err)
+					continue
+				}
+				manager.MarkPersisted()
+
+				_, _, lastDerived, _ := manager.Snapshot()
+				lagMs := int64(0)
+				if !lastDerived.IsZero() {
+					lagMs = time.Since(lastDerived).Milliseconds()
+				}
+				log.Printf("rpg_persist_ms=%d project=%s persist_lag_ms=%d", time.Since(start).Milliseconds(), projectLabel, lagMs)
+			}
+		}
+	}()
+}
 
 //nolint:unused // Retained for upcoming watch-loop refactor across fg/bg modes.
 func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool) error {
@@ -454,7 +673,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event)
 		}
 	}
 }
@@ -769,6 +988,11 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 	defer persistTicker.Stop()
 
 	var lastConfigWrite time.Time
+	var rpgManager *rpgRealtimeManager
+	if rpgIndexer != nil && rpgStore != nil {
+		rpgManager = newRPGRealtimeManager(cfg.Watch.RPGMaxDirtyFilesPerBatch)
+		startRPGRealtimeWorkers(ctx, projectRoot, symbolStore, rpgIndexer, rpgStore, cfg.Watch, rpgManager)
+	}
 
 	for {
 		select {
@@ -800,7 +1024,7 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event)
 		}
 	}
 }
@@ -1055,11 +1279,12 @@ func runWatchForeground() error {
 	return g.Wait()
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgIndexer *rpg.RPGIndexer, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, event watcher.FileEvent) {
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgIndexer *rpg.RPGIndexer, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent) {
 	log.Printf("[%s] %s", event.Type, event.Path)
 
 	switch event.Type {
 	case watcher.EventCreate, watcher.EventModify:
+		start := time.Now()
 		fileInfo, err := scanner.ScanFile(event.Path)
 		if err != nil {
 			log.Printf("Failed to scan %s: %v", event.Path, err)
@@ -1123,11 +1348,22 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 							}
 						}
 					}
+					if rpgManager != nil {
+						rpgManager.MarkFileDirty(fileInfo.Path)
+						dirtyCount, _, _, _ := rpgManager.Snapshot()
+						log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
+							time.Since(start).Milliseconds(),
+							fileInfo.Path,
+							event.Type.String(),
+							dirtyCount,
+						)
+					}
 				}
 			}
 		}
 
 	case watcher.EventDelete, watcher.EventRename:
+		start := time.Now()
 		if err := idx.RemoveFile(ctx, event.Path); err != nil {
 			log.Printf("Failed to remove %s from index: %v", event.Path, err)
 			return
@@ -1139,6 +1375,15 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		if rpgIndexer != nil {
 			if err := rpgIndexer.HandleFileEvent(ctx, "delete", event.Path, nil); err != nil {
 				log.Printf("Warning: failed to update RPG for deleted %s: %v", event.Path, err)
+			} else if rpgManager != nil {
+				rpgManager.MarkFileDirty(event.Path)
+				dirtyCount, _, _, _ := rpgManager.Snapshot()
+				log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
+					time.Since(start).Milliseconds(),
+					event.Path,
+					event.Type.String(),
+					dirtyCount,
+				)
 			}
 		}
 		log.Printf("Removed %s from index", event.Path)
@@ -1426,7 +1671,9 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	}
 	defer st.Close()
 
-	// Index each project
+	runtimes := make(map[string]*workspaceProjectRuntime, len(ws.Projects))
+	watchers := make([]*watcher.Watcher, 0, len(ws.Projects))
+
 	for _, project := range ws.Projects {
 		if !isBackgroundChild {
 			fmt.Printf("\nIndexing project: %s (%s)\n", project.Name, project.Path)
@@ -1434,10 +1681,34 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 			log.Printf("Indexing project: %s (%s)", project.Name, project.Path)
 		}
 
-		if err := indexWorkspaceProject(ctx, project, ws, emb, st, isBackgroundChild); err != nil {
-			log.Printf("Warning: failed to index project %s: %v", project.Name, err)
+		runtime, w, rtErr := initializeWorkspaceRuntime(ctx, ws, project, emb, st, isBackgroundChild)
+		if rtErr != nil {
+			log.Printf("Warning: failed to initialize runtime for %s: %v", project.Name, rtErr)
+			continue
 		}
+
+		projectKey := canonicalPath(project.Path)
+		runtimes[projectKey] = runtime
+		watchers = append(watchers, w)
 	}
+
+	defer func() {
+		for _, w := range watchers {
+			w.Close()
+		}
+		for _, runtime := range runtimes {
+			if runtime.symbolStore != nil {
+				if err := runtime.symbolStore.Close(); err != nil {
+					log.Printf("Warning: failed to close symbol store for %s: %v", runtime.project.Path, err)
+				}
+			}
+			if runtime.rpgStore != nil {
+				if err := runtime.rpgStore.Close(); err != nil {
+					log.Printf("Warning: failed to close RPG store for %s: %v", runtime.project.Path, err)
+				}
+			}
+		}
+	}()
 
 	// Write ready file
 	if isBackgroundChild {
@@ -1451,64 +1722,31 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 		}()
 	}
 
-	// Start watchers for each project
-	watchers := make([]*watcher.Watcher, 0, len(ws.Projects))
-	for _, project := range ws.Projects {
-		// Load project-specific config or use defaults
-		projectCfg := config.DefaultConfig()
-		if config.Exists(project.Path) {
-			var err error
-			projectCfg, err = config.Load(project.Path)
-			if err != nil {
-				log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
-			}
-		}
-
-		ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
-		if err != nil {
-			log.Printf("Warning: failed to create ignore matcher for %s: %v", project.Name, err)
-			continue
-		}
-
-		w, err := watcher.NewWatcher(project.Path, ignoreMatcher, projectCfg.Watch.DebounceMs)
-		if err != nil {
-			log.Printf("Warning: failed to create watcher for %s: %v", project.Name, err)
-			continue
-		}
-
-		if err := w.Start(ctx); err != nil {
-			log.Printf("Warning: failed to start watcher for %s: %v", project.Name, err)
-			w.Close()
-			continue
-		}
-
-		watchers = append(watchers, w)
-	}
-
-	defer func() {
-		for _, w := range watchers {
-			w.Close()
-		}
-	}()
-
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	if !isBackgroundChild {
-		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(ws.Projects))
+		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(runtimes))
 	} else {
-		log.Printf("Watching %d projects for changes...", len(ws.Projects))
+		log.Printf("Watching %d projects for changes...", len(runtimes))
 	}
 
 	// Collect events from all watchers
-	eventChan := make(chan watcher.FileEvent, 100)
-	for _, w := range watchers {
-		go func(w *watcher.Watcher) {
-			for event := range w.Events() {
-				eventChan <- event
+	eventChan := make(chan workspaceWatchEvent, 100)
+	for _, runtime := range runtimes {
+		runtime := runtime
+		if runtime.watcher == nil {
+			continue
+		}
+		go func() {
+			for event := range runtime.watcher.Events() {
+				eventChan <- workspaceWatchEvent{
+					projectPath: runtime.project.Path,
+					event:       event,
+				}
 			}
-		}(w)
+		}()
 	}
 
 	// Event loop
@@ -1526,17 +1764,204 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index on shutdown: %v", err)
 			}
+			for _, runtime := range runtimes {
+				if err := runtime.symbolStore.Persist(ctx); err != nil {
+					log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", runtime.project.Name, err)
+				}
+				if runtime.rpgStore != nil {
+					if err := runtime.rpgStore.Persist(ctx); err != nil {
+						log.Printf("Warning: failed to persist RPG graph on shutdown for %s: %v", runtime.project.Name, err)
+					}
+				}
+			}
 			return nil
 
 		case <-persistTicker.C:
 			if err := st.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist index: %v", err)
 			}
+			for _, runtime := range runtimes {
+				if err := runtime.symbolStore.Persist(ctx); err != nil {
+					log.Printf("Warning: failed to persist symbol index for %s: %v", runtime.project.Name, err)
+				}
+				if runtime.rpgStore != nil {
+					if err := runtime.rpgStore.Persist(ctx); err != nil {
+						log.Printf("Warning: failed to persist RPG graph for %s: %v", runtime.project.Name, err)
+					}
+				}
+			}
 
 		case event := <-eventChan:
-			handleWorkspaceFileEvent(ctx, ws, emb, st, event)
+			projectKey := canonicalPath(event.projectPath)
+			runtime := runtimes[projectKey]
+			if runtime == nil {
+				log.Printf("Warning: received event for unknown runtime: %s", event.projectPath)
+				continue
+			}
+			handleFileEvent(
+				ctx,
+				runtime.idx,
+				runtime.scanner,
+				runtime.extractor,
+				runtime.symbolStore,
+				runtime.rpgIndexer,
+				runtime.vectorStore,
+				runtime.tracedLanguages,
+				runtime.project.Path,
+				runtime.cfg,
+				&runtime.lastConfigWrite,
+				runtime.manager,
+				event.event,
+			)
 		}
 	}
+}
+
+type workspaceWatchEvent struct {
+	projectPath string
+	event       watcher.FileEvent
+}
+
+type workspaceProjectRuntime struct {
+	project         config.ProjectEntry
+	cfg             *config.Config
+	idx             *indexer.Indexer
+	scanner         *indexer.Scanner
+	extractor       *trace.RegexExtractor
+	symbolStore     *trace.GOBSymbolStore
+	rpgIndexer      *rpg.RPGIndexer
+	rpgStore        rpg.RPGStore
+	vectorStore     store.VectorStore
+	tracedLanguages []string
+	lastConfigWrite time.Time
+	manager         *rpgRealtimeManager
+	watcher         *watcher.Watcher
+}
+
+func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, project config.ProjectEntry, emb embedder.Embedder, sharedStore store.VectorStore, isBackgroundChild bool) (*workspaceProjectRuntime, *watcher.Watcher, error) {
+	projectCfg := config.DefaultConfig()
+	if config.Exists(project.Path) {
+		loadedCfg, err := config.Load(project.Path)
+		if err != nil {
+			log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
+		} else {
+			projectCfg = loadedCfg
+		}
+	}
+
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize ignore matcher: %w", err)
+	}
+
+	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
+	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
+	vectorStore := &projectPrefixStore{
+		store:         sharedStore,
+		workspaceName: ws.Name,
+		projectName:   project.Name,
+		projectPath:   project.Path,
+	}
+	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+	extractor := trace.NewRegexExtractor()
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
+	if err := symbolStore.Load(ctx); err != nil {
+		log.Printf("Warning: failed to load symbol index for %s: %v", project.Path, err)
+	}
+
+	tracedLanguages := projectCfg.Trace.EnabledLanguages
+	if len(tracedLanguages) == 0 {
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+	}
+
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild)
+	if err != nil {
+		_ = symbolStore.Close()
+		return nil, nil, err
+	}
+	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
+		projectCfg.Watch.LastIndexTime = time.Now()
+		if err := projectCfg.Save(project.Path); err != nil {
+			log.Printf("Warning: failed to save config for %s: %v", project.Name, err)
+		}
+	}
+
+	var rpgStore rpg.RPGStore
+	var rpgIndexer *rpg.RPGIndexer
+	var manager *rpgRealtimeManager
+	if projectCfg.RPG.Enabled {
+		rpgStore = rpg.NewGOBRPGStore(config.GetRPGIndexPath(project.Path))
+		if err := rpgStore.Load(ctx); err != nil {
+			log.Printf("Warning: failed to load RPG index for %s: %v", project.Path, err)
+		}
+
+		var featureExtractor rpg.FeatureExtractor
+		switch projectCfg.RPG.FeatureMode {
+		case "llm", "hybrid":
+			if projectCfg.RPG.LLMEndpoint == "" || projectCfg.RPG.LLMModel == "" {
+				log.Printf("Warning: RPG feature_mode=%q but llm_endpoint or llm_model is empty for %s, falling back to local extractor", projectCfg.RPG.FeatureMode, project.Path)
+				featureExtractor = rpg.NewLocalExtractor()
+			} else {
+				featureExtractor = rpg.NewLLMExtractor(rpg.LLMExtractorConfig{
+					Provider: projectCfg.RPG.LLMProvider,
+					Model:    projectCfg.RPG.LLMModel,
+					Endpoint: projectCfg.RPG.LLMEndpoint,
+					APIKey:   projectCfg.RPG.LLMAPIKey,
+					Timeout:  time.Duration(projectCfg.RPG.LLMTimeoutMs) * time.Millisecond,
+				})
+			}
+		default:
+			featureExtractor = rpg.NewLocalExtractor()
+		}
+
+		rpgIndexer = rpg.NewRPGIndexer(rpgStore, featureExtractor, project.Path, rpg.RPGIndexerConfig{
+			DriftThreshold:       projectCfg.RPG.DriftThreshold,
+			MaxTraversalDepth:    projectCfg.RPG.MaxTraversalDepth,
+			FeatureGroupStrategy: projectCfg.RPG.FeatureGroupStrategy,
+		})
+		if err := rpgIndexer.BuildFull(ctx, symbolStore, vectorStore); err != nil {
+			log.Printf("Warning: failed to build RPG graph for %s: %v", project.Path, err)
+		}
+		if err := rpgStore.Persist(ctx); err != nil {
+			log.Printf("Warning: failed to persist RPG graph for %s: %v", project.Path, err)
+		}
+
+		manager = newRPGRealtimeManager(projectCfg.Watch.RPGMaxDirtyFilesPerBatch)
+		startRPGRealtimeWorkers(ctx, fmt.Sprintf("workspace:%s/%s", ws.Name, project.Name), symbolStore, rpgIndexer, rpgStore, projectCfg.Watch, manager)
+	}
+
+	w, err := watcher.NewWatcher(project.Path, ignoreMatcher, projectCfg.Watch.DebounceMs)
+	if err != nil {
+		if rpgStore != nil {
+			_ = rpgStore.Close()
+		}
+		_ = symbolStore.Close()
+		return nil, nil, fmt.Errorf("failed to create watcher: %w", err)
+	}
+	if err := w.Start(ctx); err != nil {
+		w.Close()
+		if rpgStore != nil {
+			_ = rpgStore.Close()
+		}
+		_ = symbolStore.Close()
+		return nil, nil, fmt.Errorf("failed to start watcher: %w", err)
+	}
+
+	runtime := &workspaceProjectRuntime{
+		project:         project,
+		cfg:             projectCfg,
+		idx:             idx,
+		scanner:         scanner,
+		extractor:       extractor,
+		symbolStore:     symbolStore,
+		rpgIndexer:      rpgIndexer,
+		rpgStore:        rpgStore,
+		vectorStore:     vectorStore,
+		tracedLanguages: tracedLanguages,
+		manager:         manager,
+		watcher:         w,
+	}
+	return runtime, w, nil
 }
 
 func initializeWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.VectorStore, error) {
@@ -1557,6 +1982,7 @@ func initializeWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.
 	}
 }
 
+//nolint:unused // Kept for compatibility with older workspace indexing flow.
 func indexWorkspaceProject(ctx context.Context, project config.ProjectEntry, ws *config.Workspace, emb embedder.Embedder, st store.VectorStore, isBackgroundChild bool) error {
 	// Load project-specific config or use defaults
 	projectCfg := config.DefaultConfig()

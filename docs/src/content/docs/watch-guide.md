@@ -137,17 +137,13 @@ See [Call Graph Analysis](/grepai/trace/) for more details.
 Configure watcher behavior in `.grepai/config.yaml`:
 
 ```yaml
-# Chunking parameters
-chunking:
-  size: 512      # Tokens per chunk
-  overlap: 50    # Overlap for context
-
-# Additional ignore patterns
-scanner:
-  ignore:
-    - "*.generated.go"
-    - "dist/"
-    - "build/"
+# Event debounce
+watch:
+  debounce_ms: 500
+  rpg_derived_debounce_ms: 300
+  rpg_persist_interval_ms: 1000
+  rpg_full_reconcile_interval_sec: 300
+  rpg_max_dirty_files_per_batch: 128
 ```
 
 ### Persistence

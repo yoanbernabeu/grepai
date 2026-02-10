@@ -24,6 +24,12 @@ const (
 	DefaultRPGLLMTimeoutMs         = 8000
 	DefaultRPGFeatureMode          = "local"
 	DefaultRPGFeatureGroupStrategy = "sample"
+
+	// Watch defaults for RPG realtime updates.
+	DefaultWatchRPGPersistIntervalMs      = 1000
+	DefaultWatchRPGDerivedDebounceMs      = 300
+	DefaultWatchRPGFullReconcileIntervalS = 300
+	DefaultWatchRPGMaxDirtyFilesPerBatch  = 128
 )
 
 type Config struct {
@@ -114,8 +120,12 @@ type ChunkingConfig struct {
 }
 
 type WatchConfig struct {
-	DebounceMs    int       `yaml:"debounce_ms"`
-	LastIndexTime time.Time `yaml:"last_index_time,omitempty"`
+	DebounceMs                  int       `yaml:"debounce_ms"`
+	LastIndexTime               time.Time `yaml:"last_index_time,omitempty"`
+	RPGPersistIntervalMs        int       `yaml:"rpg_persist_interval_ms,omitempty"`
+	RPGDerivedDebounceMs        int       `yaml:"rpg_derived_debounce_ms,omitempty"`
+	RPGFullReconcileIntervalSec int       `yaml:"rpg_full_reconcile_interval_sec,omitempty"`
+	RPGMaxDirtyFilesPerBatch    int       `yaml:"rpg_max_dirty_files_per_batch,omitempty"`
 }
 
 type TraceConfig struct {
@@ -161,6 +171,23 @@ func ValidateRPGConfig(cfg RPGConfig) error {
 	return nil
 }
 
+// ValidateWatchConfig checks watch configuration values for validity.
+func ValidateWatchConfig(cfg WatchConfig) error {
+	if cfg.RPGPersistIntervalMs < 200 {
+		return fmt.Errorf("watch.rpg_persist_interval_ms must be >= 200, got %d", cfg.RPGPersistIntervalMs)
+	}
+	if cfg.RPGDerivedDebounceMs < 100 {
+		return fmt.Errorf("watch.rpg_derived_debounce_ms must be >= 100, got %d", cfg.RPGDerivedDebounceMs)
+	}
+	if cfg.RPGFullReconcileIntervalSec < 30 {
+		return fmt.Errorf("watch.rpg_full_reconcile_interval_sec must be >= 30, got %d", cfg.RPGFullReconcileIntervalSec)
+	}
+	if cfg.RPGMaxDirtyFilesPerBatch < 1 {
+		return fmt.Errorf("watch.rpg_max_dirty_files_per_batch must be >= 1, got %d", cfg.RPGMaxDirtyFilesPerBatch)
+	}
+	return nil
+}
+
 func DefaultConfig() *Config {
 	defaultDim := 768
 	return &Config{
@@ -180,7 +207,11 @@ func DefaultConfig() *Config {
 			Overlap: 50,
 		},
 		Watch: WatchConfig{
-			DebounceMs: 500,
+			DebounceMs:                  500,
+			RPGPersistIntervalMs:        DefaultWatchRPGPersistIntervalMs,
+			RPGDerivedDebounceMs:        DefaultWatchRPGDerivedDebounceMs,
+			RPGFullReconcileIntervalSec: DefaultWatchRPGFullReconcileIntervalS,
+			RPGMaxDirtyFilesPerBatch:    DefaultWatchRPGMaxDirtyFilesPerBatch,
 		},
 		Search: SearchConfig{
 			Hybrid: HybridConfig{
@@ -309,6 +340,11 @@ func Load(projectRoot string) (*Config, error) {
 	cfg.applyDefaults()
 
 	// Validate RPG config when enabled
+	if err := ValidateWatchConfig(cfg.Watch); err != nil {
+		return nil, fmt.Errorf("invalid watch configuration: %w", err)
+	}
+
+	// Validate RPG config when enabled
 	if cfg.RPG.Enabled {
 		if err := ValidateRPGConfig(cfg.RPG); err != nil {
 			return nil, fmt.Errorf("invalid RPG configuration: %w", err)
@@ -367,6 +403,18 @@ func (c *Config) applyDefaults() {
 	// Watch defaults
 	if c.Watch.DebounceMs == 0 {
 		c.Watch.DebounceMs = defaults.Watch.DebounceMs
+	}
+	if c.Watch.RPGPersistIntervalMs == 0 {
+		c.Watch.RPGPersistIntervalMs = defaults.Watch.RPGPersistIntervalMs
+	}
+	if c.Watch.RPGDerivedDebounceMs == 0 {
+		c.Watch.RPGDerivedDebounceMs = defaults.Watch.RPGDerivedDebounceMs
+	}
+	if c.Watch.RPGFullReconcileIntervalSec == 0 {
+		c.Watch.RPGFullReconcileIntervalSec = defaults.Watch.RPGFullReconcileIntervalSec
+	}
+	if c.Watch.RPGMaxDirtyFilesPerBatch == 0 {
+		c.Watch.RPGMaxDirtyFilesPerBatch = defaults.Watch.RPGMaxDirtyFilesPerBatch
 	}
 
 	// Qdrant defaults
