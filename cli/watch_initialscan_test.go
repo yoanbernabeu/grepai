@@ -319,7 +319,7 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 		},
 	}
 
-	handleWorkspaceFileEvent(ctx, ws, emb, st, watcher.FileEvent{
+	handleWorkspaceFileEvent(ctx, ws.Projects[0], ws, emb, st, nil, nil, watcher.FileEvent{
 		Type: watcher.EventModify,
 		Path: "proj/main.go",
 	})

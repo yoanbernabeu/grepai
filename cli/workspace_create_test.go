@@ -163,7 +163,7 @@ func TestIntegration_WorkspaceCreateAndMCPResolve(t *testing.T) {
 	defer cleanup()
 
 	// Step 1: Create workspace non-interactively
-	ws, err := buildWorkspaceFromFlags("orbix", "qdrant", "ollama", "nomic-embed-text", "", "", "http://localhost", 6334, "", false)
+	ws, err := buildWorkspaceFromFlags("test", "qdrant", "ollama", "nomic-embed-text", "", "", "http://localhost", 6334, "", false)
 	if err != nil {
 		t.Fatalf("buildWorkspaceFromFlags: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestIntegration_WorkspaceCreateAndMCPResolve(t *testing.T) {
 	// Step 2: Add a project
 	projectDir := filepath.Join(tmpDir, "myproject")
 	os.MkdirAll(projectDir, 0755)
-	cfg.AddProject("orbix", config.ProjectEntry{
+	cfg.AddProject("test", config.ProjectEntry{
 		Name: "myproject",
 		Path: projectDir,
 	})
@@ -192,8 +192,8 @@ func TestIntegration_WorkspaceCreateAndMCPResolve(t *testing.T) {
 	if foundWs == nil {
 		t.Fatal("expected workspace, got nil")
 	}
-	if name != "orbix" {
-		t.Errorf("expected orbix, got %s", name)
+	if name != "test" {
+		t.Errorf("expected test, got %s", name)
 	}
 
 	// Step 4: Verify subdirectory also matches
@@ -206,17 +206,17 @@ func TestIntegration_WorkspaceCreateAndMCPResolve(t *testing.T) {
 	if foundWs == nil {
 		t.Fatal("expected workspace for subdir, got nil")
 	}
-	if name != "orbix" {
-		t.Errorf("expected orbix for subdir, got %s", name)
+	if name != "test" {
+		t.Errorf("expected test for subdir, got %s", name)
 	}
 
 	// Step 5: Verify MCP resolution with --workspace
-	projectRoot, wsName, err := resolveMCPTarget("", "orbix")
+	projectRoot, wsName, err := resolveMCPTarget("", "test")
 	if err != nil {
 		t.Fatalf("resolveMCPTarget --workspace: %v", err)
 	}
-	if wsName != "orbix" {
-		t.Errorf("expected workspace orbix, got %s", wsName)
+	if wsName != "test" {
+		t.Errorf("expected workspace test, got %s", wsName)
 	}
 	_ = projectRoot
 }

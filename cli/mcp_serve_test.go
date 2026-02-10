@@ -17,7 +17,7 @@ func TestResolveMCPWorkspace(t *testing.T) {
 
 		cfg := config.DefaultWorkspaceConfig()
 		cfg.AddWorkspace(config.Workspace{
-			Name:  "orbix",
+			Name:  "test",
 			Store: config.StoreConfig{Backend: "qdrant"},
 			Embedder: config.EmbedderConfig{
 				Provider: "ollama",
@@ -29,12 +29,12 @@ func TestResolveMCPWorkspace(t *testing.T) {
 		})
 		config.SaveWorkspaceConfig(cfg)
 
-		projectRoot, wsName, err := resolveMCPTarget("", "orbix")
+		projectRoot, wsName, err := resolveMCPTarget("", "test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if wsName != "orbix" {
-			t.Errorf("expected workspace orbix, got %s", wsName)
+		if wsName != "test" {
+			t.Errorf("expected workspace test, got %s", wsName)
 		}
 		_ = projectRoot
 	})

@@ -667,18 +667,6 @@ func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder
 		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
 	}
 
-	// Write ready file before indexing so background daemon signals readiness immediately
-	if isBackgroundChild {
-		if err := daemon.WriteReadyFile(logDir); err != nil {
-			return fmt.Errorf("failed to write ready file: %w", err)
-		}
-		defer func() {
-			if err := daemon.RemoveReadyFile(logDir); err != nil {
-				log.Printf("Warning: failed to remove ready file on exit: %v", err)
-			}
-		}()
-	}
-
 	// Run initial scan and build symbol index.
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
 	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild)
