@@ -1779,7 +1779,7 @@ func (p *projectPrefixStore) ListFilesWithStats(ctx context.Context) ([]store.Fi
 func (p *projectPrefixStore) GetChunksForFile(ctx context.Context, filePath string) ([]store.Chunk, error) {
 	relPath, err := filepath.Rel(p.projectPath, filePath)
 	if err == nil {
-		filePath = p.getPrefix() + "/" + relPath
+		filePath = p.getPrefix() + "/" + filepath.ToSlash(relPath)
 	}
 	return p.store.GetChunksForFile(ctx, filePath)
 }
