@@ -204,7 +204,7 @@ var phpPatterns = &LanguagePatterns{
 var languageKeywords = map[string]map[string]bool{
 	"go": {
 		"if": true, "for": true, "range": true, "switch": true, "select": true,
-		"go": true, "defer": true, "return": true, "make": true, "new": true,
+		"go": true, "defer": true, "return": true, "func": true, "make": true, "new": true,
 		"append": true, "len": true, "cap": true, "panic": true, "recover": true,
 		"close": true, "delete": true, "copy": true, "print": true, "println": true,
 		"complex": true, "real": true, "imag": true,

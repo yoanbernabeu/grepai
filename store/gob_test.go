@@ -158,6 +158,20 @@ func TestGOBStore_PersistAndLoad(t *testing.T) {
 	}
 }
 
+func TestGOBStore_PersistCreatesMissingParentDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "missing", ".grepai", "index.gob")
+
+	s := NewGOBStore(indexPath)
+	if err := s.Persist(context.Background()); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+
+	if _, err := os.Stat(indexPath); err != nil {
+		t.Fatalf("expected persisted index file at %s: %v", indexPath, err)
+	}
+}
+
 func TestGOBStore_ListDocuments(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "index.gob")

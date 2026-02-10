@@ -717,6 +717,79 @@ pub fn main() void {
 	}
 }
 
+func TestRegexExtractor_ExtractReferences_IgnoresStringAndCommentArtifacts(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `package main
+
+func helper() {}
+
+func run() {
+    fmt.Printf("RPG: enabled (%s) fakeCall()", "ok")
+    // commentCall()
+    helper()
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.go", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRefs := make(map[string]bool)
+	for _, ref := range refs {
+		foundRefs[ref.SymbolName] = true
+	}
+
+	if !foundRefs["helper"] {
+		t.Error("missing reference to helper")
+	}
+	if foundRefs["enabled"] {
+		t.Error("unexpected string artifact reference: enabled")
+	}
+	if foundRefs["s"] {
+		t.Error("unexpected format placeholder artifact reference: s")
+	}
+	if foundRefs["fakeCall"] {
+		t.Error("unexpected string artifact reference: fakeCall")
+	}
+	if foundRefs["commentCall"] {
+		t.Error("unexpected comment artifact reference: commentCall")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_IgnoresAnonFuncDeclarationArtifact(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `package main
+
+func helper() {}
+
+func run() {
+    go func() {
+        helper()
+    }()
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.go", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRefs := make(map[string]bool)
+	for _, ref := range refs {
+		foundRefs[ref.SymbolName] = true
+	}
+
+	if !foundRefs["helper"] {
+		t.Error("missing reference to helper")
+	}
+	if foundRefs["func"] {
+		t.Error("unexpected anonymous function declaration artifact: func")
+	}
+}
+
 func TestIsKeyword(t *testing.T) {
 	tests := []struct {
 		name     string

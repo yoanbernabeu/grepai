@@ -149,6 +149,7 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 
 	var refs []Reference
 	lines := strings.Split(content, "\n")
+	ignored := buildIgnoredMask(content)
 
 	// Build function boundaries for caller detection
 	functionBoundaries := e.buildFunctionBoundaries(content, patterns)
@@ -158,6 +159,9 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 		matches := patterns.FunctionCall.FindAllStringSubmatchIndex(content, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
+				if ignored[match[2]] {
+					continue
+				}
 				name := content[match[2]:match[3]]
 
 				// Skip keywords
@@ -187,6 +191,9 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 		matches := patterns.MethodCall.FindAllStringSubmatchIndex(content, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
+				if ignored[match[2]] {
+					continue
+				}
 				name := content[match[2]:match[3]]
 				pos := match[0]
 				line := countLines(content[:pos]) + 1
@@ -206,6 +213,106 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 	}
 
 	return refs, nil
+}
+
+// buildIgnoredMask marks bytes inside strings and comments.
+// Regex-based call extraction uses this mask to skip obvious artifacts.
+func buildIgnoredMask(content string) []bool {
+	mask := make([]bool, len(content))
+	const (
+		stateNormal = iota
+		stateLineComment
+		stateBlockComment
+		stateSingleQuote
+		stateDoubleQuote
+		stateBacktick
+	)
+
+	state := stateNormal
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+		next := byte(0)
+		if i+1 < len(content) {
+			next = content[i+1]
+		}
+
+		switch state {
+		case stateLineComment:
+			mask[i] = true
+			if ch == '\n' {
+				state = stateNormal
+			}
+			continue
+		case stateBlockComment:
+			mask[i] = true
+			if ch == '*' && next == '/' {
+				mask[i+1] = true
+				i++
+				state = stateNormal
+			}
+			continue
+		case stateSingleQuote:
+			mask[i] = true
+			if ch == '\\' && i+1 < len(content) {
+				mask[i+1] = true
+				i++
+				continue
+			}
+			if ch == '\'' {
+				state = stateNormal
+			}
+			continue
+		case stateDoubleQuote:
+			mask[i] = true
+			if ch == '\\' && i+1 < len(content) {
+				mask[i+1] = true
+				i++
+				continue
+			}
+			if ch == '"' {
+				state = stateNormal
+			}
+			continue
+		case stateBacktick:
+			mask[i] = true
+			if ch == '`' {
+				state = stateNormal
+			}
+			continue
+		}
+
+		if ch == '/' && next == '/' {
+			mask[i] = true
+			mask[i+1] = true
+			i++
+			state = stateLineComment
+			continue
+		}
+		if ch == '/' && next == '*' {
+			mask[i] = true
+			mask[i+1] = true
+			i++
+			state = stateBlockComment
+			continue
+		}
+		if ch == '\'' {
+			mask[i] = true
+			state = stateSingleQuote
+			continue
+		}
+		if ch == '"' {
+			mask[i] = true
+			state = stateDoubleQuote
+			continue
+		}
+		if ch == '`' {
+			mask[i] = true
+			state = stateBacktick
+			continue
+		}
+	}
+
+	return mask
 }
 
 // ExtractAll extracts both symbols and references in one pass.
