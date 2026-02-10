@@ -10,6 +10,7 @@ import (
 	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
@@ -159,6 +160,12 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// Enrich with RPG feature paths
+	cfg, _ := config.Load(projectRoot)
+	if cfg != nil {
+		enrichTraceWithRPG(projectRoot, cfg, &result)
+	}
+
 	if traceJSON {
 		return outputJSON(result)
 	}
@@ -238,6 +245,12 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// Enrich with RPG feature paths
+	cfg, _ := config.Load(projectRoot)
+	if cfg != nil {
+		enrichTraceWithRPG(projectRoot, cfg, &result)
+	}
+
 	if traceJSON {
 		return outputJSON(result)
 	}
@@ -280,6 +293,12 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		Graph: graph,
 	}
 
+	// Enrich with RPG feature paths
+	cfg, _ := config.Load(projectRoot)
+	if cfg != nil {
+		enrichTraceWithRPG(projectRoot, cfg, &result)
+	}
+
 	if traceJSON {
 		return outputJSON(result)
 	}
@@ -288,6 +307,62 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 	}
 
 	return displayGraphResult(result)
+}
+
+// enrichTraceWithRPG enriches all symbols in a TraceResult with RPG feature paths.
+func enrichTraceWithRPG(projectRoot string, cfg *config.Config, result *trace.TraceResult) {
+	if !cfg.RPG.Enabled {
+		return
+	}
+
+	ctx := context.Background()
+	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
+	if err := rpgStore.Load(ctx); err != nil {
+		return // best-effort
+	}
+	defer rpgStore.Close()
+
+	graph := rpgStore.GetGraph()
+	qe := rpg.NewQueryEngine(graph)
+
+	lookupFeaturePath := func(sym *trace.Symbol) {
+		if sym == nil || sym.File == "" {
+			return
+		}
+		nodes := graph.GetNodesByFile(sym.File)
+		for _, n := range nodes {
+			if n.Kind == rpg.KindSymbol && n.SymbolName == sym.Name {
+				fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: n.ID})
+				if err == nil && fetchResult != nil {
+					sym.FeaturePath = fetchResult.FeaturePath
+				}
+				return
+			}
+		}
+	}
+
+	// Enrich the main symbol
+	if result.Symbol != nil {
+		lookupFeaturePath(result.Symbol)
+	}
+
+	// Enrich callers
+	for i := range result.Callers {
+		lookupFeaturePath(&result.Callers[i].Symbol)
+	}
+
+	// Enrich callees
+	for i := range result.Callees {
+		lookupFeaturePath(&result.Callees[i].Symbol)
+	}
+
+	// Enrich graph nodes
+	if result.Graph != nil {
+		for name, sym := range result.Graph.Nodes {
+			lookupFeaturePath(&sym)
+			result.Graph.Nodes[name] = sym
+		}
+	}
 }
 
 func outputJSON(result trace.TraceResult) error {
@@ -308,6 +383,9 @@ func outputTOON(result trace.TraceResult) error {
 func displayCallersResult(result trace.TraceResult) error {
 	fmt.Printf("Symbol: %s (%s)\n", result.Symbol.Name, result.Symbol.Kind)
 	fmt.Printf("File: %s:%d\n", result.Symbol.File, result.Symbol.Line)
+	if result.Symbol.FeaturePath != "" {
+		fmt.Printf("Feature: %s\n", result.Symbol.FeaturePath)
+	}
 	fmt.Printf("\nCallers (%d):\n", len(result.Callers))
 	fmt.Println(strings.Repeat("-", 60))
 
@@ -321,6 +399,9 @@ func displayCallersResult(result trace.TraceResult) error {
 		if caller.Symbol.File != "" {
 			fmt.Printf("   Defined: %s:%d\n", caller.Symbol.File, caller.Symbol.Line)
 		}
+		if caller.Symbol.FeaturePath != "" {
+			fmt.Printf("   Feature: %s\n", caller.Symbol.FeaturePath)
+		}
 		fmt.Printf("   Calls at: %s:%d\n", caller.CallSite.File, caller.CallSite.Line)
 		if caller.CallSite.Context != "" {
 			fmt.Printf("   Context: %s\n", truncate(caller.CallSite.Context, 80))
@@ -333,6 +414,9 @@ func displayCallersResult(result trace.TraceResult) error {
 func displayCalleesResult(result trace.TraceResult) error {
 	fmt.Printf("Symbol: %s (%s)\n", result.Symbol.Name, result.Symbol.Kind)
 	fmt.Printf("File: %s:%d\n", result.Symbol.File, result.Symbol.Line)
+	if result.Symbol.FeaturePath != "" {
+		fmt.Printf("Feature: %s\n", result.Symbol.FeaturePath)
+	}
 	fmt.Printf("\nCallees (%d):\n", len(result.Callees))
 	fmt.Println(strings.Repeat("-", 60))
 
@@ -346,6 +430,9 @@ func displayCalleesResult(result trace.TraceResult) error {
 		if callee.Symbol.File != "" {
 			fmt.Printf("   Defined: %s:%d\n", callee.Symbol.File, callee.Symbol.Line)
 		}
+		if callee.Symbol.FeaturePath != "" {
+			fmt.Printf("   Feature: %s\n", callee.Symbol.FeaturePath)
+		}
 		fmt.Printf("   Called at: %s:%d\n", callee.CallSite.File, callee.CallSite.Line)
 	}
 
@@ -358,7 +445,11 @@ func displayGraphResult(result trace.TraceResult) error {
 
 	fmt.Printf("\nNodes (%d):\n", len(result.Graph.Nodes))
 	for name, sym := range result.Graph.Nodes {
-		fmt.Printf("  - %s (%s) @ %s:%d\n", name, sym.Kind, sym.File, sym.Line)
+		if sym.FeaturePath != "" {
+			fmt.Printf("  - %s (%s) @ %s:%d [%s]\n", name, sym.Kind, sym.File, sym.Line, sym.FeaturePath)
+		} else {
+			fmt.Printf("  - %s (%s) @ %s:%d\n", name, sym.Kind, sym.File, sym.Line)
+		}
 	}
 
 	fmt.Printf("\nEdges (%d):\n", len(result.Graph.Edges))

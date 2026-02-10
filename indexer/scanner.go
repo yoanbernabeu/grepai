@@ -105,6 +105,12 @@ type FileInfo struct {
 	Content string
 }
 
+type FileMeta struct {
+	Path    string
+	Size    int64
+	ModTime int64
+}
+
 type Scanner struct {
 	root   string
 	ignore *IgnoreMatcher
@@ -115,6 +121,69 @@ func NewScanner(root string, ignore *IgnoreMatcher) *Scanner {
 		root:   root,
 		ignore: ignore,
 	}
+}
+
+// ScanMetadata scans indexable files and returns only file metadata.
+// It avoids reading file contents and hash computation for a faster first pass.
+func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
+	var files []FileMeta
+	var skipped []string
+
+	err := filepath.WalkDir(s.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip files we can't access
+		}
+
+		relPath, err := filepath.Rel(s.root, path)
+		if err != nil {
+			return nil
+		}
+
+		// Skip ignored paths
+		if s.ignore.ShouldIgnore(relPath) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		// Check extension
+		ext := strings.ToLower(filepath.Ext(path))
+		if !SupportedExtensions[ext] {
+			return nil
+		}
+
+		// Skip minified files
+		if isMinifiedFile(relPath) {
+			skipped = append(skipped, relPath+" (minified)")
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		// Skip large files
+		if info.Size() > maxFileSize {
+			skipped = append(skipped, relPath+" (too large)")
+			return nil
+		}
+
+		files = append(files, FileMeta{
+			Path:    relPath,
+			Size:    info.Size(),
+			ModTime: info.ModTime().Unix(),
+		})
+
+		return nil
+	})
+
+	return files, skipped, err
 }
 
 func (s *Scanner) Scan() ([]FileInfo, []string, error) {

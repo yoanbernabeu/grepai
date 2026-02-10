@@ -45,6 +45,18 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Watch.DebounceMs != 500 {
 		t.Errorf("expected debounce 500ms, got %d", cfg.Watch.DebounceMs)
 	}
+	if cfg.Watch.RPGPersistIntervalMs != DefaultWatchRPGPersistIntervalMs {
+		t.Errorf("expected watch.rpg_persist_interval_ms=%d, got %d", DefaultWatchRPGPersistIntervalMs, cfg.Watch.RPGPersistIntervalMs)
+	}
+	if cfg.Watch.RPGDerivedDebounceMs != DefaultWatchRPGDerivedDebounceMs {
+		t.Errorf("expected watch.rpg_derived_debounce_ms=%d, got %d", DefaultWatchRPGDerivedDebounceMs, cfg.Watch.RPGDerivedDebounceMs)
+	}
+	if cfg.Watch.RPGFullReconcileIntervalSec != DefaultWatchRPGFullReconcileIntervalS {
+		t.Errorf("expected watch.rpg_full_reconcile_interval_sec=%d, got %d", DefaultWatchRPGFullReconcileIntervalS, cfg.Watch.RPGFullReconcileIntervalSec)
+	}
+	if cfg.Watch.RPGMaxDirtyFilesPerBatch != DefaultWatchRPGMaxDirtyFilesPerBatch {
+		t.Errorf("expected watch.rpg_max_dirty_files_per_batch=%d, got %d", DefaultWatchRPGMaxDirtyFilesPerBatch, cfg.Watch.RPGMaxDirtyFilesPerBatch)
+	}
 }
 
 func TestConfigSaveAndLoad(t *testing.T) {
@@ -481,6 +493,128 @@ store:
 			// GetDimensions() should always return the expected value
 			if loaded.Embedder.GetDimensions() != tt.expectedDimensions {
 				t.Errorf("GetDimensions() expected %d, got %d", tt.expectedDimensions, loaded.Embedder.GetDimensions())
+			}
+		})
+	}
+}
+
+func TestValidateRPGConfig_FeatureGroupStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy string
+		wantErr  bool
+	}{
+		{"sample is valid", "sample", false},
+		{"split is valid", "split", false},
+		{"empty is invalid", "", true},
+		{"unknown is invalid", "random", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := RPGConfig{
+				DriftThreshold:       DefaultRPGDriftThreshold,
+				MaxTraversalDepth:    DefaultRPGMaxTraversalDepth,
+				FeatureMode:          DefaultRPGFeatureMode,
+				FeatureGroupStrategy: tt.strategy,
+			}
+			err := ValidateRPGConfig(cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateRPGConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestApplyDefaults_FeatureGroupStrategy(t *testing.T) {
+	// When FeatureGroupStrategy is empty, applyDefaults should set it to "sample"
+	cfg := &Config{}
+	cfg.applyDefaults()
+	if cfg.RPG.FeatureGroupStrategy != DefaultRPGFeatureGroupStrategy {
+		t.Errorf("expected FeatureGroupStrategy=%q, got %q", DefaultRPGFeatureGroupStrategy, cfg.RPG.FeatureGroupStrategy)
+	}
+}
+
+func TestApplyDefaults_WatchRealtimeFields(t *testing.T) {
+	cfg := &Config{}
+	cfg.applyDefaults()
+
+	if cfg.Watch.RPGPersistIntervalMs != DefaultWatchRPGPersistIntervalMs {
+		t.Errorf("expected watch.rpg_persist_interval_ms=%d, got %d", DefaultWatchRPGPersistIntervalMs, cfg.Watch.RPGPersistIntervalMs)
+	}
+	if cfg.Watch.RPGDerivedDebounceMs != DefaultWatchRPGDerivedDebounceMs {
+		t.Errorf("expected watch.rpg_derived_debounce_ms=%d, got %d", DefaultWatchRPGDerivedDebounceMs, cfg.Watch.RPGDerivedDebounceMs)
+	}
+	if cfg.Watch.RPGFullReconcileIntervalSec != DefaultWatchRPGFullReconcileIntervalS {
+		t.Errorf("expected watch.rpg_full_reconcile_interval_sec=%d, got %d", DefaultWatchRPGFullReconcileIntervalS, cfg.Watch.RPGFullReconcileIntervalSec)
+	}
+	if cfg.Watch.RPGMaxDirtyFilesPerBatch != DefaultWatchRPGMaxDirtyFilesPerBatch {
+		t.Errorf("expected watch.rpg_max_dirty_files_per_batch=%d, got %d", DefaultWatchRPGMaxDirtyFilesPerBatch, cfg.Watch.RPGMaxDirtyFilesPerBatch)
+	}
+}
+
+func TestValidateWatchConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     WatchConfig
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			cfg: WatchConfig{
+				RPGPersistIntervalMs:        1000,
+				RPGDerivedDebounceMs:        300,
+				RPGFullReconcileIntervalSec: 300,
+				RPGMaxDirtyFilesPerBatch:    128,
+			},
+			wantErr: false,
+		},
+		{
+			name: "persist interval too low",
+			cfg: WatchConfig{
+				RPGPersistIntervalMs:        199,
+				RPGDerivedDebounceMs:        300,
+				RPGFullReconcileIntervalSec: 300,
+				RPGMaxDirtyFilesPerBatch:    128,
+			},
+			wantErr: true,
+		},
+		{
+			name: "derived debounce too low",
+			cfg: WatchConfig{
+				RPGPersistIntervalMs:        1000,
+				RPGDerivedDebounceMs:        99,
+				RPGFullReconcileIntervalSec: 300,
+				RPGMaxDirtyFilesPerBatch:    128,
+			},
+			wantErr: true,
+		},
+		{
+			name: "full reconcile interval too low",
+			cfg: WatchConfig{
+				RPGPersistIntervalMs:        1000,
+				RPGDerivedDebounceMs:        300,
+				RPGFullReconcileIntervalSec: 29,
+				RPGMaxDirtyFilesPerBatch:    128,
+			},
+			wantErr: true,
+		},
+		{
+			name: "max dirty files too low",
+			cfg: WatchConfig{
+				RPGPersistIntervalMs:        1000,
+				RPGDerivedDebounceMs:        300,
+				RPGFullReconcileIntervalSec: 300,
+				RPGMaxDirtyFilesPerBatch:    0,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateWatchConfig(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateWatchConfig() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

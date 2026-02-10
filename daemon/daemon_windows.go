@@ -6,7 +6,9 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -76,4 +78,36 @@ func lockFile(f *os.File) error {
 // On Windows, returns nil as no special process attributes are needed for background spawning.
 func sysProcAttr() *syscall.SysProcAttr {
 	return nil
+}
+
+// livenessCheck uses polling on Windows since ExtraFiles is not supported.
+// Windows doesn't have zombie processes, so IsProcessRunning is reliable.
+type livenessCheck struct{}
+
+func newLivenessCheck() (*livenessCheck, error) {
+	return &livenessCheck{}, nil
+}
+
+func (l *livenessCheck) configureCmd(cmd *exec.Cmd) {
+	// no-op: ExtraFiles not supported on Windows
+}
+
+// start polls IsProcessRunning to detect child exit.
+// Returns a channel that is closed when the child exits.
+func (l *livenessCheck) start(pid int) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		for {
+			time.Sleep(250 * time.Millisecond)
+			if !IsProcessRunning(pid) {
+				close(ch)
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func (l *livenessCheck) cleanup() {
+	// no-op
 }

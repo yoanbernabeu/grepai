@@ -4,7 +4,6 @@ package daemon
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -156,9 +155,9 @@ func IsWorkspaceReady(logDir, workspaceName string) bool {
 }
 
 // SpawnWorkspaceBackground re-executes the current binary for workspace watch in background.
-func SpawnWorkspaceBackground(logDir, workspaceName string, extraArgs []string) (int, error) {
+func SpawnWorkspaceBackground(logDir, workspaceName string, extraArgs []string) (int, <-chan struct{}, error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return 0, fmt.Errorf("failed to create log directory: %w", err)
+		return 0, nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
 	// Build args for background process
@@ -169,31 +168,4 @@ func SpawnWorkspaceBackground(logDir, workspaceName string, extraArgs []string) 
 	logPath := GetWorkspaceLogFile(logDir, workspaceName)
 
 	return spawnBackgroundWithLog(logDir, logPath, args)
-}
-
-// spawnBackgroundWithLog spawns a background process with a custom log file.
-func spawnBackgroundWithLog(logDir, logPath string, args []string) (int, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open log file: %w", err)
-	}
-	defer logFile.Close()
-
-	cmd := exec.Command(executable, args...)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.Stdin = nil
-	cmd.Env = append(os.Environ(), "GREPAI_BACKGROUND=1")
-	cmd.SysProcAttr = sysProcAttr()
-
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("failed to start background process: %w", err)
-	}
-
-	return cmd.Process.Pid, nil
 }
