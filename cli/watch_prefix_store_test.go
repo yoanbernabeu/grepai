@@ -137,7 +137,7 @@ func TestProjectPrefixStore_SaveChunks(t *testing.T) {
 		t.Fatalf("saved chunk count = %d, want 3", len(mock.savedChunks))
 	}
 
-	expectedPrefixedRel := wrapped.getPrefix() + "/" + relPath
+	expectedPrefixedRel := wrapped.getPrefix() + "/" + filepath.ToSlash(relPath)
 	if mock.savedChunks[0].FilePath != expectedPrefixedRel {
 		t.Errorf("chunk0 path = %q, want %q", mock.savedChunks[0].FilePath, expectedPrefixedRel)
 	}
@@ -149,7 +149,7 @@ func TestProjectPrefixStore_SaveChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filepath.Rel failed: %v", err)
 	}
-	expectedPrefixedAbs := wrapped.getPrefix() + "/" + absRel
+	expectedPrefixedAbs := wrapped.getPrefix() + "/" + filepath.ToSlash(absRel)
 	if mock.savedChunks[1].FilePath != expectedPrefixedAbs {
 		t.Errorf("chunk1 path = %q, want %q", mock.savedChunks[1].FilePath, expectedPrefixedAbs)
 	}
@@ -179,7 +179,7 @@ func TestProjectPrefixStore_PathMappedMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filepath.Rel failed: %v", err)
 	}
-	prefixed := wrapped.getPrefix() + "/" + rel
+	prefixed := wrapped.getPrefix() + "/" + filepath.ToSlash(rel)
 
 	if err := wrapped.DeleteByFile(ctx, abs); err != nil {
 		t.Fatalf("DeleteByFile(abs) failed: %v", err)
@@ -265,7 +265,7 @@ func TestProjectPrefixStore_PassThroughAndGetChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filepath.Rel failed: %v", err)
 	}
-	wantPrefixed := wrapped.getPrefix() + "/" + rel
+	wantPrefixed := wrapped.getPrefix() + "/" + filepath.ToSlash(rel)
 	if _, err := wrapped.GetChunksForFile(ctx, abs); err != nil {
 		t.Fatalf("GetChunksForFile(abs) failed: %v", err)
 	}
