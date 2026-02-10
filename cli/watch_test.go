@@ -349,6 +349,59 @@ func TestStopWatchDaemon_WaitForShutdown(t *testing.T) {
 	}
 }
 
+func TestIsTracedLanguage_should_match_known_extensions(t *testing.T) {
+	langs := []string{".go", ".js", ".ts", ".py"}
+
+	if !isTracedLanguage(".go", langs) {
+		t.Error("expected .go to be traced")
+	}
+	if !isTracedLanguage(".py", langs) {
+		t.Error("expected .py to be traced")
+	}
+	if isTracedLanguage(".rs", langs) {
+		t.Error("expected .rs to NOT be traced")
+	}
+	if isTracedLanguage("", langs) {
+		t.Error("expected empty string to NOT be traced")
+	}
+}
+
+func TestIsTracedLanguage_should_return_false_for_empty_list(t *testing.T) {
+	if isTracedLanguage(".go", nil) {
+		t.Error("expected false for nil languages list")
+	}
+	if isTracedLanguage(".go", []string{}) {
+		t.Error("expected false for empty languages list")
+	}
+}
+
+func TestStopWorkspaceWatchDaemon_should_handle_not_running(t *testing.T) {
+	logDir := t.TempDir()
+	err := stopWorkspaceWatchDaemon(logDir, "test-ws")
+	if err != nil {
+		t.Fatalf("stopWorkspaceWatchDaemon() failed: %v", err)
+	}
+}
+
+func TestStopWorkspaceWatchDaemon_should_handle_stale_pid(t *testing.T) {
+	logDir := t.TempDir()
+	pidPath := daemon.GetWorkspacePIDFile(logDir, "test-ws")
+	if err := os.WriteFile(pidPath, []byte("9999997\n"), 0644); err != nil {
+		t.Fatalf("failed to write PID file: %v", err)
+	}
+
+	start := time.Now()
+	err := stopWorkspaceWatchDaemon(logDir, "test-ws")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("stopWorkspaceWatchDaemon() failed: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("stopWorkspaceWatchDaemon() took too long: %v", elapsed)
+	}
+}
+
 func TestProjectFileEvent_should_carry_project_context(t *testing.T) {
 	evt := projectFileEvent{
 		FileEvent: watcher.FileEvent{
