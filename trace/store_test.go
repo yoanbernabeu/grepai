@@ -2,7 +2,6 @@ package trace
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -83,19 +82,5 @@ func TestGOBSymbolStore_SaveFileClearsHashForBackwardCompatibility(t *testing.T)
 
 	if _, ok := store.GetFileContentHash("main.go"); ok {
 		t.Fatal("expected SaveFile without hash to clear stored hash")
-	}
-}
-
-func TestGOBSymbolStore_PersistCreatesMissingParentDir(t *testing.T) {
-	ctx := context.Background()
-	indexPath := filepath.Join(t.TempDir(), "missing", ".grepai", "symbols.gob")
-
-	store := NewGOBSymbolStore(indexPath)
-	if err := store.Persist(ctx); err != nil {
-		t.Fatalf("Persist failed: %v", err)
-	}
-
-	if _, err := os.Stat(indexPath); err != nil {
-		t.Fatalf("expected persisted symbol index file at %s: %v", indexPath, err)
 	}
 }

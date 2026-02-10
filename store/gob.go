@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -184,10 +183,6 @@ func (s *GOBStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := ensureParentDir(s.indexPath); err != nil {
-		return fmt.Errorf("failed to prepare index directory: %w", err)
-	}
-
 	// Acquire exclusive (write) file lock for cross-process safety
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -226,13 +221,6 @@ func (s *GOBStore) persistUnlocked() error {
 	}
 
 	return nil
-}
-
-// ensureParentDir creates parent directories if missing.
-// Duplicated in trace/ and rpg/ to avoid cross-package dependency for a trivial helper.
-func ensureParentDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0755)
 }
 
 func (s *GOBStore) Close() error {
