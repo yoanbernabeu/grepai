@@ -111,7 +111,6 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	return nil
 }
 
-// ensureParentDir creates parent directories if missing.
 func ensureParentDir(filePath string) error {
 	dir := filepath.Dir(filePath)
 	return os.MkdirAll(dir, 0755)
@@ -367,6 +366,32 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 	}
 
 	return graph, nil
+}
+
+// GetSymbolsForFile returns all symbols defined in a specific file.
+func (s *GOBSymbolStore) GetSymbolsForFile(ctx context.Context, filePath string) ([]Symbol, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []Symbol
+	for _, symbols := range s.index.Symbols {
+		for _, sym := range symbols {
+			if sym.File == filePath {
+				result = append(result, sym)
+			}
+		}
+	}
+	return result, nil
+}
+
+// GetCallEdges returns all call graph edges.
+func (s *GOBSymbolStore) GetCallEdges(ctx context.Context) ([]CallEdge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	edges := make([]CallEdge, len(s.index.CallGraph))
+	copy(edges, s.index.CallGraph)
+	return edges, nil
 }
 
 // Close shuts down the store.

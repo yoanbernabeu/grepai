@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func runGit(t *testing.T, repo string, args ...string) string {
+func runGitDiscovery(t *testing.T, repo string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
 	out, err := cmd.CombinedOutput()
@@ -29,15 +29,15 @@ func setupMainRepoForWorktreeDiscovery(t *testing.T) (string, string) {
 		t.Fatalf("failed to create repo dir: %v", err)
 	}
 
-	runGit(t, mainRepo, "init")
-	runGit(t, mainRepo, "config", "user.email", "test@example.com")
-	runGit(t, mainRepo, "config", "user.name", "Test User")
+	runGitDiscovery(t, mainRepo, "init")
+	runGitDiscovery(t, mainRepo, "config", "user.email", "test@example.com")
+	runGitDiscovery(t, mainRepo, "config", "user.name", "Test User")
 
 	if err := os.WriteFile(filepath.Join(mainRepo, "README.md"), []byte("hello\n"), 0644); err != nil {
 		t.Fatalf("failed to write README: %v", err)
 	}
-	runGit(t, mainRepo, "add", "README.md")
-	runGit(t, mainRepo, "commit", "-m", "init")
+	runGitDiscovery(t, mainRepo, "add", "README.md")
+	runGitDiscovery(t, mainRepo, "commit", "-m", "init")
 
 	grepaiDir := filepath.Join(mainRepo, ".grepai")
 	if err := os.MkdirAll(grepaiDir, 0755); err != nil {
@@ -47,7 +47,7 @@ func setupMainRepoForWorktreeDiscovery(t *testing.T) (string, string) {
 		t.Fatalf("failed to write config.yaml: %v", err)
 	}
 
-	runGit(t, mainRepo, "worktree", "add", worktreePath, "-b", "feature/test-discovery")
+	runGitDiscovery(t, mainRepo, "worktree", "add", worktreePath, "-b", "feature/test-discovery")
 	return mainRepo, worktreePath
 }
 

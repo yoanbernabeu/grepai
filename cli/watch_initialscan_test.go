@@ -239,10 +239,13 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -382,10 +385,13 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -452,10 +458,13 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
 	)
 

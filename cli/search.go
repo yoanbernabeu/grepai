@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/search"
 	"github.com/yoanbernabeu/grepai/store"
 )
@@ -26,19 +27,23 @@ var (
 
 // SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
 type SearchResultJSON struct {
-	FilePath  string  `json:"file_path"`
-	StartLine int     `json:"start_line"`
-	EndLine   int     `json:"end_line"`
-	Score     float32 `json:"score"`
-	Content   string  `json:"content"`
+	FilePath    string  `json:"file_path"`
+	StartLine   int     `json:"start_line"`
+	EndLine     int     `json:"end_line"`
+	Score       float32 `json:"score"`
+	Content     string  `json:"content"`
+	FeaturePath string  `json:"feature_path,omitempty"`
+	SymbolName  string  `json:"symbol_name,omitempty"`
 }
 
 // SearchResultCompactJSON is a minimal struct for compact JSON output (no content field)
 type SearchResultCompactJSON struct {
-	FilePath  string  `json:"file_path"`
-	StartLine int     `json:"start_line"`
-	EndLine   int     `json:"end_line"`
-	Score     float32 `json:"score"`
+	FilePath    string  `json:"file_path"`
+	StartLine   int     `json:"start_line"`
+	EndLine     int     `json:"end_line"`
+	Score       float32 `json:"score"`
+	FeaturePath string  `json:"feature_path,omitempty"`
+	SymbolName  string  `json:"symbol_name,omitempty"`
 }
 
 var searchCmd = &cobra.Command{
@@ -62,6 +67,49 @@ func init() {
 	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "Workspace name for cross-project search")
 	searchCmd.Flags().StringArrayVar(&searchProjects, "project", nil, "Project name(s) to search (requires --workspace, can be repeated)")
 	searchCmd.MarkFlagsMutuallyExclusive("json", "toon")
+}
+
+// rpgEnrichment holds RPG context for a search result
+type rpgEnrichment struct {
+	FeaturePath string
+	SymbolName  string
+}
+
+// enrichWithRPG enriches search results with RPG feature paths and symbol names
+func enrichWithRPG(projectRoot string, cfg *config.Config, results []store.SearchResult) []rpgEnrichment {
+	enrichments := make([]rpgEnrichment, len(results))
+	if !cfg.RPG.Enabled {
+		return enrichments
+	}
+
+	ctx := context.Background()
+	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
+	if err := rpgStore.Load(ctx); err != nil {
+		// Silently fail - RPG enrichment is best-effort
+		return enrichments
+	}
+	defer rpgStore.Close()
+
+	graph := rpgStore.GetGraph()
+	qe := rpg.NewQueryEngine(graph)
+
+	for i, r := range results {
+		nodes := graph.GetNodesByFile(r.Chunk.FilePath)
+		for _, n := range nodes {
+			// Find symbol node that overlaps with the chunk's line range
+			if n.Kind == rpg.KindSymbol && n.StartLine <= r.Chunk.EndLine && r.Chunk.StartLine <= n.EndLine {
+				// Found overlapping symbol node
+				fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: n.ID})
+				if err == nil && fetchResult != nil {
+					enrichments[i].FeaturePath = fetchResult.FeaturePath
+					enrichments[i].SymbolName = n.SymbolName
+				}
+				break
+			}
+		}
+	}
+
+	return enrichments
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -181,20 +229,23 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
+	// Enrich results with RPG context
+	enrichments := enrichWithRPG(projectRoot, cfg, results)
+
 	// JSON output mode
 	if searchJSON {
 		if searchCompact {
-			return outputSearchCompactJSON(results)
+			return outputSearchCompactJSON(results, enrichments)
 		}
-		return outputSearchJSON(results)
+		return outputSearchJSON(results, enrichments)
 	}
 
 	// TOON output mode
 	if searchTOON {
 		if searchCompact {
-			return outputSearchCompactTOON(results)
+			return outputSearchCompactTOON(results, enrichments)
 		}
-		return outputSearchTOON(results)
+		return outputSearchTOON(results, enrichments)
 	}
 
 	if len(results) == 0 {
@@ -233,15 +284,17 @@ func runSearch(cmd *cobra.Command, args []string) error {
 }
 
 // outputSearchJSON outputs results in JSON format for AI agents
-func outputSearchJSON(results []store.SearchResult) error {
+func outputSearchJSON(results []store.SearchResult, enrichments []rpgEnrichment) error {
 	jsonResults := make([]SearchResultJSON, len(results))
 	for i, r := range results {
 		jsonResults[i] = SearchResultJSON{
-			FilePath:  r.Chunk.FilePath,
-			StartLine: r.Chunk.StartLine,
-			EndLine:   r.Chunk.EndLine,
-			Score:     r.Score,
-			Content:   r.Chunk.Content,
+			FilePath:    r.Chunk.FilePath,
+			StartLine:   r.Chunk.StartLine,
+			EndLine:     r.Chunk.EndLine,
+			Score:       r.Score,
+			Content:     r.Chunk.Content,
+			FeaturePath: enrichments[i].FeaturePath,
+			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
 
@@ -251,14 +304,16 @@ func outputSearchJSON(results []store.SearchResult) error {
 }
 
 // outputSearchCompactJSON outputs results in minimal JSON format (without content)
-func outputSearchCompactJSON(results []store.SearchResult) error {
+func outputSearchCompactJSON(results []store.SearchResult, enrichments []rpgEnrichment) error {
 	jsonResults := make([]SearchResultCompactJSON, len(results))
 	for i, r := range results {
 		jsonResults[i] = SearchResultCompactJSON{
-			FilePath:  r.Chunk.FilePath,
-			StartLine: r.Chunk.StartLine,
-			EndLine:   r.Chunk.EndLine,
-			Score:     r.Score,
+			FilePath:    r.Chunk.FilePath,
+			StartLine:   r.Chunk.StartLine,
+			EndLine:     r.Chunk.EndLine,
+			Score:       r.Score,
+			FeaturePath: enrichments[i].FeaturePath,
+			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
 
@@ -276,15 +331,17 @@ func outputSearchErrorJSON(err error) error {
 }
 
 // outputSearchTOON outputs results in TOON format for AI agents
-func outputSearchTOON(results []store.SearchResult) error {
+func outputSearchTOON(results []store.SearchResult, enrichments []rpgEnrichment) error {
 	toonResults := make([]SearchResultJSON, len(results))
 	for i, r := range results {
 		toonResults[i] = SearchResultJSON{
-			FilePath:  r.Chunk.FilePath,
-			StartLine: r.Chunk.StartLine,
-			EndLine:   r.Chunk.EndLine,
-			Score:     r.Score,
-			Content:   r.Chunk.Content,
+			FilePath:    r.Chunk.FilePath,
+			StartLine:   r.Chunk.StartLine,
+			EndLine:     r.Chunk.EndLine,
+			Score:       r.Score,
+			Content:     r.Chunk.Content,
+			FeaturePath: enrichments[i].FeaturePath,
+			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
 
@@ -297,14 +354,16 @@ func outputSearchTOON(results []store.SearchResult) error {
 }
 
 // outputSearchCompactTOON outputs results in minimal TOON format (without content)
-func outputSearchCompactTOON(results []store.SearchResult) error {
+func outputSearchCompactTOON(results []store.SearchResult, enrichments []rpgEnrichment) error {
 	toonResults := make([]SearchResultCompactJSON, len(results))
 	for i, r := range results {
 		toonResults[i] = SearchResultCompactJSON{
-			FilePath:  r.Chunk.FilePath,
-			StartLine: r.Chunk.StartLine,
-			EndLine:   r.Chunk.EndLine,
-			Score:     r.Score,
+			FilePath:    r.Chunk.FilePath,
+			StartLine:   r.Chunk.StartLine,
+			EndLine:     r.Chunk.EndLine,
+			Score:       r.Score,
+			FeaturePath: enrichments[i].FeaturePath,
+			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
 
@@ -508,20 +567,23 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 		results = filteredResults
 	}
 
+	// Workspace mode doesn't have RPG enrichment (no single projectRoot)
+	enrichments := make([]rpgEnrichment, len(results))
+
 	// JSON output mode
 	if searchJSON {
 		if searchCompact {
-			return outputSearchCompactJSON(results)
+			return outputSearchCompactJSON(results, enrichments)
 		}
-		return outputSearchJSON(results)
+		return outputSearchJSON(results, enrichments)
 	}
 
 	// TOON output mode
 	if searchTOON {
 		if searchCompact {
-			return outputSearchCompactTOON(results)
+			return outputSearchCompactTOON(results, enrichments)
 		}
-		return outputSearchTOON(results)
+		return outputSearchTOON(results, enrichments)
 	}
 
 	if len(results) == 0 {
