@@ -459,7 +459,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, isBackgroundChild bool) (*indexer.IndexStats, error) {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool) (*indexer.IndexStats, error) {
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -503,19 +503,47 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		log.Println("Building symbol index...")
 	}
 	symbolCount := 0
-	files, _, _ := scanner.Scan()
+	files, _, err := scanner.ScanMetadata()
+	if err != nil {
+		log.Printf("Warning: failed to scan files for symbol index: %v", err)
+		return stats, nil
+	}
+
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Path))
 		if !isTracedLanguage(ext, tracedLanguages) {
 			continue
 		}
-		symbols, refs, err := extractor.ExtractAll(ctx, file.Path, file.Content)
+
+		// Skip files that are unchanged since the last index run and already tracked.
+		if !lastIndexTime.IsZero() {
+			fileModTime := time.Unix(file.ModTime, 0)
+			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
+				continue
+			}
+		}
+
+		fileInfo, err := scanner.ScanFile(file.Path)
 		if err != nil {
-			log.Printf("Warning: failed to extract symbols from %s: %v", file.Path, err)
+			log.Printf("Warning: failed to scan %s for symbols: %v", file.Path, err)
 			continue
 		}
-		if err := symbolStore.SaveFile(ctx, file.Path, symbols, refs); err != nil {
-			log.Printf("Warning: failed to save symbols for %s: %v", file.Path, err)
+		if fileInfo == nil {
+			continue
+		}
+
+		// Skip extraction when content hash matches what we already persisted.
+		if existingHash, ok := symbolStore.GetFileContentHash(fileInfo.Path); ok && existingHash == fileInfo.Hash {
+			continue
+		}
+
+		symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+		if err != nil {
+			log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, err)
+			continue
+		}
+		if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
+			log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, err)
 		}
 		symbolCount += len(symbols)
 	}
@@ -534,6 +562,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 // discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
 // Only discovers from the main worktree; returns nil for linked worktrees.
 func discoverWorktreesForWatch(projectRoot string) []string {
+	projectRootCanonical := canonicalPath(projectRoot)
+
 	gitInfo, err := git.Detect(projectRoot)
 	if err != nil {
 		return nil
@@ -554,47 +584,46 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 		return nil
 	}
 
-	normalizePath := func(p string) string {
-		if resolved, resolveErr := filepath.EvalSymlinks(p); resolveErr == nil {
-			p = resolved
-		}
-		if abs, absErr := filepath.Abs(p); absErr == nil {
-			p = abs
-		}
-		return filepath.Clean(p)
-	}
-
-	normalizedRoot := normalizePath(projectRoot)
 	var worktrees []string
 	seen := make(map[string]bool)
 	for _, line := range strings.Split(string(output), "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			wtPath := strings.TrimPrefix(line, "worktree ")
-			normalizedWorktree := normalizePath(wtPath)
+			wtPathCanonical := canonicalPath(wtPath)
 			// Skip the main worktree itself
-			if normalizedWorktree == normalizedRoot {
+			if wtPathCanonical == projectRootCanonical {
 				continue
 			}
 			// Guard against duplicated aliases pointing to the same path.
-			if seen[normalizedWorktree] {
+			if seen[wtPathCanonical] {
 				continue
 			}
-			seen[normalizedWorktree] = true
+			seen[wtPathCanonical] = true
 			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
 			// from within the worktree, but we're not in it, so init manually)
-			localGrepai := filepath.Join(normalizedWorktree, ".grepai")
+			localGrepai := filepath.Join(wtPathCanonical, ".grepai")
 			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
 				// Auto-init from main
-				if initErr := config.AutoInitWorktree(normalizedWorktree, projectRoot); initErr != nil {
-					log.Printf("Warning: failed to auto-init worktree %s: %v", normalizedWorktree, initErr)
+				if initErr := config.AutoInitWorktree(wtPathCanonical, projectRootCanonical); initErr != nil {
+					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPathCanonical, initErr)
 					continue
 				}
-				log.Printf("Auto-initialized worktree: %s", normalizedWorktree)
+				log.Printf("Auto-initialized worktree: %s", wtPathCanonical)
 			}
-			worktrees = append(worktrees, normalizedWorktree)
+			worktrees = append(worktrees, wtPathCanonical)
 		}
 	}
 	return worktrees
+}
+
+func canonicalPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
 }
 
 // watchProject runs the full watch lifecycle for a single project.
@@ -684,8 +713,9 @@ func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder
 		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
 	}
 
-	// Run initial scan (always in background mode for worktrees - no interactive progress)
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, true)
+	// Run initial scan and build symbol index.
+	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild)
 	if err != nil {
 		return err
 	}
@@ -773,6 +803,28 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, event)
 		}
 	}
+}
+
+type watchProjectRunner func(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error
+
+func startProjectWatch(g *errgroup.Group, gCtx context.Context, projectRoot string, emb embedder.Embedder, makeOnReady func() func(), startFn watchProjectRunner) {
+	g.Go(func() error {
+		onReady := makeOnReady()
+		return startFn(gCtx, projectRoot, emb, true, onReady)
+	})
+}
+
+func waitForProjectsReady(ctx context.Context, total int, readyCh <-chan struct{}) error {
+	ready := 0
+	for ready < total {
+		select {
+		case <-readyCh:
+			ready++
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 func runWatchForeground() error {
@@ -950,47 +1002,31 @@ func runWatchForeground() error {
 	// Multi-worktree mode: run all projects in parallel using errgroup
 	g, gCtx := errgroup.WithContext(watchCtx)
 
-	// WaitGroup to track when all projects finish initial indexing + watcher start.
-	// Each goroutine uses sync.Once to guarantee exactly one Done() call, even on error.
-	var readyWg sync.WaitGroup
 	totalProjects := 1 + len(linkedWorktrees)
-	readyWg.Add(totalProjects)
+	readyCh := make(chan struct{}, totalProjects)
 
 	makeOnReady := func() func() {
 		var once sync.Once
-		return func() { once.Do(readyWg.Done) }
+		return func() {
+			once.Do(func() {
+				readyCh <- struct{}{}
+			})
+		}
 	}
 
 	// Main project
-	g.Go(func() error {
-		onReady := makeOnReady()
-		defer onReady() // ensure Done() even if watchProject fails before calling onReady
-		return watchProject(gCtx, projectRoot, emb, true, onReady)
-	})
+	startProjectWatch(g, gCtx, projectRoot, emb, makeOnReady, watchProject)
 
 	// Linked worktrees
 	for _, wt := range linkedWorktrees {
-		wt := wt
-		g.Go(func() error {
-			onReady := makeOnReady()
-			defer onReady()
-			return watchProject(gCtx, wt, emb, true, onReady)
-		})
+		startProjectWatch(g, gCtx, wt, emb, makeOnReady, watchProject)
 	}
 
 	// Write ready file after all watchers have actually started (or failed).
 	// Uses select to also unblock on context cancellation.
 	g.Go(func() error {
-		done := make(chan struct{})
-		go func() {
-			readyWg.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-			// All projects signaled ready (success or failure)
-		case <-gCtx.Done():
-			return gCtx.Err()
+		if err := waitForProjectsReady(gCtx, totalProjects, readyCh); err != nil {
+			return err
 		}
 		if isBackgroundChild {
 			if worktreeID != "" {
@@ -1033,6 +1069,16 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			return // File was skipped (binary, too large, etc.)
 		}
 
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
+			return
+		}
+
 		chunks, err := idx.IndexFile(ctx, *fileInfo)
 		if err != nil {
 			log.Printf("Failed to index %s: %v", event.Path, err)
@@ -1056,7 +1102,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
 			if err != nil {
 				log.Printf("Failed to extract symbols from %s: %v", event.Path, err)
-			} else if err := symbolStore.SaveFile(ctx, fileInfo.Path, symbols, refs); err != nil {
+			} else if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
 				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
 			} else {
 				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
@@ -1628,6 +1674,16 @@ func handleWorkspaceFileEvent(ctx context.Context, ws *config.Workspace, emb emb
 			return
 		}
 		if fileInfo == nil {
+			return
+		}
+
+		needsReindex, err := idx.NeedsReindex(ctx, fileInfo.Path, fileInfo.Hash)
+		if err != nil {
+			log.Printf("Failed to check reindex status for %s: %v", event.Path, err)
+			return
+		}
+		if !needsReindex {
+			log.Printf("Skipped unchanged %s", event.Path)
 			return
 		}
 

@@ -15,12 +15,12 @@ func TestLivenessCheckStart_ClosesOnReadError(t *testing.T) {
 	}
 	defer l.cleanup()
 
-	ch := l.start(0)
-
-	// Force a read error path by closing the read end from the test side.
+	// Force a deterministic read-error path by closing the read end
+	// before the reader goroutine starts.
 	if err := l.pr.Close(); err != nil {
 		t.Fatalf("failed to close read pipe: %v", err)
 	}
+	ch := l.start(0)
 
 	select {
 	case <-ch:

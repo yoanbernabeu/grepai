@@ -85,8 +85,8 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 	start := time.Now()
 	stats := &IndexStats{}
 
-	// Scan all files
-	files, skipped, err := idx.scanner.Scan()
+	// Scan all files (metadata-only first pass)
+	fileMetas, skipped, err := idx.scanner.ScanMetadata()
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan files: %w", err)
 	}
@@ -104,40 +104,54 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 	}
 
 	// Filter files that need indexing
-	filesToIndex := make([]FileInfo, 0, len(files))
-	for _, file := range files {
+	filesToIndex := make([]FileInfo, 0, len(fileMetas))
+	for i, fileMeta := range fileMetas {
 		// Report progress for scanning phase
 		if onProgress != nil {
 			onProgress(ProgressInfo{
-				Current:     len(filesToIndex) + 1,
-				Total:       len(files),
-				CurrentFile: file.Path,
+				Current:     i + 1,
+				Total:       len(fileMetas),
+				CurrentFile: fileMeta.Path,
 			})
 		}
 
 		// Skip files modified before lastIndexTime
 		if !idx.lastIndexTime.IsZero() {
-			fileModTime := time.Unix(file.ModTime, 0)
+			fileModTime := time.Unix(fileMeta.ModTime, 0)
 			if fileModTime.Before(idx.lastIndexTime) || fileModTime.Equal(idx.lastIndexTime) {
 				stats.FilesSkipped++
-				delete(existingMap, file.Path)
+				delete(existingMap, fileMeta.Path)
 				continue
 			}
 		}
 
 		// Check if file needs reindexing
-		doc, err := idx.store.GetDocument(ctx, file.Path)
+		doc, err := idx.store.GetDocument(ctx, fileMeta.Path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get document %s: %w", file.Path, err)
+			return nil, fmt.Errorf("failed to get document %s: %w", fileMeta.Path, err)
+		}
+
+		// Load file content and hash only after metadata filtering.
+		file, err := idx.scanner.ScanFile(fileMeta.Path)
+		if err != nil {
+			log.Printf("Failed to scan %s: %v", fileMeta.Path, err)
+			stats.FilesSkipped++
+			delete(existingMap, fileMeta.Path)
+			continue
+		}
+		if file == nil {
+			stats.FilesSkipped++
+			delete(existingMap, fileMeta.Path)
+			continue
 		}
 
 		if doc != nil && doc.Hash == file.Hash {
-			delete(existingMap, file.Path)
+			delete(existingMap, fileMeta.Path)
 			continue // File unchanged
 		}
 
-		filesToIndex = append(filesToIndex, file)
-		delete(existingMap, file.Path)
+		filesToIndex = append(filesToIndex, *file)
+		delete(existingMap, fileMeta.Path)
 	}
 
 	// Index files using batch processing if available, otherwise sequentially

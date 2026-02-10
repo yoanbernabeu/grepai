@@ -73,6 +73,48 @@ func TestScanner_Scan(t *testing.T) {
 	}
 }
 
+func TestScanner_ScanMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create test files
+	goFile := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n\nfunc main() {}"), 0644); err != nil {
+		t.Fatalf("failed to create go file: %v", err)
+	}
+	minifiedJS := filepath.Join(tmpDir, "app.min.js")
+	if err := os.WriteFile(minifiedJS, []byte("console.log('minified');"), 0644); err != nil {
+		t.Fatalf("failed to create minified file: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, ignoreMatcher)
+	files, skipped, err := scanner.ScanMetadata()
+	if err != nil {
+		t.Fatalf("scan metadata failed: %v", err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 metadata file, got %d", len(files))
+	}
+	if files[0].Path != "main.go" {
+		t.Fatalf("expected path main.go, got %s", files[0].Path)
+	}
+	if files[0].Size == 0 {
+		t.Fatal("expected metadata to include file size")
+	}
+	if files[0].ModTime == 0 {
+		t.Fatal("expected metadata to include modtime")
+	}
+
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(skipped))
+	}
+}
+
 func TestScanner_IgnoreBinaryFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
