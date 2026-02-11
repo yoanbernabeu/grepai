@@ -278,11 +278,10 @@ func SpawnBackground(logDir string, args []string) (int, <-chan struct{}, error)
 	return spawnBackgroundWithLog(logDir, logPath, args)
 }
 
-// StopProcess sends an interrupt signal to the process with the given PID.
+// StopProcess sends a stop signal to the process with the given PID.
 //
-// This sends SIGINT (Unix) or os.Interrupt (Windows) to request graceful shutdown.
-// The target process should have signal handlers installed to catch the interrupt
-// and clean up (persist state, close connections, etc.) before exiting.
+// On Unix, this sends SIGINT to request graceful shutdown.
+// On Windows, this writes a sentinel stop file that the daemon polls for.
 //
 // This function returns immediately after sending the signal. It does NOT wait
 // for the process to exit. Callers should poll IsProcessRunning() to verify
@@ -290,23 +289,19 @@ func SpawnBackground(logDir string, args []string) (int, <-chan struct{}, error)
 //
 // Returns an error if the PID is invalid (<= 0) or if the signal cannot be sent
 // (process doesn't exist, insufficient permissions, etc.).
-func StopProcess(pid int) error {
-	if pid <= 0 {
-		return fmt.Errorf("invalid PID: %d", pid)
-	}
+//
+// Platform-specific implementations are in daemon_unix.go and daemon_windows.go.
 
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process: %w", err)
-	}
-
-	// Send interrupt signal (SIGINT on Unix, CTRL_BREAK on Windows)
-	if err := process.Signal(os.Interrupt); err != nil {
-		return fmt.Errorf("failed to send interrupt signal: %w", err)
-	}
-
-	return nil
-}
+// StopChannel returns a channel that is closed when a stop signal is detected.
+//
+// On Unix, this returns a channel that never fires (signals are handled via
+// os/signal). On Windows, this polls for a sentinel stop file written by
+// StopProcess and closes the channel when detected.
+//
+// Callers should select on the returned channel alongside other shutdown
+// mechanisms (e.g., os/signal) to support graceful shutdown on all platforms.
+//
+// Platform-specific implementations are in daemon_unix.go and daemon_windows.go.
 
 // GetWorktreePIDFile returns the path to the PID file for a worktree.
 func GetWorktreePIDFile(logDir, worktreeID string) string {

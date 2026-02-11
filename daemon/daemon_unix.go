@@ -89,3 +89,28 @@ func (l *livenessCheck) cleanup() {
 	l.pr.Close()
 	l.pw.Close()
 }
+
+// StopProcess sends SIGINT to the process with the given PID.
+func StopProcess(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid PID: %d", pid)
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+
+	if err := process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("failed to send interrupt signal: %w", err)
+	}
+
+	return nil
+}
+
+// StopChannel returns a channel that never fires on Unix.
+// Signal-based shutdown is handled via os/signal, so no additional
+// mechanism is needed.
+func StopChannel() <-chan struct{} {
+	return make(chan struct{})
+}

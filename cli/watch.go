@@ -633,6 +633,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	loopStopCh := daemon.StopChannel()
 
 	if !isBackgroundChild {
 		fmt.Println("\nWatching for changes... (Press Ctrl+C to stop)")
@@ -647,6 +648,17 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	// Config write throttling - only write every 30 seconds at most
 	var lastConfigWrite time.Time
 
+	// persistAndExit persists all stores before returning from the event loop.
+	persistAndExit := func() error {
+		if err := st.Persist(ctx); err != nil {
+			log.Printf("Warning: failed to persist index on shutdown: %v", err)
+		}
+		if err := symbolStore.Persist(ctx); err != nil {
+			log.Printf("Warning: failed to persist symbol index on shutdown: %v", err)
+		}
+		return nil
+	}
+
 	// Event loop
 	for {
 		select {
@@ -656,13 +668,11 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			} else {
 				log.Println("Shutting down...")
 			}
-			if err := st.Persist(ctx); err != nil {
-				log.Printf("Warning: failed to persist index on shutdown: %v", err)
-			}
-			if err := symbolStore.Persist(ctx); err != nil {
-				log.Printf("Warning: failed to persist symbol index on shutdown: %v", err)
-			}
-			return nil
+			return persistAndExit()
+
+		case <-loopStopCh:
+			log.Println("Stop file detected, shutting down...")
+			return persistAndExit()
 
 		case <-persistTicker.C:
 			if err := st.Persist(ctx); err != nil {
@@ -1174,6 +1184,7 @@ func runWatchForeground() error {
 	watchCtx, watchCancel := context.WithCancel(ctx)
 	defer watchCancel()
 
+	stopCh := daemon.StopChannel()
 	go func() {
 		select {
 		case <-sigChan:
@@ -1182,6 +1193,9 @@ func runWatchForeground() error {
 			} else {
 				log.Println("Shutting down...")
 			}
+			watchCancel()
+		case <-stopCh:
+			log.Println("Stop file detected, shutting down...")
 			watchCancel()
 		case <-watchCtx.Done():
 		}
@@ -1725,6 +1739,7 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	wsStopCh := daemon.StopChannel()
 
 	if !isBackgroundChild {
 		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(runtimes))
@@ -1749,6 +1764,23 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 		}()
 	}
 
+	// persistAndShutdown persists all stores before returning from the event loop.
+	persistAndShutdown := func() {
+		if err := st.Persist(ctx); err != nil {
+			log.Printf("Warning: failed to persist index on shutdown: %v", err)
+		}
+		for _, runtime := range runtimes {
+			if err := runtime.symbolStore.Persist(ctx); err != nil {
+				log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", runtime.project.Name, err)
+			}
+			if runtime.rpgStore != nil {
+				if err := runtime.rpgStore.Persist(ctx); err != nil {
+					log.Printf("Warning: failed to persist RPG graph on shutdown for %s: %v", runtime.project.Name, err)
+				}
+			}
+		}
+	}
+
 	// Event loop
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
@@ -1761,19 +1793,12 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 			} else {
 				log.Println("Shutting down...")
 			}
-			if err := st.Persist(ctx); err != nil {
-				log.Printf("Warning: failed to persist index on shutdown: %v", err)
-			}
-			for _, runtime := range runtimes {
-				if err := runtime.symbolStore.Persist(ctx); err != nil {
-					log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", runtime.project.Name, err)
-				}
-				if runtime.rpgStore != nil {
-					if err := runtime.rpgStore.Persist(ctx); err != nil {
-						log.Printf("Warning: failed to persist RPG graph on shutdown for %s: %v", runtime.project.Name, err)
-					}
-				}
-			}
+			persistAndShutdown()
+			return nil
+
+		case <-wsStopCh:
+			log.Println("Stop file detected, shutting down...")
+			persistAndShutdown()
 			return nil
 
 		case <-persistTicker.C:
