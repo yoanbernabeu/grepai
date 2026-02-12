@@ -87,8 +87,8 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0755); err != nil {
-		return fmt.Errorf("failed to create symbol index directory: %w", err)
+	if err := ensureParentDir(s.indexPath); err != nil {
+		return fmt.Errorf("failed to prepare symbol index directory: %w", err)
 	}
 
 	file, err := os.Create(s.indexPath)
@@ -109,6 +109,11 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func ensureParentDir(filePath string) error {
+	dir := filepath.Dir(filePath)
+	return os.MkdirAll(dir, 0755)
 }
 
 // SaveFile persists symbols and references for a file.
@@ -334,6 +339,32 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 	}
 
 	return graph, nil
+}
+
+// GetSymbolsForFile returns all symbols defined in a specific file.
+func (s *GOBSymbolStore) GetSymbolsForFile(ctx context.Context, filePath string) ([]Symbol, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []Symbol
+	for _, symbols := range s.index.Symbols {
+		for _, sym := range symbols {
+			if sym.File == filePath {
+				result = append(result, sym)
+			}
+		}
+	}
+	return result, nil
+}
+
+// GetCallEdges returns all call graph edges.
+func (s *GOBSymbolStore) GetCallEdges(ctx context.Context) ([]CallEdge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	edges := make([]CallEdge, len(s.index.CallGraph))
+	copy(edges, s.index.CallGraph)
+	return edges, nil
 }
 
 // Close shuts down the store.

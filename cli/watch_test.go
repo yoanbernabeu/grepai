@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 	"github.com/yoanbernabeu/grepai/watcher"
 )
@@ -402,28 +401,22 @@ func TestStopWorkspaceWatchDaemon_should_handle_stale_pid(t *testing.T) {
 	}
 }
 
-func TestProjectFileEvent_should_carry_project_context(t *testing.T) {
-	evt := projectFileEvent{
-		FileEvent: watcher.FileEvent{
+func TestWorkspaceWatchEvent_should_carry_project_path(t *testing.T) {
+	evt := workspaceWatchEvent{
+		projectPath: "/home/user/projects/myapp",
+		event: watcher.FileEvent{
 			Type: watcher.EventCreate,
-			Path: "/home/user/projects/myapp/src/main.go",
-		},
-		Project: config.ProjectEntry{
-			Name: "myproject",
-			Path: "/home/user/projects/myapp",
+			Path: "src/main.go",
 		},
 	}
 
-	if evt.Type != watcher.EventCreate {
-		t.Errorf("event type = %v, want EventCreate", evt.Type)
+	if evt.event.Type != watcher.EventCreate {
+		t.Errorf("event type = %v, want EventCreate", evt.event.Type)
 	}
-	if evt.Path != "/home/user/projects/myapp/src/main.go" {
-		t.Errorf("event path = %q, want %q", evt.Path, "/home/user/projects/myapp/src/main.go")
+	if evt.event.Path != "src/main.go" {
+		t.Errorf("event path = %q, want %q", evt.event.Path, "src/main.go")
 	}
-	if evt.Project.Name != "myproject" {
-		t.Errorf("project name = %q, want %q", evt.Project.Name, "myproject")
-	}
-	if evt.Project.Path != "/home/user/projects/myapp" {
-		t.Errorf("project path = %q, want %q", evt.Project.Path, "/home/user/projects/myapp")
+	if evt.projectPath != "/home/user/projects/myapp" {
+		t.Errorf("project path = %q, want %q", evt.projectPath, "/home/user/projects/myapp")
 	}
 }

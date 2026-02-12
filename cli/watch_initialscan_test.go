@@ -239,10 +239,13 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -312,14 +315,19 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 	}
 
 	emb := &countingEmbedder{}
-	ws := &config.Workspace{
-		Name: workspaceName,
-		Projects: []config.ProjectEntry{
-			{Name: projectName, Path: projectPath},
-		},
+	wrappedStore := &projectPrefixStore{
+		store:         st,
+		workspaceName: workspaceName,
+		projectName:   projectName,
+		projectPath:   projectPath,
 	}
+	chunker := indexer.NewChunker(512, 64)
+	idx := indexer.NewIndexer(projectPath, wrappedStore, emb, chunker, scanner, time.Time{})
+	extractor := trace.NewRegexExtractor()
+	cfg := config.DefaultConfig()
+	var lastConfigWrite time.Time
 
-	handleWorkspaceFileEvent(ctx, ws.Projects[0], ws, emb, st, nil, nil, watcher.FileEvent{
+	handleFileEvent(ctx, idx, scanner, extractor, nil, nil, wrappedStore, nil, projectPath, cfg, &lastConfigWrite, nil, watcher.FileEvent{
 		Type: watcher.EventModify,
 		Path: "proj/main.go",
 	})
@@ -382,10 +390,13 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 	)
 
@@ -452,10 +463,13 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 		scanner,
 		trace.NewRegexExtractor(),
 		symbolStore,
+		nil,
+		nil,
 		[]string{".go"},
 		projectRoot,
 		cfg,
 		&lastWrite,
+		nil,
 		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
 	)
 

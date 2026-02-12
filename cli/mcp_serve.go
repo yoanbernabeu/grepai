@@ -18,11 +18,14 @@ var mcpServeCmd = &cobra.Command{
 This allows AI agents to use grepai as a native tool through the MCP protocol.
 The server communicates via stdio and exposes the following tools:
 
-  - grepai_search: Semantic code search with natural language
+  - grepai_search: Semantic code search with natural language (includes RPG context when enabled)
   - grepai_trace_callers: Find all functions that call a symbol
   - grepai_trace_callees: Find all functions called by a symbol
   - grepai_trace_graph: Build a call graph around a symbol
-  - grepai_index_status: Check index health and statistics
+  - grepai_index_status: Check index health and statistics (includes RPG stats when enabled)
+  - grepai_rpg_search: Search RPG graph nodes by feature semantics
+  - grepai_rpg_fetch: Fetch hierarchy and edge context for a specific RPG node
+  - grepai_rpg_explore: Traverse RPG graph neighborhoods with direction/depth filters
 
 Arguments:
   project-path  Optional path to the grepai project directory.
