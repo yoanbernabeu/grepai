@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -227,6 +228,93 @@ func TestRunWatch_CheckAlreadyRunning(t *testing.T) {
 
 	// Reset for other tests
 	watchLogDir = ""
+}
+
+func TestRunWatchStatus_OutsideProjectRoot(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	outside := t.TempDir()
+	if err := os.Chdir(outside); err != nil {
+		t.Fatalf("Chdir() failed: %v", err)
+	}
+
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	watchBackground = false
+	watchStatus = true
+	watchStop = false
+	watchWorkspace = ""
+	watchNoUI = false
+	watchLogDir = t.TempDir()
+
+	if err := runWatch(nil, nil); err != nil {
+		t.Fatalf("runWatch(--status) outside project should not fail: %v", err)
+	}
+}
+
+func TestRunWatch_MultiWorktreeUsesUIForeground(t *testing.T) {
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	oldInteractive := watchIsInteractiveTerminal
+	oldSelector := watchUseUISelector
+	oldForeground := watchForegroundRunner
+	oldForegroundUI := watchForegroundUIRunner
+	defer func() {
+		watchIsInteractiveTerminal = oldInteractive
+		watchUseUISelector = oldSelector
+		watchForegroundRunner = oldForeground
+		watchForegroundUIRunner = oldForegroundUI
+	}()
+
+	watchBackground = false
+	watchStatus = false
+	watchStop = false
+	watchWorkspace = ""
+	watchNoUI = false
+	watchLogDir = t.TempDir()
+
+	watchIsInteractiveTerminal = func() bool { return true }
+	watchUseUISelector = func(isTTY, noUI, background, status, stop bool, workspace string) bool { return true }
+
+	foregroundErr := errors.New("foreground-called")
+	watchForegroundRunner = func() error { return foregroundErr }
+	uiErr := errors.New("ui-called")
+	watchForegroundUIRunner = func() error { return uiErr }
+
+	err := runWatch(nil, nil)
+	if !errors.Is(err, uiErr) {
+		t.Fatalf("expected UI path for interactive watch, got: %v", err)
+	}
 }
 
 func TestLogDirectoryDefaults(t *testing.T) {

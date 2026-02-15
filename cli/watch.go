@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,6 +35,13 @@ var (
 	watchStop       bool
 	watchWorkspace  string
 	watchNoUI       bool
+)
+
+var (
+	watchIsInteractiveTerminal = isInteractiveTerminal
+	watchUseUISelector         = shouldUseWatchUI
+	watchForegroundRunner      = runWatchForeground
+	watchForegroundUIRunner    = runWatchForegroundUI
 )
 
 var watchCmd = &cobra.Command{
@@ -107,11 +116,6 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		return runWorkspaceWatch(logDir)
 	}
 
-	projectRoot, err := config.FindProjectRoot()
-	if err != nil {
-		return err
-	}
-
 	// Detect worktree
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -134,7 +138,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		if err := stopWatchDaemon(logDir, worktreeID); err != nil {
 			return err
 		}
-		_ = clearWatchLogDirHint(projectRoot)
+		if projectRoot, rootErr := config.FindProjectRoot(); rootErr == nil {
+			_ = clearWatchLogDirHint(projectRoot)
+		}
 		return nil
 	}
 
@@ -143,7 +149,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		if err := startBackgroundWatch(logDir, worktreeID); err != nil {
 			return err
 		}
-		_ = saveWatchLogDirHint(projectRoot, logDir)
+		if projectRoot, rootErr := config.FindProjectRoot(); rootErr == nil {
+			_ = saveWatchLogDirHint(projectRoot, logDir)
+		}
 		return nil
 	}
 
@@ -165,19 +173,19 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("watcher is already running in background (PID %d)\nUse 'grepai watch --stop' to stop it", pid)
 	}
 
-	if shouldUseWatchUI(
-		isInteractiveTerminal(),
+	if watchUseUISelector(
+		watchIsInteractiveTerminal(),
 		watchNoUI,
 		watchBackground,
 		watchStatus,
 		watchStop,
 		watchWorkspace,
 	) {
-		return runWatchForegroundUI()
+		return watchForegroundUIRunner()
 	}
 
 	// Run in foreground mode
-	return runWatchForeground()
+	return watchForegroundRunner()
 }
 
 func showWatchStatus(logDir, worktreeID string) error {
@@ -884,7 +892,22 @@ func canonicalPath(path string) string {
 // watchProject runs the full watch lifecycle for a single project.
 // The embedder is shared across all projects to avoid duplicate connections.
 // If onReady is non-nil, it is called once after initial indexing and watcher start.
+type watchEventObserver func(projectRoot string, event watcher.FileEvent)
+
+type watchSessionLifecycleObserver func(projectRoot, state, note string)
+type watchSessionEventObserver func(projectRoot string, event watcher.FileEvent)
+
+const (
+	worktreeReconcileInterval = 3 * time.Second
+	sessionShutdownTimeout    = 2 * time.Second
+	maxSessionRetryBackoff    = 30 * time.Second
+)
+
 func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error {
+	return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, nil)
+}
+
+func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func(), onEvent watchEventObserver) error {
 	// Load configuration
 	cfg, err := config.Load(projectRoot)
 	if err != nil {
@@ -1016,10 +1039,10 @@ func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder
 	}
 
 	// Run watch loop (responds to ctx.Done() for graceful shutdown)
-	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgIndexer, rpgStore, tracedLanguages, projectRoot, cfg)
+	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgIndexer, rpgStore, tracedLanguages, projectRoot, cfg, onEvent)
 }
 
-func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgIndexer *rpg.RPGIndexer, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config) error {
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgIndexer *rpg.RPGIndexer, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver) error {
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
 
@@ -1060,6 +1083,9 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			}
 
 		case event := <-w.Events():
+			if onEvent != nil {
+				onEvent(projectRoot, event)
+			}
 			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event)
 		}
 	}
@@ -1085,6 +1111,485 @@ func waitForProjectsReady(ctx context.Context, total int, readyCh <-chan struct{
 		}
 	}
 	return nil
+}
+
+type watchSupervisorSessionRunner func(
+	ctx context.Context,
+	projectRoot string,
+	emb embedder.Embedder,
+	isBackgroundChild bool,
+	onReady func(),
+	onEvent watchSessionEventObserver,
+) error
+
+type dynamicWatchSupervisorConfig struct {
+	isBackgroundChild     bool
+	initialLinkedWorktree []string
+	discoverWorktrees     func(projectRoot string) []string
+	sessionRunner         watchSupervisorSessionRunner
+	lifecycleObserver     watchSessionLifecycleObserver
+	eventObserver         watchSessionEventObserver
+	scopeObserver         func(totalProjects int)
+	initialReadyObserver  func(totalProjects int)
+	reconcileInterval     time.Duration
+	retryBackoff          func(attempt int) time.Duration
+}
+
+type dynamicWatchSupervisorOption func(*dynamicWatchSupervisorConfig)
+
+func withWatchSupervisorBackgroundChild(isBackgroundChild bool) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.isBackgroundChild = isBackgroundChild
+	}
+}
+
+func withWatchSupervisorInitialLinkedWorktrees(linked []string) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		if linked == nil {
+			cfg.initialLinkedWorktree = nil
+			return
+		}
+		cfg.initialLinkedWorktree = append([]string(nil), linked...)
+	}
+}
+
+func withWatchSupervisorDiscoverWorktrees(discover func(projectRoot string) []string) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.discoverWorktrees = discover
+	}
+}
+
+func withWatchSupervisorSessionRunner(runner watchSupervisorSessionRunner) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.sessionRunner = runner
+	}
+}
+
+func withWatchSupervisorLifecycleObserver(observer watchSessionLifecycleObserver) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.lifecycleObserver = observer
+	}
+}
+
+func withWatchSupervisorEventObserver(observer watchSessionEventObserver) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.eventObserver = observer
+	}
+}
+
+func withWatchSupervisorScopeObserver(observer func(totalProjects int)) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.scopeObserver = observer
+	}
+}
+
+func withWatchSupervisorInitialReadyObserver(observer func(totalProjects int)) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.initialReadyObserver = observer
+	}
+}
+
+func withWatchSupervisorReconcileInterval(interval time.Duration) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		if interval > 0 {
+			cfg.reconcileInterval = interval
+		}
+	}
+}
+
+func withWatchSupervisorRetryBackoff(backoff func(attempt int) time.Duration) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.retryBackoff = backoff
+	}
+}
+
+func newDynamicWatchSupervisorConfig() dynamicWatchSupervisorConfig {
+	return dynamicWatchSupervisorConfig{
+		discoverWorktrees: discoverWorktreesForWatch,
+		sessionRunner: func(
+			ctx context.Context,
+			projectRoot string,
+			emb embedder.Embedder,
+			isBackgroundChild bool,
+			onReady func(),
+			onEvent watchSessionEventObserver,
+		) error {
+			var observer watchEventObserver
+			if onEvent != nil {
+				observer = watchEventObserver(onEvent)
+			}
+			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer)
+		},
+		reconcileInterval: worktreeReconcileInterval,
+		retryBackoff:      computeWatchSessionRetryBackoff,
+	}
+}
+
+type watchSessionHandle struct {
+	cancel      context.CancelFunc
+	generation  int
+	initial     bool
+	ready       bool
+	markedClose bool
+}
+
+type watchSessionResult struct {
+	projectRoot string
+	generation  int
+	err         error
+}
+
+type watchSessionReady struct {
+	projectRoot string
+	generation  int
+}
+
+type watchSessionRetrySignal struct {
+	projectRoot string
+	attempt     int
+}
+
+func runDynamicWatchSupervisor(ctx context.Context, mainRoot string, emb embedder.Embedder, opts ...dynamicWatchSupervisorOption) error {
+	cfg := newDynamicWatchSupervisorConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.discoverWorktrees == nil {
+		cfg.discoverWorktrees = discoverWorktreesForWatch
+	}
+	if cfg.sessionRunner == nil {
+		cfg.sessionRunner = func(
+			ctx context.Context,
+			projectRoot string,
+			emb embedder.Embedder,
+			isBackgroundChild bool,
+			onReady func(),
+			onEvent watchSessionEventObserver,
+		) error {
+			var observer watchEventObserver
+			if onEvent != nil {
+				observer = watchEventObserver(onEvent)
+			}
+			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer)
+		}
+	}
+	if cfg.reconcileInterval <= 0 {
+		cfg.reconcileInterval = worktreeReconcileInterval
+	}
+	if cfg.retryBackoff == nil {
+		cfg.retryBackoff = computeWatchSessionRetryBackoff
+	}
+
+	initialLinked := cfg.initialLinkedWorktree
+	if initialLinked == nil {
+		initialLinked = cfg.discoverWorktrees(mainRoot)
+	}
+
+	desired := buildWatchDesiredProjects(mainRoot, initialLinked)
+	initialRoots := make(map[string]bool, len(desired))
+	initialReady := make(map[string]bool, len(desired))
+	for root := range desired {
+		initialRoots[root] = true
+	}
+
+	if cfg.scopeObserver != nil {
+		cfg.scopeObserver(len(desired))
+	}
+
+	emitLifecycle := func(projectRoot, state, note string) {
+		if cfg.lifecycleObserver != nil {
+			cfg.lifecycleObserver(projectRoot, state, note)
+		}
+	}
+
+	markInitialReady := func(projectRoot string) {
+		if !initialRoots[projectRoot] || initialReady[projectRoot] {
+			return
+		}
+		initialReady[projectRoot] = true
+		if cfg.initialReadyObserver == nil {
+			return
+		}
+		for root := range initialRoots {
+			if !initialReady[root] {
+				return
+			}
+		}
+		cfg.initialReadyObserver(len(initialRoots))
+	}
+
+	sessionResults := make(chan watchSessionResult, 64)
+	sessionReady := make(chan watchSessionReady, 64)
+	retrySignalCh := make(chan watchSessionRetrySignal, 64)
+
+	supervisorCtx, supervisorCancel := context.WithCancel(ctx)
+	defer supervisorCancel()
+
+	managed := make(map[string]*watchSessionHandle, len(desired))
+	retryAttempts := make(map[string]int)
+	scheduledRetry := make(map[string]int)
+	nextGeneration := 0
+
+	startSession := func(projectRoot string, initial bool) {
+		if _, exists := managed[projectRoot]; exists {
+			return
+		}
+		nextGeneration++
+		sessionCtx, sessionCancel := context.WithCancel(supervisorCtx)
+		handle := &watchSessionHandle{
+			cancel:     sessionCancel,
+			generation: nextGeneration,
+			// Keep startup membership sticky across retries so initial ready
+			// semantics are preserved even if first attempt fails.
+			initial: initial || initialRoots[projectRoot],
+		}
+		managed[projectRoot] = handle
+
+		note := watchSessionRole(mainRoot, projectRoot)
+		emitLifecycle(projectRoot, "starting", note)
+
+		go func(project string, generation int) {
+			readySent := false
+			onReady := func() {
+				if readySent {
+					return
+				}
+				readySent = true
+				sessionReady <- watchSessionReady{
+					projectRoot: project,
+					generation:  generation,
+				}
+			}
+			err := cfg.sessionRunner(
+				sessionCtx,
+				project,
+				emb,
+				cfg.isBackgroundChild,
+				onReady,
+				cfg.eventObserver,
+			)
+			sessionResults <- watchSessionResult{
+				projectRoot: project,
+				generation:  generation,
+				err:         err,
+			}
+		}(projectRoot, handle.generation)
+	}
+
+	scheduleRetry := func(projectRoot string) {
+		attempt := retryAttempts[projectRoot] + 1
+		retryAttempts[projectRoot] = attempt
+
+		delay := cfg.retryBackoff(attempt)
+		if delay < 0 {
+			delay = 0
+		}
+		scheduledRetry[projectRoot] = attempt
+		emitLifecycle(projectRoot, "retrying", fmt.Sprintf("attempt=%d wait=%s", attempt, delay))
+
+		go func(project string, retryAttempt int, waitFor time.Duration) {
+			timer := time.NewTimer(waitFor)
+			defer timer.Stop()
+			select {
+			case <-supervisorCtx.Done():
+				return
+			case <-timer.C:
+				retrySignalCh <- watchSessionRetrySignal{
+					projectRoot: project,
+					attempt:     retryAttempt,
+				}
+			}
+		}(projectRoot, attempt, delay)
+	}
+
+	applyDesired := func(nextDesired map[string]bool) {
+		for root := range desired {
+			if nextDesired[root] {
+				continue
+			}
+			delete(desired, root)
+			delete(scheduledRetry, root)
+			emitLifecycle(root, "removed", "worktree removed")
+			markInitialReady(root)
+			if handle, ok := managed[root]; ok {
+				handle.markedClose = true
+				handle.cancel()
+			}
+		}
+
+		for _, root := range sortedWatchProjectRoots(nextDesired) {
+			if desired[root] {
+				continue
+			}
+			desired[root] = true
+			emitLifecycle(root, "queued", watchSessionRole(mainRoot, root))
+			startSession(root, false)
+		}
+	}
+
+	shutdownSessions := func(stopNote string) {
+		for _, handle := range managed {
+			handle.markedClose = true
+			handle.cancel()
+		}
+
+		timeout := time.NewTimer(sessionShutdownTimeout)
+		defer timeout.Stop()
+		for len(managed) > 0 {
+			select {
+			case result := <-sessionResults:
+				handle, ok := managed[result.projectRoot]
+				if !ok || handle.generation != result.generation {
+					continue
+				}
+				delete(managed, result.projectRoot)
+				emitLifecycle(result.projectRoot, "stopped", stopNote)
+			case <-timeout.C:
+				for root := range managed {
+					emitLifecycle(root, "stopped", "shutdown timeout")
+				}
+				return
+			}
+		}
+	}
+
+	for _, root := range sortedWatchProjectRoots(desired) {
+		emitLifecycle(root, "queued", watchSessionRole(mainRoot, root))
+		startSession(root, true)
+	}
+
+	reconcileTicker := time.NewTicker(cfg.reconcileInterval)
+	defer reconcileTicker.Stop()
+
+	for {
+		select {
+		case <-supervisorCtx.Done():
+			shutdownSessions("context canceled")
+			return nil
+		case <-reconcileTicker.C:
+			nextDesired := buildWatchDesiredProjects(mainRoot, cfg.discoverWorktrees(mainRoot))
+			applyDesired(nextDesired)
+			if cfg.scopeObserver != nil {
+				cfg.scopeObserver(len(desired))
+			}
+		case readyMsg := <-sessionReady:
+			handle, ok := managed[readyMsg.projectRoot]
+			if !ok || handle.generation != readyMsg.generation {
+				continue
+			}
+			if handle.ready {
+				continue
+			}
+			handle.ready = true
+			retryAttempts[readyMsg.projectRoot] = 0
+			delete(scheduledRetry, readyMsg.projectRoot)
+			emitLifecycle(readyMsg.projectRoot, "running", "steady")
+			if handle.initial {
+				markInitialReady(readyMsg.projectRoot)
+			}
+		case result := <-sessionResults:
+			handle, ok := managed[result.projectRoot]
+			if !ok || handle.generation != result.generation {
+				continue
+			}
+			delete(managed, result.projectRoot)
+
+			if handle.markedClose {
+				if desired[result.projectRoot] {
+					emitLifecycle(result.projectRoot, "queued", watchSessionRole(mainRoot, result.projectRoot))
+					startSession(result.projectRoot, false)
+				}
+				continue
+			}
+
+			if !desired[result.projectRoot] {
+				continue
+			}
+
+			if result.err == nil || errors.Is(result.err, context.Canceled) {
+				if result.projectRoot == mainRoot {
+					supervisorCancel()
+					shutdownSessions("main session stopped")
+					return fmt.Errorf("main watch session stopped unexpectedly")
+				}
+				emitLifecycle(result.projectRoot, "error", "session stopped unexpectedly")
+				scheduleRetry(result.projectRoot)
+				continue
+			}
+
+			if result.projectRoot == mainRoot {
+				emitLifecycle(result.projectRoot, "error", result.err.Error())
+				supervisorCancel()
+				shutdownSessions("main session failed")
+				return result.err
+			}
+
+			emitLifecycle(result.projectRoot, "error", result.err.Error())
+			scheduleRetry(result.projectRoot)
+		case retrySignal := <-retrySignalCh:
+			if !desired[retrySignal.projectRoot] {
+				continue
+			}
+			expectedAttempt, ok := scheduledRetry[retrySignal.projectRoot]
+			if !ok || expectedAttempt != retrySignal.attempt {
+				continue
+			}
+			if _, alreadyRunning := managed[retrySignal.projectRoot]; alreadyRunning {
+				continue
+			}
+			delete(scheduledRetry, retrySignal.projectRoot)
+			emitLifecycle(retrySignal.projectRoot, "queued", watchSessionRole(mainRoot, retrySignal.projectRoot))
+			startSession(retrySignal.projectRoot, false)
+		}
+	}
+}
+
+func buildWatchDesiredProjects(mainRoot string, linked []string) map[string]bool {
+	desired := map[string]bool{
+		canonicalPath(mainRoot): true,
+	}
+	mainCanonical := canonicalPath(mainRoot)
+	for _, root := range linked {
+		canonical := canonicalPath(root)
+		if canonical == mainCanonical {
+			continue
+		}
+		desired[canonical] = true
+	}
+	return desired
+}
+
+func sortedWatchProjectRoots(projects map[string]bool) []string {
+	roots := make([]string, 0, len(projects))
+	for root := range projects {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+func computeWatchSessionRetryBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= maxSessionRetryBackoff {
+			return maxSessionRetryBackoff
+		}
+	}
+	if delay > maxSessionRetryBackoff {
+		return maxSessionRetryBackoff
+	}
+	return delay
+}
+
+func watchSessionRole(mainRoot, projectRoot string) string {
+	if canonicalPath(mainRoot) == canonicalPath(projectRoot) {
+		return "primary"
+	}
+	return "linked"
 }
 
 func runWatchForeground() error {
@@ -1186,8 +1691,9 @@ func runWatchForeground() error {
 	}
 	defer emb.Close()
 
-	// Discover linked worktrees (only from main worktree)
+	// Discover linked worktrees (only from main worktree) for initial ready semantics.
 	linkedWorktrees := discoverWorktreesForWatch(projectRoot)
+	initialTotalProjects := 1 + len(linkedWorktrees)
 	if len(linkedWorktrees) > 0 {
 		if !isBackgroundChild {
 			fmt.Printf("Detected %d linked worktree(s), watching all:\n", len(linkedWorktrees))
@@ -1205,6 +1711,7 @@ func runWatchForeground() error {
 	// Handle signals at top level
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
 	// Create cancellable context for all watchers
 	watchCtx, watchCancel := context.WithCancel(ctx)
@@ -1227,81 +1734,6 @@ func runWatchForeground() error {
 		}
 	}()
 
-	// If no linked worktrees, run the main project directly using watchProject
-	// (BUG FIX: deduplicated - previously this duplicated watchProject logic inline)
-	if len(linkedWorktrees) == 0 {
-		onReady := func() {
-			if isBackgroundChild {
-				if worktreeID != "" {
-					if err := daemon.WriteWorktreeReadyFile(logDir, worktreeID); err != nil {
-						log.Printf("Warning: failed to write ready file: %v", err)
-					}
-				} else {
-					if err := daemon.WriteReadyFile(logDir); err != nil {
-						log.Printf("Warning: failed to write ready file: %v", err)
-					}
-				}
-			} else {
-				fmt.Println("\nWatching for changes... (Press Ctrl+C to stop)")
-			}
-		}
-
-		if isBackgroundChild {
-			defer func() {
-				if worktreeID != "" {
-					if err := daemon.RemoveWorktreeReadyFile(logDir, worktreeID); err != nil {
-						log.Printf("Warning: failed to remove ready file on exit: %v", err)
-					}
-				} else {
-					if err := daemon.RemoveReadyFile(logDir); err != nil {
-						log.Printf("Warning: failed to remove ready file on exit: %v", err)
-					}
-				}
-			}()
-		}
-
-		return watchProject(watchCtx, projectRoot, emb, isBackgroundChild, onReady)
-	}
-
-	// Multi-worktree mode: run all projects in parallel using errgroup
-	g, gCtx := errgroup.WithContext(watchCtx)
-
-	totalProjects := 1 + len(linkedWorktrees)
-	readyCh := make(chan struct{}, totalProjects)
-
-	makeOnReady := func() func() {
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				readyCh <- struct{}{}
-			})
-		}
-	}
-
-	// Main project
-	startProjectWatch(g, gCtx, projectRoot, emb, makeOnReady, watchProject)
-
-	// Linked worktrees
-	for _, wt := range linkedWorktrees {
-		startProjectWatch(g, gCtx, wt, emb, makeOnReady, watchProject)
-	}
-
-	// Write ready file after all watchers have actually started (or failed).
-	// Uses select to also unblock on context cancellation.
-	g.Go(func() error {
-		if err := waitForProjectsReady(gCtx, totalProjects, readyCh); err != nil {
-			return err
-		}
-		if isBackgroundChild {
-			if worktreeID != "" {
-				return daemon.WriteWorktreeReadyFile(logDir, worktreeID)
-			}
-			return daemon.WriteReadyFile(logDir)
-		}
-		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", totalProjects)
-		return nil
-	})
-
 	if isBackgroundChild {
 		defer func() {
 			if worktreeID != "" {
@@ -1316,7 +1748,58 @@ func runWatchForeground() error {
 		}()
 	}
 
-	return g.Wait()
+	var initialReadyOnce sync.Once
+	initialReadyObserver := func(totalProjects int) {
+		initialReadyOnce.Do(func() {
+			if isBackgroundChild {
+				var readyErr error
+				if worktreeID != "" {
+					readyErr = daemon.WriteWorktreeReadyFile(logDir, worktreeID)
+				} else {
+					readyErr = daemon.WriteReadyFile(logDir)
+				}
+				if readyErr != nil {
+					log.Printf("Warning: failed to write ready file: %v", readyErr)
+				}
+				return
+			}
+			if totalProjects <= 1 {
+				fmt.Println("\nWatching for changes... (Press Ctrl+C to stop)")
+				return
+			}
+			fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", totalProjects)
+		})
+	}
+
+	printLifecycle := func(project, state, note string) {
+		level := strings.ToUpper(state)
+		message := fmt.Sprintf("[%s] %s", level, project)
+		if note != "" {
+			message += " - " + note
+		}
+		if isBackgroundChild {
+			log.Println(message)
+			return
+		}
+		fmt.Println(message)
+	}
+
+	return runDynamicWatchSupervisor(
+		watchCtx,
+		projectRoot,
+		emb,
+		withWatchSupervisorBackgroundChild(isBackgroundChild),
+		withWatchSupervisorInitialLinkedWorktrees(linkedWorktrees),
+		withWatchSupervisorInitialReadyObserver(func(_ int) {
+			initialReadyObserver(initialTotalProjects)
+		}),
+		withWatchSupervisorLifecycleObserver(func(projectRoot, state, note string) {
+			switch state {
+			case "queued", "starting", "running", "retrying", "error", "removed", "stopped":
+				printLifecycle(projectRoot, state, note)
+			}
+		}),
+	)
 }
 
 func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgIndexer *rpg.RPGIndexer, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent) {

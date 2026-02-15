@@ -16,18 +16,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yoanbernabeu/grepai/config"
-	"github.com/yoanbernabeu/grepai/indexer"
-	"github.com/yoanbernabeu/grepai/rpg"
-	"github.com/yoanbernabeu/grepai/trace"
 	"github.com/yoanbernabeu/grepai/watcher"
 )
 
-const watchLedgerLimit = 300
+const (
+	watchLedgerLimit   = 300
+	removedSessionTTL  = 10 * time.Second
+	watchUIPrunePeriod = time.Second
+	watchUILogSystem   = "__system__"
+)
 
 type watchUILedgerEntry struct {
-	at    time.Time
-	level string
-	text  string
+	source string
+	at     time.Time
+	level  string
+	text   string
 }
 
 type watchUIContextMsg struct {
@@ -68,8 +71,15 @@ type watchUISymbolMsg struct {
 }
 
 type watchUILedgerMsg struct {
-	level string
-	text  string
+	source string
+	level  string
+	text   string
+}
+
+type watchUISessionMsg struct {
+	projectRoot string
+	state       string
+	note        string
 }
 
 type watchUIHealthMsg struct {
@@ -77,11 +87,22 @@ type watchUIHealthMsg struct {
 	lastSuccess time.Time
 }
 
+type watchUIScopeMsg struct {
+	totalProjects int
+}
+
+type watchUIReadyMsg struct {
+	projectRoot string
+}
+
 type watchUIErrorMsg struct {
 	err error
 }
 
 type watchUIDoneMsg struct{}
+type watchUIPruneMsg struct {
+	at time.Time
+}
 
 type watchUIModel struct {
 	theme tuiTheme
@@ -117,24 +138,46 @@ type watchUIModel struct {
 	totalEvents int
 	lastSuccess time.Time
 
+	totalProjects int
+	readyProjects int
+
+	sessions     map[string]watchUISessionState
+	sessionOrder []string
+	sessionFocus int
+
 	events []watchUILedgerEntry
 
-	paused   bool
-	showHelp bool
-	stopping bool
-	done     bool
-	err      error
-	started  time.Time
+	paused      bool
+	pausedAtIdx int
+	showHelp    bool
+	stopping    bool
+	done        bool
+	err         error
+	started     time.Time
+}
+
+type watchUISessionState struct {
+	projectRoot string
+	label       string
+	state       string
+	note        string
+	events      int
+	updatedAt   time.Time
+	removedAt   time.Time
 }
 
 func newWatchUIModel(cancel context.CancelFunc) watchUIModel {
 	return watchUIModel{
-		theme:       newTUITheme(),
-		cancel:      cancel,
-		phases:      []string{"Preflight", "Scan", "Embed", "Symbol", "Steady"},
-		currentStep: 0,
-		events:      make([]watchUILedgerEntry, 0, watchLedgerLimit),
-		started:     time.Now(),
+		theme:         newTUITheme(),
+		cancel:        cancel,
+		phases:        []string{"Preflight", "Scan", "Embed", "Symbol", "Steady"},
+		currentStep:   0,
+		totalProjects: 1,
+		sessions:      make(map[string]watchUISessionState),
+		sessionOrder:  make([]string, 0, 4),
+		sessionFocus:  -1,
+		events:        make([]watchUILedgerEntry, 0, watchLedgerLimit),
+		started:       time.Now(),
 	}
 }
 
@@ -160,9 +203,17 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 			}
 		case "p":
-			m.paused = !m.paused
+			if m.paused {
+				m.paused = false
+				m.pausedAtIdx = 0
+			} else {
+				m.paused = true
+				m.pausedAtIdx = len(m.events)
+			}
 		case "?":
 			m.showHelp = !m.showHelp
+		case "tab":
+			m.cycleSessionFocus()
 		}
 	case watchUIContextMsg:
 		m.projectRoot = msg.projectRoot
@@ -205,30 +256,67 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.symbolCount = msg.count
 		m.currentStep = 3
 	case watchUILedgerMsg:
-		if m.paused {
-			return m, nil
+		source := msg.source
+		if source == "" {
+			source = m.projectRoot
 		}
 		m.events = append(m.events, watchUILedgerEntry{
-			at:    time.Now(),
-			level: msg.level,
-			text:  msg.text,
+			source: source,
+			at:     time.Now(),
+			level:  msg.level,
+			text:   msg.text,
 		})
+		if session, ok := m.sessions[source]; ok {
+			session.events++
+			session.updatedAt = time.Now()
+			m.sessions[source] = session
+		}
 		if len(m.events) > watchLedgerLimit {
+			dropped := len(m.events) - watchLedgerLimit
 			m.events = m.events[len(m.events)-watchLedgerLimit:]
+			if m.paused && m.pausedAtIdx > 0 {
+				m.pausedAtIdx -= dropped
+				if m.pausedAtIdx < 0 {
+					m.pausedAtIdx = 0
+				}
+			}
 		}
 	case watchUIHealthMsg:
 		m.totalEvents = msg.totalEvents
 		m.lastSuccess = msg.lastSuccess
+	case watchUIScopeMsg:
+		if msg.totalProjects < 1 {
+			msg.totalProjects = 1
+		}
+		m.totalProjects = msg.totalProjects
+		m.recomputeReadyProjects()
+		m.ensureSessionFocusValid()
+	case watchUIReadyMsg:
+		m.upsertSession(msg.projectRoot, "running", "steady")
+		m.recomputeReadyProjects()
+		m.ensureSessionFocusValid()
+	case watchUISessionMsg:
+		m.upsertSession(msg.projectRoot, msg.state, msg.note)
+		m.recomputeReadyProjects()
+		m.ensureSessionFocusValid()
+		if msg.state == "removed" {
+			return m, watchUIPruneCmd()
+		}
 	case watchUIErrorMsg:
 		m.err = msg.err
 		m.events = append(m.events, watchUILedgerEntry{
-			at:    time.Now(),
-			level: "error",
-			text:  msg.err.Error(),
+			source: m.projectRoot,
+			at:     time.Now(),
+			level:  "error",
+			text:   msg.err.Error(),
 		})
 	case watchUIDoneMsg:
 		m.done = true
 		return m, tea.Quit
+	case watchUIPruneMsg:
+		if m.pruneRemovedSessions(msg.at) {
+			return m, watchUIPruneCmd()
+		}
 	}
 	return m, nil
 }
@@ -244,11 +332,15 @@ func (m watchUIModel) View() string {
 	help := m.renderFooter()
 
 	if m.showHelp {
+		controls := "q: graceful stop | p: pause ledger | ?: toggle help"
+		if m.totalProjects > 1 {
+			controls += " | tab: cycle session focus"
+		}
 		helpCard := renderActionCard(
 			m.theme,
 			"Controls",
 			"Interactive watch controls",
-			"q: graceful stop | p: pause ledger | ?: toggle help",
+			controls,
 			m.width-2,
 		)
 		return m.theme.canvas.Render(lipgloss.JoinVertical(lipgloss.Left, top, rail, content, helpCard, help))
@@ -257,10 +349,164 @@ func (m watchUIModel) View() string {
 	return m.theme.canvas.Render(lipgloss.JoinVertical(lipgloss.Left, top, rail, content, help))
 }
 
+func (m *watchUIModel) upsertSession(projectRoot, state, note string) {
+	if projectRoot == "" {
+		return
+	}
+	session, ok := m.sessions[projectRoot]
+	if !ok {
+		session = watchUISessionState{
+			projectRoot: projectRoot,
+			label:       watchSessionLabel(projectRoot),
+		}
+		m.sessionOrder = append(m.sessionOrder, projectRoot)
+	}
+	session.state = state
+	session.note = note
+	session.updatedAt = time.Now()
+	if state == "removed" {
+		session.removedAt = session.updatedAt
+	} else {
+		session.removedAt = time.Time{}
+	}
+	m.sessions[projectRoot] = session
+}
+
+func (m *watchUIModel) cycleSessionFocus() {
+	if m.totalProjects <= 1 || len(m.sessionOrder) == 0 {
+		m.sessionFocus = -1
+		return
+	}
+	maxFocus := len(m.sessionOrder) - 1
+	if m.sessionFocus < maxFocus {
+		m.sessionFocus++
+		return
+	}
+	m.sessionFocus = -1
+}
+
+func (m *watchUIModel) recomputeReadyProjects() {
+	ready := 0
+	for _, session := range m.sessions {
+		if session.state == "running" {
+			ready++
+		}
+	}
+	if ready > m.totalProjects {
+		ready = m.totalProjects
+	}
+	if ready < 0 {
+		ready = 0
+	}
+	m.readyProjects = ready
+}
+
+func (m *watchUIModel) ensureSessionFocusValid() {
+	if m.totalProjects <= 1 {
+		m.sessionFocus = -1
+		return
+	}
+	if m.sessionFocus < 0 {
+		return
+	}
+	if m.sessionFocus >= len(m.sessionOrder) {
+		m.sessionFocus = -1
+		return
+	}
+	root := m.sessionOrder[m.sessionFocus]
+	session, exists := m.sessions[root]
+	if !exists {
+		m.sessionFocus = -1
+		return
+	}
+	if session.state == "removed" {
+		m.sessionFocus = -1
+	}
+}
+
+func (m *watchUIModel) pruneRemovedSessions(now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	removed := make(map[string]bool)
+	hasPendingRemoved := false
+	for root, session := range m.sessions {
+		if session.state != "removed" || session.removedAt.IsZero() {
+			continue
+		}
+		if now.Sub(session.removedAt) >= removedSessionTTL {
+			removed[root] = true
+			continue
+		}
+		hasPendingRemoved = true
+	}
+
+	if len(removed) == 0 {
+		return hasPendingRemoved
+	}
+
+	for root := range removed {
+		delete(m.sessions, root)
+	}
+	filtered := make([]string, 0, len(m.sessionOrder))
+	for _, root := range m.sessionOrder {
+		if removed[root] {
+			continue
+		}
+		filtered = append(filtered, root)
+	}
+	m.sessionOrder = filtered
+	m.ensureSessionFocusValid()
+	m.recomputeReadyProjects()
+
+	return hasPendingRemoved
+}
+
+func (m watchUIModel) selectedSessionRoot() string {
+	if m.sessionFocus < 0 || m.sessionFocus >= len(m.sessionOrder) {
+		return ""
+	}
+	return m.sessionOrder[m.sessionFocus]
+}
+
+func (m watchUIModel) selectedSessionLabel() string {
+	root := m.selectedSessionRoot()
+	if root == "" {
+		return "all sessions"
+	}
+	if session, ok := m.sessions[root]; ok && session.label != "" {
+		return session.label
+	}
+	return watchSessionLabel(root)
+}
+
+func watchSessionLabel(path string) string {
+	if path == watchUILogSystem {
+		return "system"
+	}
+	clean := filepath.Clean(path)
+	base := filepath.Base(clean)
+	parent := filepath.Base(filepath.Dir(clean))
+	if base == "." || base == string(filepath.Separator) {
+		return clean
+	}
+	if parent == "." || parent == string(filepath.Separator) || parent == base {
+		return base
+	}
+	return parent + "/" + base
+}
+
 func (m watchUIModel) renderHeader() string {
 	uptime := time.Since(m.started).Round(time.Second)
 	title := m.theme.title.Render("grepai watch")
-	meta := m.theme.muted.Render(fmt.Sprintf("project=%s", m.projectRoot))
+	meta := m.theme.muted.Render(fmt.Sprintf(
+		"project=%s  scope=%d/%d ready  focus=%s",
+		m.projectRoot,
+		m.readyProjects,
+		m.totalProjects,
+		m.selectedSessionLabel(),
+	))
 	info := m.theme.text.Render(fmt.Sprintf("provider=%s/%s  backend=%s  rpg=%s  uptime=%s",
 		m.provider, m.model, m.backend, m.rpg, uptime))
 	if m.stopping {
@@ -292,6 +538,19 @@ func (m watchUIModel) renderMainPanels() string {
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, leftTop, leftBottom)
 
 	rightCol := m.renderHealthPanel(rightW, topHeight+bottomHeight)
+	if m.totalProjects > 1 {
+		sessionHeight := topHeight
+		if sessionHeight < 6 {
+			sessionHeight = 6
+		}
+		healthHeight := topHeight + bottomHeight - sessionHeight
+		if healthHeight < 6 {
+			healthHeight = 6
+		}
+		sessionPanel := m.renderSessionPanel(rightW, sessionHeight)
+		healthPanel := m.renderHealthPanel(rightW, healthHeight)
+		rightCol = lipgloss.JoinVertical(lipgloss.Left, sessionPanel, healthPanel)
+	}
 
 	if leftW <= 0 {
 		return rightCol
@@ -318,15 +577,36 @@ func (m watchUIModel) renderProgressPanel(width, height int) string {
 }
 
 func (m watchUIModel) renderLedgerPanel(width, height int) string {
-	lines := []string{m.theme.subtitle.Render("Event Ledger")}
+	lines := []string{m.theme.subtitle.Render("Event Ledger · " + m.selectedSessionLabel())}
 	if m.paused {
 		lines = append(lines, m.theme.warn.Render("[paused]"))
 	}
 
 	entries := m.events
+	hidden := 0
+	if m.paused {
+		if m.pausedAtIdx < 0 {
+			m.pausedAtIdx = 0
+		}
+		if m.pausedAtIdx > len(m.events) {
+			m.pausedAtIdx = len(m.events)
+		}
+		hidden = len(m.events) - m.pausedAtIdx
+		entries = m.events[:m.pausedAtIdx]
+	}
 	maxRows := height - 3
 	if maxRows < 1 {
 		maxRows = 1
+	}
+	focusedRoot := m.selectedSessionRoot()
+	if focusedRoot != "" {
+		filtered := make([]watchUILedgerEntry, 0, len(entries))
+		for _, ev := range entries {
+			if ev.source == focusedRoot {
+				filtered = append(filtered, ev)
+			}
+		}
+		entries = filtered
 	}
 	if len(entries) > maxRows {
 		entries = entries[len(entries)-maxRows:]
@@ -346,12 +626,73 @@ func (m watchUIModel) renderLedgerPanel(width, height int) string {
 				levelStyle = m.theme.ok
 			}
 			ts := ev.at.Format("15:04:05")
-			lines = append(lines, fmt.Sprintf("%s %s %s",
+			sourceLabel := truncateRunes(watchSessionLabel(ev.source), 16)
+			lines = append(lines, fmt.Sprintf("%s %s %s %s",
 				m.theme.muted.Render(ts),
 				levelStyle.Render(strings.ToUpper(ev.level)),
-				truncateRunes(ev.text, width-22)))
+				m.theme.muted.Render(sourceLabel),
+				truncateRunes(ev.text, width-40)))
 		}
 	}
+	if m.paused && hidden > 0 {
+		lines = append(lines, m.theme.warn.Render(fmt.Sprintf("+%d new events buffered", hidden)))
+	}
+	return m.theme.panel.Width(width).Height(height).Render(strings.Join(lines, "\n"))
+}
+
+func (m watchUIModel) renderSessionPanel(width, height int) string {
+	lines := []string{m.theme.subtitle.Render("Worktree Sessions")}
+	lines = append(lines, m.theme.muted.Render("tab cycles focus (all -> session...)"))
+
+	if len(m.sessionOrder) == 0 {
+		lines = append(lines, m.theme.muted.Render("No sessions yet"))
+		return m.theme.panel.Width(width).Height(height).Render(strings.Join(lines, "\n"))
+	}
+
+	allMarker := " "
+	if m.selectedSessionRoot() == "" {
+		allMarker = ">"
+	}
+	lines = append(lines, fmt.Sprintf("%s %s", allMarker, m.theme.text.Render("all sessions")))
+
+	maxRows := height - 3
+	if maxRows < 1 {
+		maxRows = 1
+	}
+
+	for _, root := range m.sessionOrder {
+		session, ok := m.sessions[root]
+		if !ok {
+			continue
+		}
+		if len(lines)-2 >= maxRows {
+			break
+		}
+		marker := " "
+		if m.selectedSessionRoot() == root {
+			marker = ">"
+		}
+		stateStyle := m.theme.info
+		switch session.state {
+		case "running":
+			stateStyle = m.theme.ok
+		case "retrying":
+			stateStyle = m.theme.warn
+		case "error":
+			stateStyle = m.theme.danger
+		case "removed", "stopped":
+			stateStyle = m.theme.warn
+		}
+		line := fmt.Sprintf(
+			"%s %s %s e=%d",
+			marker,
+			stateStyle.Render(strings.ToUpper(session.state)),
+			truncateRunes(session.label, width-24),
+			session.events,
+		)
+		lines = append(lines, line)
+	}
+
 	return m.theme.panel.Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
 
@@ -375,6 +716,7 @@ func (m watchUIModel) renderHealthPanel(width, height int) string {
 	lines := []string{
 		m.theme.subtitle.Render("Health"),
 		m.theme.text.Render("State: " + state),
+		m.theme.text.Render(fmt.Sprintf("Watch scope: %d/%d ready", m.readyProjects, m.totalProjects)),
 		m.theme.text.Render(fmt.Sprintf("Total events: %d", m.totalEvents)),
 		m.theme.text.Render(fmt.Sprintf("Last success: %s", lastSuccess)),
 		m.theme.text.Render(fmt.Sprintf("Indexed files: %d", m.filesIndexed)),
@@ -393,6 +735,26 @@ func (m watchUIModel) renderFooter() string {
 		m.theme.help.Render("q stop"),
 		m.theme.help.Render("p pause ledger"),
 		m.theme.help.Render("? help"),
+	}
+	if m.totalProjects > 1 {
+		parts = append(parts, m.theme.help.Render("tab session"))
+		parts = append(parts, m.theme.muted.Render("focus="+m.selectedSessionLabel()))
+	}
+	retrying := 0
+	removed := 0
+	for _, session := range m.sessions {
+		if session.state == "retrying" {
+			retrying++
+		}
+		if session.state == "removed" {
+			removed++
+		}
+	}
+	if retrying > 0 {
+		parts = append(parts, m.theme.warn.Render(fmt.Sprintf("retrying=%d", retrying)))
+	}
+	if removed > 0 {
+		parts = append(parts, m.theme.warn.Render(fmt.Sprintf("removed=%d", removed)))
 	}
 	if m.paused {
 		parts = append(parts, m.theme.warn.Render("ledger paused"))
@@ -436,6 +798,134 @@ func runWatchForegroundUI() error {
 	return nil
 }
 
+func sendWatchUILedger(p *tea.Program, source, level, text string) {
+	p.Send(watchUILedgerMsg{
+		source: source,
+		level:  level,
+		text:   text,
+	})
+}
+
+func watchUIPruneCmd() tea.Cmd {
+	return tea.Tick(watchUIPrunePeriod, func(at time.Time) tea.Msg {
+		return watchUIPruneMsg{at: at}
+	})
+}
+
+type watchUILogForwarder struct {
+	p             *tea.Program
+	resolveSource func(line string) string
+	mu            sync.Mutex
+	pending       string
+}
+
+func (w *watchUILogForwarder) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.pending += string(p)
+	for {
+		newline := strings.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := strings.TrimSpace(w.pending[:newline])
+		w.pending = w.pending[newline+1:]
+		w.emitLine(line)
+	}
+	return len(p), nil
+}
+
+func (w *watchUILogForwarder) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	line := strings.TrimSpace(w.pending)
+	w.pending = ""
+	w.emitLine(line)
+}
+
+func (w *watchUILogForwarder) emitLine(line string) {
+	if line == "" {
+		return
+	}
+	source := watchUILogSystem
+	if w.resolveSource != nil {
+		if resolved := w.resolveSource(line); resolved != "" {
+			source = resolved
+		}
+	}
+	sendWatchUILedger(w.p, source, watchUILogLevel(line), line)
+}
+
+func watchUILogLevel(line string) string {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "error") || strings.Contains(lower, "failed") {
+		return "error"
+	}
+	if strings.Contains(lower, "warn") {
+		return "warn"
+	}
+	return "info"
+}
+
+func newWatchUILogSourceResolver(initialRoots ...string) (func(projectRoot string), func(line string) string) {
+	var mu sync.RWMutex
+	known := make(map[string]bool, len(initialRoots))
+	for _, root := range initialRoots {
+		if root == "" {
+			continue
+		}
+		known[root] = true
+	}
+
+	register := func(projectRoot string) {
+		if projectRoot == "" {
+			return
+		}
+		mu.Lock()
+		known[projectRoot] = true
+		mu.Unlock()
+	}
+
+	resolve := func(line string) string {
+		mu.RLock()
+		defer mu.RUnlock()
+		match := ""
+		for root := range known {
+			if strings.Contains(line, root) && len(root) > len(match) {
+				match = root
+			}
+		}
+		if match == "" {
+			return watchUILogSystem
+		}
+		return match
+	}
+
+	return register, resolve
+}
+
+func captureWatchUILogs(p *tea.Program, resolveSource func(line string) string) func() {
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	oldPrefix := log.Prefix()
+
+	forwarder := &watchUILogForwarder{
+		p:             p,
+		resolveSource: resolveSource,
+	}
+	log.SetFlags(0)
+	log.SetPrefix("")
+	log.SetOutput(forwarder)
+
+	return func() {
+		forwarder.flush()
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
+	}
+}
+
 func runWatchUIWorker(ctx context.Context, p *tea.Program) (err error) {
 	defer func() {
 		if err != nil {
@@ -456,6 +946,16 @@ func runWatchUIWorker(ctx context.Context, p *tea.Program) (err error) {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	initialLinked := discoverWorktreesForWatch(projectRoot)
+
+	registerLogSource, resolveLogSource := newWatchUILogSourceResolver(projectRoot)
+	for _, linkedRoot := range initialLinked {
+		registerLogSource(linkedRoot)
+	}
+
+	restoreLogs := captureWatchUILogs(p, resolveLogSource)
+	defer restoreLogs()
+
 	rpgState := "disabled"
 	if cfg.RPG.Enabled {
 		rpgState = "enabled"
@@ -467,218 +967,20 @@ func runWatchUIWorker(ctx context.Context, p *tea.Program) (err error) {
 		backend:     cfg.Store.Backend,
 		rpg:         rpgState,
 	})
-	p.Send(watchUILedgerMsg{level: "info", text: "Starting watcher runtime"})
+	sendWatchUILedger(p, projectRoot, "info", "Starting watcher runtime")
+	p.Send(watchUIPhaseMsg{current: 1})
 
-	emb, err := initializeEmbedder(ctx, cfg)
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	defer watchCancel()
+
+	emb, err := initializeEmbedder(watchCtx, cfg)
 	if err != nil {
 		return err
 	}
 	defer emb.Close()
 
-	st, err := initializeStore(ctx, cfg, projectRoot)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
-	if err != nil {
-		return fmt.Errorf("failed to initialize ignore matcher: %w", err)
-	}
-	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
-	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
-	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
-
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
-	if err := symbolStore.Load(ctx); err != nil {
-		log.Printf("Warning: failed to load symbol index for %s: %v", projectRoot, err)
-	}
-	defer symbolStore.Close()
-
-	extractor := trace.NewRegexExtractor()
-	tracedLanguages := cfg.Trace.EnabledLanguages
-	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
-	}
-
-	p.Send(watchUIPhaseMsg{current: 1})
-	p.Send(watchUILedgerMsg{level: "info", text: "Running initial scan"})
-
-	stats, err := idx.IndexAllWithBatchProgress(ctx,
-		func(info indexer.ProgressInfo) {
-			p.Send(watchUIScanMsg{
-				current: info.Current,
-				total:   info.Total,
-				file:    info.CurrentFile,
-			})
-		},
-		func(info indexer.BatchProgressInfo) {
-			p.Send(watchUIEmbedMsg{
-				completed: info.CompletedChunks,
-				total:     info.TotalChunks,
-				retrying:  info.Retrying,
-				attempt:   info.Attempt,
-				status:    info.StatusCode,
-			})
-			if info.Retrying {
-				p.Send(watchUILedgerMsg{
-					level: "warn",
-					text:  fmt.Sprintf("Embedding retry: batch=%d attempt=%d status=%d", info.BatchIndex+1, info.Attempt, info.StatusCode),
-				})
-			}
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("initial indexing failed: %w", err)
-	}
-	p.Send(watchUISummaryMsg{
-		filesIndexed:  stats.FilesIndexed,
-		filesSkipped:  stats.FilesSkipped,
-		chunksCreated: stats.ChunksCreated,
-		filesRemoved:  stats.FilesRemoved,
-	})
-	p.Send(watchUILedgerMsg{
-		level: "ok",
-		text: fmt.Sprintf("Initial scan complete: indexed=%d chunks=%d removed=%d skipped=%d",
-			stats.FilesIndexed, stats.ChunksCreated, stats.FilesRemoved, stats.FilesSkipped),
-	})
-
-	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
-		cfg.Watch.LastIndexTime = time.Now()
-		if err := cfg.Save(projectRoot); err != nil {
-			log.Printf("Warning: failed to save config: %v", err)
-			p.Send(watchUILedgerMsg{level: "warn", text: "Failed to save updated watch timestamp"})
-		}
-	}
-
-	p.Send(watchUIPhaseMsg{current: 3})
-	p.Send(watchUILedgerMsg{level: "info", text: "Building symbol index"})
-	symbolCount := 0
-	files, _, scanErr := scanner.ScanMetadata()
-	if scanErr != nil {
-		log.Printf("Warning: failed to scan files for symbol index: %v", scanErr)
-		p.Send(watchUILedgerMsg{level: "warn", text: fmt.Sprintf("Symbol scan warning: %v", scanErr)})
-	} else {
-		for _, file := range files {
-			ext := strings.ToLower(filepath.Ext(file.Path))
-			if !isTracedLanguage(ext, tracedLanguages) {
-				continue
-			}
-			if !cfg.Watch.LastIndexTime.IsZero() {
-				fileModTime := time.Unix(file.ModTime, 0)
-				if (fileModTime.Before(cfg.Watch.LastIndexTime) || fileModTime.Equal(cfg.Watch.LastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
-					continue
-				}
-			}
-
-			fileInfo, scanFileErr := scanner.ScanFile(file.Path)
-			if scanFileErr != nil {
-				log.Printf("Warning: failed to scan %s for symbols: %v", file.Path, scanFileErr)
-				continue
-			}
-			if fileInfo == nil {
-				continue
-			}
-
-			if existingHash, ok := symbolStore.GetFileContentHash(fileInfo.Path); ok && existingHash == fileInfo.Hash {
-				continue
-			}
-
-			symbols, refs, extractErr := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
-			if extractErr != nil {
-				log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, extractErr)
-				continue
-			}
-			if saveErr := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); saveErr != nil {
-				log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, saveErr)
-				continue
-			}
-			symbolCount += len(symbols)
-		}
-	}
-	if err := symbolStore.Persist(ctx); err != nil {
-		log.Printf("Warning: failed to persist symbol index: %v", err)
-	}
-	p.Send(watchUISymbolMsg{count: symbolCount})
-	p.Send(watchUILedgerMsg{level: "ok", text: fmt.Sprintf("Symbol index built: %d symbols", symbolCount)})
-
-	var rpgIndexer *rpg.RPGIndexer
-	var rpgStore rpg.RPGStore
-	var rpgManager *rpgRealtimeManager
-
-	if cfg.RPG.Enabled {
-		rpgStore = rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
-		if loadErr := rpgStore.Load(ctx); loadErr != nil {
-			log.Printf("Warning: failed to load RPG index for %s: %v", projectRoot, loadErr)
-		}
-
-		var featureExtractor rpg.FeatureExtractor
-		switch cfg.RPG.FeatureMode {
-		case "llm", "hybrid":
-			if cfg.RPG.LLMEndpoint == "" || cfg.RPG.LLMModel == "" {
-				featureExtractor = rpg.NewLocalExtractor()
-				p.Send(watchUILedgerMsg{level: "warn", text: "RPG LLM settings missing, fallback to local extractor"})
-			} else {
-				featureExtractor = rpg.NewLLMExtractor(rpg.LLMExtractorConfig{
-					Provider: cfg.RPG.LLMProvider,
-					Model:    cfg.RPG.LLMModel,
-					Endpoint: cfg.RPG.LLMEndpoint,
-					APIKey:   cfg.RPG.LLMAPIKey,
-					Timeout:  time.Duration(cfg.RPG.LLMTimeoutMs) * time.Millisecond,
-				})
-			}
-		default:
-			featureExtractor = rpg.NewLocalExtractor()
-		}
-
-		rpgIndexer = rpg.NewRPGIndexer(rpgStore, featureExtractor, projectRoot, rpg.RPGIndexerConfig{
-			DriftThreshold:       cfg.RPG.DriftThreshold,
-			MaxTraversalDepth:    cfg.RPG.MaxTraversalDepth,
-			FeatureGroupStrategy: cfg.RPG.FeatureGroupStrategy,
-		})
-		if buildErr := rpgIndexer.BuildFull(ctx, symbolStore, st); buildErr != nil {
-			log.Printf("Warning: failed to build RPG graph for %s: %v", projectRoot, buildErr)
-			p.Send(watchUILedgerMsg{level: "warn", text: fmt.Sprintf("RPG build warning: %v", buildErr)})
-		} else {
-			stats := rpgStore.GetGraph().Stats()
-			p.Send(watchUILedgerMsg{
-				level: "ok",
-				text:  fmt.Sprintf("RPG built: nodes=%d edges=%d", stats.TotalNodes, stats.TotalEdges),
-			})
-		}
-		if persistErr := rpgStore.Persist(ctx); persistErr != nil {
-			log.Printf("Warning: failed to persist RPG graph: %v", persistErr)
-		}
-
-		rpgManager = newRPGRealtimeManager(cfg.Watch.RPGMaxDirtyFilesPerBatch)
-		startRPGRealtimeWorkers(ctx, projectRoot, symbolStore, rpgIndexer, rpgStore, cfg.Watch, rpgManager)
-		defer rpgStore.Close()
-	}
-
-	if err := st.Persist(ctx); err != nil {
-		log.Printf("Warning: failed to persist index: %v", err)
-	}
-
-	w, err := watcher.NewWatcher(projectRoot, ignoreMatcher, cfg.Watch.DebounceMs)
-	if err != nil {
-		return fmt.Errorf("failed to initialize watcher for %s: %w", projectRoot, err)
-	}
-	defer w.Close()
-
-	if err := w.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start watcher for %s: %w", projectRoot, err)
-	}
-
-	p.Send(watchUIPhaseMsg{current: 4})
-	p.Send(watchUILedgerMsg{level: "ok", text: "Watching for changes"})
-
-	persistTicker := time.NewTicker(30 * time.Second)
-	defer persistTicker.Stop()
-
-	var lastConfigWrite time.Time
 	totalEvents := 0
 	var lastSuccess time.Time
-
 	var healthMu sync.Mutex
 	emitHealth := func() {
 		healthMu.Lock()
@@ -689,58 +991,55 @@ func runWatchUIWorker(ctx context.Context, p *tea.Program) (err error) {
 		})
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			if err := st.Persist(context.Background()); err != nil {
-				log.Printf("Warning: failed to persist index on shutdown: %v", err)
-			}
-			if err := symbolStore.Persist(context.Background()); err != nil {
-				log.Printf("Warning: failed to persist symbol index on shutdown: %v", err)
-			}
-			if rpgStore != nil {
-				if err := rpgStore.Persist(context.Background()); err != nil {
-					log.Printf("Warning: failed to persist RPG graph on shutdown: %v", err)
-				}
-			}
-			p.Send(watchUILedgerMsg{level: "warn", text: "Watcher stopped"})
-			return nil
-		case <-persistTicker.C:
-			if err := st.Persist(ctx); err != nil {
-				log.Printf("Warning: failed to persist index: %v", err)
-			}
-			if err := symbolStore.Persist(ctx); err != nil {
-				log.Printf("Warning: failed to persist symbol index: %v", err)
-			}
-			if rpgStore != nil {
-				if err := rpgStore.Persist(ctx); err != nil {
-					log.Printf("Warning: failed to persist RPG graph: %v", err)
-				}
-			}
-		case event := <-w.Events():
-			totalEvents++
-			p.Send(watchUILedgerMsg{
-				level: "info",
-				text:  fmt.Sprintf("[%s] %s", event.Type.String(), event.Path),
+	return runDynamicWatchSupervisor(
+		watchCtx,
+		projectRoot,
+		emb,
+		withWatchSupervisorBackgroundChild(true),
+		withWatchSupervisorInitialLinkedWorktrees(initialLinked),
+		withWatchSupervisorScopeObserver(func(totalProjects int) {
+			p.Send(watchUIScopeMsg{totalProjects: totalProjects})
+		}),
+		withWatchSupervisorInitialReadyObserver(func(totalProjects int) {
+			sendWatchUILedger(
+				p,
+				projectRoot,
+				"ok",
+				fmt.Sprintf("Watching %d project(s) for changes", totalProjects),
+			)
+			p.Send(watchUIPhaseMsg{current: 4})
+		}),
+		withWatchSupervisorLifecycleObserver(func(root, state, note string) {
+			registerLogSource(root)
+			p.Send(watchUISessionMsg{
+				projectRoot: root,
+				state:       state,
+				note:        note,
 			})
 
-			handleFileEvent(
-				ctx,
-				idx,
-				scanner,
-				extractor,
-				symbolStore,
-				rpgIndexer,
-				st,
-				tracedLanguages,
-				projectRoot,
-				cfg,
-				&lastConfigWrite,
-				rpgManager,
-				event,
-			)
+			switch state {
+			case "starting":
+				sendWatchUILedger(p, root, "info", "Session starting")
+			case "running":
+				p.Send(watchUIReadyMsg{projectRoot: root})
+				sendWatchUILedger(p, root, "ok", "Session running")
+			case "retrying":
+				sendWatchUILedger(p, root, "warn", "Retry scheduled: "+note)
+			case "error":
+				sendWatchUILedger(p, root, "error", note)
+			case "removed":
+				sendWatchUILedger(p, root, "warn", "Session removed")
+			case "stopped":
+				sendWatchUILedger(p, root, "warn", "Session stopped")
+			}
+		}),
+		withWatchSupervisorEventObserver(func(sourceRoot string, event watcher.FileEvent) {
+			sendWatchUILedger(p, sourceRoot, "info", fmt.Sprintf("[%s] %s", event.Type.String(), event.Path))
+			healthMu.Lock()
+			totalEvents++
 			lastSuccess = time.Now()
+			healthMu.Unlock()
 			emitHealth()
-		}
-	}
+		}),
+	)
 }
