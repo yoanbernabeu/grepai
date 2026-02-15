@@ -20,6 +20,13 @@ This creates a `.grepai/` directory with a `config.yaml` file.
 grepai watch
 ```
 
+If you're in an interactive terminal, this opens the watch UI by default.
+To force plain output (for scripts or logs), use:
+
+```bash
+grepai watch --no-ui
+```
+
 This will:
 1. Scan your codebase
 2. Split files into chunks
@@ -54,6 +61,12 @@ grepai search "authentication" --json --compact
 
 ```bash
 grepai status
+```
+
+For plain script-friendly status output:
+
+```bash
+grepai status --no-ui
 ```
 
 This shows:

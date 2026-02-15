@@ -32,6 +32,7 @@ var (
 	watchStatus     bool
 	watchStop       bool
 	watchWorkspace  string
+	watchNoUI       bool
 )
 
 var watchCmd = &cobra.Command{
@@ -72,6 +73,7 @@ func init() {
 	watchCmd.Flags().BoolVar(&watchStatus, "status", false, "Show background watcher status")
 	watchCmd.Flags().BoolVar(&watchStop, "stop", false, "Stop the background watcher")
 	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
+	watchCmd.Flags().BoolVar(&watchNoUI, "no-ui", false, "Disable interactive UI in foreground mode")
 }
 
 func runWatch(cmd *cobra.Command, args []string) error {
@@ -105,6 +107,11 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		return runWorkspaceWatch(logDir)
 	}
 
+	projectRoot, err := config.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+
 	// Detect worktree
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -124,12 +131,20 @@ func runWatch(cmd *cobra.Command, args []string) error {
 
 	// Handle --stop flag
 	if watchStop {
-		return stopWatchDaemon(logDir, worktreeID)
+		if err := stopWatchDaemon(logDir, worktreeID); err != nil {
+			return err
+		}
+		_ = clearWatchLogDirHint(projectRoot)
+		return nil
 	}
 
 	// Handle --background flag
 	if watchBackground {
-		return startBackgroundWatch(logDir, worktreeID)
+		if err := startBackgroundWatch(logDir, worktreeID); err != nil {
+			return err
+		}
+		_ = saveWatchLogDirHint(projectRoot, logDir)
+		return nil
 	}
 
 	// Check if already running in background (automatically cleans up stale PIDs)
@@ -148,6 +163,17 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	}
 	if pid > 0 {
 		return fmt.Errorf("watcher is already running in background (PID %d)\nUse 'grepai watch --stop' to stop it", pid)
+	}
+
+	if shouldUseWatchUI(
+		isInteractiveTerminal(),
+		watchNoUI,
+		watchBackground,
+		watchStatus,
+		watchStop,
+		watchWorkspace,
+	) {
+		return runWatchForegroundUI()
 	}
 
 	// Run in foreground mode
