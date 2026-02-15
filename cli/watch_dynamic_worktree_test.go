@@ -302,10 +302,10 @@ func TestDynamicWatch_LinkedFailureIsIsolatedWithRetry(t *testing.T) {
 		state       string
 	}
 	pending := map[lifecycleKey]bool{
-		{projectRoot: canonicalPath(mainRoot), state: "running"}:   true,
-		{projectRoot: canonicalPath(linkedRoot), state: "error"}:   true,
+		{projectRoot: canonicalPath(mainRoot), state: "running"}:    true,
+		{projectRoot: canonicalPath(linkedRoot), state: "error"}:    true,
 		{projectRoot: canonicalPath(linkedRoot), state: "retrying"}: true,
-		{projectRoot: canonicalPath(linkedRoot), state: "running"}: true,
+		{projectRoot: canonicalPath(linkedRoot), state: "running"}:  true,
 	}
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
