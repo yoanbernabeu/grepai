@@ -336,7 +336,7 @@ func runInitWizardUI(cwd string, baseCfg *config.Config, gitInfo *git.DetectInfo
 		return nil, fmt.Errorf("unexpected init UI model type")
 	}
 	if result.canceled || result.result == nil {
-		return nil, fmt.Errorf("initialization cancelled")
+		return nil, fmt.Errorf("initialization canceled")
 	}
 	return result.result, nil
 }

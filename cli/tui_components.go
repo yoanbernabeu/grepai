@@ -3,8 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func renderLifecycleRail(theme tuiTheme, phases []string, current int) string {
@@ -14,7 +12,7 @@ func renderLifecycleRail(theme tuiTheme, phases []string, current int) string {
 
 	segments := make([]string, 0, len(phases)*2-1)
 	for i, phase := range phases {
-		label := phase
+		var label string
 		switch {
 		case i < current:
 			label = theme.railDone.Render("[" + phase + "]")
@@ -116,9 +114,4 @@ func panelHeights(total int) (int, int) {
 		top = total - bottom
 	}
 	return top, bottom
-}
-
-func joinVerticalWithGap(gap int, blocks ...string) string {
-	sep := strings.Repeat("\n", gap)
-	return lipgloss.JoinVertical(lipgloss.Left, strings.Join(blocks, sep))
 }

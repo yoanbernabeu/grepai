@@ -191,7 +191,7 @@ func createWorkspaceTUI(workspaceName string) (*config.Workspace, error) {
 		return nil, fmt.Errorf("unexpected workspace create model type")
 	}
 	if result.canceled || result.result == nil {
-		return nil, fmt.Errorf("workspace creation cancelled")
+		return nil, fmt.Errorf("workspace creation canceled")
 	}
 	return result.result, nil
 }
