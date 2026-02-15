@@ -115,20 +115,22 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 			})
 		}
 
-		// Skip files modified before lastIndexTime
-		if !idx.lastIndexTime.IsZero() {
+		// Fetch the document once — used by both the mod-time gate and hash check.
+		doc, err := idx.store.GetDocument(ctx, fileMeta.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get document %s: %w", fileMeta.Path, err)
+		}
+
+		// Skip files modified before lastIndexTime — but only if they have chunks.
+		// Files with no chunks need re-indexing even if their mod_time is old
+		// (e.g., a prior indexing run created the document but failed to embed).
+		if !idx.lastIndexTime.IsZero() && doc != nil && len(doc.ChunkIDs) > 0 {
 			fileModTime := time.Unix(fileMeta.ModTime, 0)
 			if fileModTime.Before(idx.lastIndexTime) || fileModTime.Equal(idx.lastIndexTime) {
 				stats.FilesSkipped++
 				delete(existingMap, fileMeta.Path)
 				continue
 			}
-		}
-
-		// Check if file needs reindexing
-		doc, err := idx.store.GetDocument(ctx, fileMeta.Path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get document %s: %w", fileMeta.Path, err)
 		}
 
 		// Load file content and hash only after metadata filtering.
@@ -145,9 +147,9 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 			continue
 		}
 
-		if doc != nil && doc.Hash == file.Hash {
+		if doc != nil && doc.Hash == file.Hash && len(doc.ChunkIDs) > 0 {
 			delete(existingMap, fileMeta.Path)
-			continue // File unchanged
+			continue // File unchanged and has chunks
 		}
 
 		filesToIndex = append(filesToIndex, *file)
@@ -671,5 +673,10 @@ func (idx *Indexer) NeedsReindex(ctx context.Context, path string, hash string) 
 		return true, nil
 	}
 
-	return doc.Hash != hash, nil
+	// Reindex if hash changed OR if document has no chunks (prior indexing failed)
+	if doc.Hash != hash || len(doc.ChunkIDs) == 0 {
+		return true, nil
+	}
+
+	return false, nil
 }
