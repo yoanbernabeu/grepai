@@ -346,3 +346,61 @@ func TestDynamicWatch_MainFailureStopsAll(t *testing.T) {
 		t.Fatal("linked session was not stopped after main failure")
 	}
 }
+
+func TestDynamicWatch_InitialReadySelector_MainOnly(t *testing.T) {
+	mainRoot := "/tmp/main"
+	linkedRoot := "/tmp/wt-g"
+
+	runner := func(
+		ctx context.Context,
+		projectRoot string,
+		_ embedder.Embedder,
+		_ bool,
+		onReady func(),
+		_ watchSessionEventObserver,
+	) error {
+		if projectRoot == mainRoot {
+			onReady()
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return errors.New("linked startup failure")
+	}
+
+	initialReadyCh := make(chan int, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runDynamicWatchSupervisor(
+			ctx,
+			mainRoot,
+			nil,
+			withWatchSupervisorSessionRunner(runner),
+			withWatchSupervisorDiscoverWorktrees(func(string) []string {
+				return []string{linkedRoot}
+			}),
+			withWatchSupervisorInitialLinkedWorktrees([]string{linkedRoot}),
+			withWatchSupervisorReconcileInterval(20*time.Millisecond),
+			withWatchSupervisorRetryBackoff(func(int) time.Duration { return 20 * time.Millisecond }),
+			withWatchSupervisorInitialReadySelector(func(main, project string) bool {
+				return main == project
+			}),
+			withWatchSupervisorInitialReadyObserver(func(totalProjects int) {
+				initialReadyCh <- totalProjects
+			}),
+		)
+	}()
+
+	waitForWatchScopeValue(t, initialReadyCh, 1, time.Second)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("supervisor stopped unexpectedly: %v", err)
+	default:
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runDynamicWatchSupervisor() error: %v", err)
+	}
+}

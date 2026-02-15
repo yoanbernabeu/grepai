@@ -659,14 +659,40 @@ func (m watchUIModel) renderSessionPanel(width, height int) string {
 	if maxRows < 1 {
 		maxRows = 1
 	}
+	visibleRows := maxRows - 1 // reserve one row for "all sessions"
+	if visibleRows < 0 {
+		visibleRows = 0
+	}
 
+	orderedRoots := make([]string, 0, len(m.sessionOrder))
 	for _, root := range m.sessionOrder {
+		if _, ok := m.sessions[root]; ok {
+			orderedRoots = append(orderedRoots, root)
+		}
+	}
+
+	selectedRoot := m.selectedSessionRoot()
+	selectedIndex := -1
+	for idx, root := range orderedRoots {
+		if root == selectedRoot {
+			selectedIndex = idx
+			break
+		}
+	}
+
+	start := 0
+	if visibleRows > 0 && selectedIndex >= visibleRows {
+		start = selectedIndex - visibleRows + 1
+	}
+	end := len(orderedRoots)
+	if visibleRows > 0 && start+visibleRows < end {
+		end = start + visibleRows
+	}
+
+	for _, root := range orderedRoots[start:end] {
 		session, ok := m.sessions[root]
 		if !ok {
 			continue
-		}
-		if len(lines)-2 >= maxRows {
-			break
 		}
 		marker := " "
 		if m.selectedSessionRoot() == root {

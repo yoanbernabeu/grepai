@@ -1122,6 +1122,8 @@ type watchSupervisorSessionRunner func(
 	onEvent watchSessionEventObserver,
 ) error
 
+type watchInitialReadySelector func(mainRoot, projectRoot string) bool
+
 type dynamicWatchSupervisorConfig struct {
 	isBackgroundChild     bool
 	initialLinkedWorktree []string
@@ -1131,6 +1133,7 @@ type dynamicWatchSupervisorConfig struct {
 	eventObserver         watchSessionEventObserver
 	scopeObserver         func(totalProjects int)
 	initialReadyObserver  func(totalProjects int)
+	initialReadySelector  watchInitialReadySelector
 	reconcileInterval     time.Duration
 	retryBackoff          func(attempt int) time.Duration
 }
@@ -1186,6 +1189,12 @@ func withWatchSupervisorScopeObserver(observer func(totalProjects int)) dynamicW
 func withWatchSupervisorInitialReadyObserver(observer func(totalProjects int)) dynamicWatchSupervisorOption {
 	return func(cfg *dynamicWatchSupervisorConfig) {
 		cfg.initialReadyObserver = observer
+	}
+}
+
+func withWatchSupervisorInitialReadySelector(selector watchInitialReadySelector) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.initialReadySelector = selector
 	}
 }
 
@@ -1288,8 +1297,15 @@ func runDynamicWatchSupervisor(ctx context.Context, mainRoot string, emb embedde
 	desired := buildWatchDesiredProjects(mainRoot, initialLinked)
 	initialRoots := make(map[string]bool, len(desired))
 	initialReady := make(map[string]bool, len(desired))
+	countAsInitialReady := cfg.initialReadySelector
 	for root := range desired {
+		if countAsInitialReady != nil && !countAsInitialReady(mainRoot, root) {
+			continue
+		}
 		initialRoots[root] = true
+	}
+	if len(initialRoots) == 0 {
+		initialRoots[canonicalPath(mainRoot)] = true
 	}
 
 	if cfg.scopeObserver != nil {
@@ -1790,6 +1806,12 @@ func runWatchForeground() error {
 		emb,
 		withWatchSupervisorBackgroundChild(isBackgroundChild),
 		withWatchSupervisorInitialLinkedWorktrees(linkedWorktrees),
+		withWatchSupervisorInitialReadySelector(func(mainRoot, currentRoot string) bool {
+			if !isBackgroundChild {
+				return true
+			}
+			return canonicalPath(mainRoot) == canonicalPath(currentRoot)
+		}),
 		withWatchSupervisorInitialReadyObserver(func(_ int) {
 			initialReadyObserver(initialTotalProjects)
 		}),

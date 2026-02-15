@@ -38,9 +38,15 @@ func saveWatchLogDirHint(projectRoot, logDir string) error {
 	if projectRoot == "" {
 		return nil
 	}
-	cleanLogDir := filepath.Clean(strings.TrimSpace(logDir))
-	if cleanLogDir == "" {
+	rawLogDir := strings.TrimSpace(logDir)
+	if rawLogDir == "" {
 		return clearWatchLogDirHint(projectRoot)
+	}
+	cleanLogDir := filepath.Clean(rawLogDir)
+	if !filepath.IsAbs(cleanLogDir) {
+		if absLogDir, err := filepath.Abs(cleanLogDir); err == nil {
+			cleanLogDir = absLogDir
+		}
 	}
 
 	defaultLogDir, err := daemon.GetDefaultLogDir()

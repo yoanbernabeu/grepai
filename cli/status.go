@@ -377,22 +377,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get stats: %w", err)
 	}
 
-	// Get files
-	files, err := st.ListFilesWithStats(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list files: %w", err)
-	}
-
-	// Sort files by path
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
-	})
-
 	watchStatus := resolveWatcherRuntimeStatus(projectRoot)
+	useUI := shouldUseStatusUI(isInteractiveTerminal(), statusNoUI)
 
-	if !shouldUseStatusUI(isInteractiveTerminal(), statusNoUI) {
+	if !useUI {
 		fmt.Print(renderStatusSummary(cfg, stats, watchStatus))
 		return nil
+	}
+
+	files, err := loadStatusFiles(ctx, useUI, st.ListFilesWithStats)
+	if err != nil {
+		return fmt.Errorf("failed to list files: %w", err)
 	}
 
 	// Create model
@@ -530,4 +525,23 @@ func renderStatusSummary(cfg *config.Config, stats *store.IndexStats, watch watc
 		sb.WriteString(fmt.Sprintf("Watcher log: %s\n", watch.logFile))
 	}
 	return sb.String()
+}
+
+func loadStatusFiles(
+	ctx context.Context,
+	useUI bool,
+	listFn func(context.Context) ([]store.FileStats, error),
+) ([]store.FileStats, error) {
+	if !useUI {
+		return nil, nil
+	}
+
+	files, err := listFn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files, nil
 }

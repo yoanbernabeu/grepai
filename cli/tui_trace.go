@@ -101,11 +101,28 @@ func (m traceUIModel) View() string {
 		)
 	}
 
-	leftW := int(float64(m.width-2) * 0.42)
+	contentWidth := m.width - 2
+	contentHeight := m.height - 6
+	if contentHeight < 6 {
+		contentHeight = 6
+	}
+	if contentWidth < 62 {
+		topH, bottomH := panelHeights(contentHeight)
+		items := make([]string, 0, len(m.rows))
+		for _, row := range m.rows {
+			items = append(items, row.title)
+		}
+		list := renderSelectableList(m.theme, "Symbols/Nodes", items, m.selected, contentWidth, topH)
+		detail := m.renderDetailPanel(contentWidth, bottomH)
+		footer := m.theme.panel.Width(contentWidth).Render(m.theme.help.Render("up/down select | q quit"))
+		return lipgloss.JoinVertical(lipgloss.Left, header, list, detail, footer)
+	}
+
+	leftW := int(float64(contentWidth) * 0.42)
 	if leftW < 30 {
 		leftW = 30
 	}
-	rightW := (m.width - 2) - leftW
+	rightW := contentWidth - leftW
 	if rightW < 32 {
 		rightW = 32
 	}
@@ -114,9 +131,9 @@ func (m traceUIModel) View() string {
 	for _, row := range m.rows {
 		items = append(items, row.title)
 	}
-	list := renderSelectableList(m.theme, "Symbols/Nodes", items, m.selected, leftW, m.height-6)
-	detail := m.renderDetailPanel(rightW, m.height-6)
-	footer := m.theme.panel.Width(m.width - 2).Render(m.theme.help.Render("up/down select | q quit"))
+	list := renderSelectableList(m.theme, "Symbols/Nodes", items, m.selected, leftW, contentHeight)
+	detail := m.renderDetailPanel(rightW, contentHeight)
+	footer := m.theme.panel.Width(contentWidth).Render(m.theme.help.Render("up/down select | q quit"))
 	return lipgloss.JoinVertical(lipgloss.Left, header, lipgloss.JoinHorizontal(lipgloss.Top, list, detail), footer)
 }
 

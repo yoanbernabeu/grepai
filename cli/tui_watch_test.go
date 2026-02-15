@@ -255,6 +255,35 @@ func TestWatchUIModelLedgerPanelFiltersByFocusedSession(t *testing.T) {
 	}
 }
 
+func TestWatchUIModelSessionPanelKeepsFocusedSessionVisible(t *testing.T) {
+	m := newWatchUIModel(nil)
+
+	next, _ := m.Update(watchUIScopeMsg{totalProjects: 5})
+	m = next.(watchUIModel)
+	for _, root := range []string{
+		"/tmp/main",
+		"/tmp/wt-a",
+		"/tmp/wt-b",
+		"/tmp/wt-c",
+	} {
+		next, _ = m.Update(watchUISessionMsg{projectRoot: root, state: "running", note: "steady"})
+		m = next.(watchUIModel)
+	}
+
+	for i := 0; i < 4; i++ {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(watchUIModel)
+	}
+	if got := m.selectedSessionRoot(); got != "/tmp/wt-c" {
+		t.Fatalf("selected session = %q, want /tmp/wt-c", got)
+	}
+
+	rendered := m.renderSessionPanel(50, 7)
+	if !strings.Contains(rendered, "tmp/wt-c") {
+		t.Fatalf("focused session should stay visible in small panel: %q", rendered)
+	}
+}
+
 func TestRenderStatusSummaryIncludesWatcherInfo(t *testing.T) {
 	cfg := config.DefaultConfig()
 	stats := &store.IndexStats{

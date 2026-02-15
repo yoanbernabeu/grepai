@@ -46,3 +46,39 @@ func TestResolveWatcherRuntimeStatus_UsesHintedLogDir(t *testing.T) {
 		t.Fatalf("logDir = %q, want %q", status.logDir, customLogDir)
 	}
 }
+
+func TestSaveWatchLogDirHint_StoresAbsolutePath(t *testing.T) {
+	projectRoot := t.TempDir()
+	baseDir := t.TempDir()
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+	if err := os.Chdir(baseDir); err != nil {
+		t.Fatalf("Chdir() failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(baseDir, "logs"), 0755); err != nil {
+		t.Fatalf("MkdirAll() failed: %v", err)
+	}
+
+	if err := saveWatchLogDirHint(projectRoot, "./logs"); err != nil {
+		t.Fatalf("saveWatchLogDirHint() failed: %v", err)
+	}
+
+	hinted, err := readWatchLogDirHint(projectRoot)
+	if err != nil {
+		t.Fatalf("readWatchLogDirHint() failed: %v", err)
+	}
+
+	expected := filepath.Join(baseDir, "logs")
+	if canonicalPath(hinted) != canonicalPath(expected) {
+		t.Fatalf("hinted log dir = %q, want %q", hinted, expected)
+	}
+	if !filepath.IsAbs(hinted) {
+		t.Fatalf("hinted log dir should be absolute: %q", hinted)
+	}
+}

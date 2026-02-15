@@ -255,25 +255,45 @@ func (m workspaceStatusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m workspaceStatusModel) View() string {
-	if len(m.workspaces) == 0 {
-		return renderActionCard(m.theme, "No workspaces", "No workspace configuration found.", "Run: grepai workspace create <name>", 70)
-	}
 	if m.width == 0 {
 		return "Loading workspace status UI..."
 	}
+	if len(m.workspaces) == 0 {
+		return renderActionCard(
+			m.theme,
+			"No workspaces",
+			"No workspace configuration found.",
+			"Run: grepai workspace create <name>",
+			m.width-2,
+		)
+	}
 
-	leftW := int(float64(m.width-2) * 0.45)
+	contentWidth := m.width - 2
+	contentHeight := m.height - 5
+	if contentHeight < 6 {
+		contentHeight = 6
+	}
+	if contentWidth < 60 {
+		topH, bottomH := panelHeights(contentHeight)
+		listPanel := renderSelectableList(m.theme, "Workspaces", m.entries, m.selected, contentWidth, topH)
+		detailPanel := m.renderWorkspaceDetail(contentWidth, bottomH)
+		footer := m.theme.panel.Width(contentWidth).Render(m.theme.help.Render("up/down select | q quit"))
+		return lipgloss.JoinVertical(lipgloss.Left, listPanel, detailPanel, footer)
+	}
+
+	leftW := int(float64(contentWidth) * 0.45)
 	if leftW < 30 {
 		leftW = 30
 	}
-	rightW := (m.width - 2) - leftW
+	rightW := contentWidth - leftW
 	if rightW < 30 {
 		rightW = 30
+		leftW = contentWidth - rightW
 	}
 
-	listPanel := renderSelectableList(m.theme, "Workspaces", m.entries, m.selected, leftW, m.height-5)
-	detailPanel := m.renderWorkspaceDetail(rightW, m.height-5)
-	footer := m.theme.panel.Width(m.width - 2).Render(m.theme.help.Render("up/down select | q quit"))
+	listPanel := renderSelectableList(m.theme, "Workspaces", m.entries, m.selected, leftW, contentHeight)
+	detailPanel := m.renderWorkspaceDetail(rightW, contentHeight)
+	footer := m.theme.panel.Width(contentWidth).Render(m.theme.help.Render("up/down select | q quit"))
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, listPanel, detailPanel), footer)
 }
 
