@@ -20,19 +20,12 @@ import (
 )
 
 const (
-	watchLedgerLimit   = 300
 	removedSessionTTL  = 10 * time.Second
 	watchUIPrunePeriod = time.Second
 	watchUILogSystem   = "__system__"
 )
 
-type watchUILedgerEntry struct {
-	source string
-	at     time.Time
-	level  string
-	text   string
-}
-
+// Messages (kept from original)
 type watchUIContextMsg struct {
 	projectRoot string
 	provider    string
@@ -121,14 +114,11 @@ type watchUIModel struct {
 	phases      []string
 	currentStep int
 
-	scanCurrent int
-	scanTotal   int
-	scanFile    string
-
-	embedCompleted int
-	embedTotal     int
+	// Progress state (partially handled by progressModel, but we keep text details here)
+	scanFile       string
 	embedRetryInfo string
 
+	// Stats
 	filesIndexed  int
 	filesSkipped  int
 	chunksCreated int
@@ -145,15 +135,15 @@ type watchUIModel struct {
 	sessionOrder []string
 	sessionFocus int
 
-	events []watchUILedgerEntry
+	// Components
+	ledger   ledgerModel
+	progress progressModel
 
-	paused      bool
-	pausedAtIdx int
-	showHelp    bool
-	stopping    bool
-	done        bool
-	err         error
-	started     time.Time
+	showHelp bool
+	stopping bool
+	done     bool
+	err      error
+	started  time.Time
 }
 
 type watchUISessionState struct {
@@ -167,8 +157,9 @@ type watchUISessionState struct {
 }
 
 func newWatchUIModel(cancel context.CancelFunc) watchUIModel {
+	theme := newTUITheme()
 	return watchUIModel{
-		theme:         newTUITheme(),
+		theme:         theme,
 		cancel:        cancel,
 		phases:        []string{"Preflight", "Scan", "Embed", "Symbol", "Steady"},
 		currentStep:   0,
@@ -176,8 +167,9 @@ func newWatchUIModel(cancel context.CancelFunc) watchUIModel {
 		sessions:      make(map[string]watchUISessionState),
 		sessionOrder:  make([]string, 0, 4),
 		sessionFocus:  -1,
-		events:        make([]watchUILedgerEntry, 0, watchLedgerLimit),
 		started:       time.Now(),
+		ledger:        newLedgerModel(theme),
+		progress:      newProgressModel(theme),
 	}
 }
 
@@ -186,41 +178,42 @@ func (m watchUIModel) Init() tea.Cmd {
 }
 
 func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.recalculateLayout()
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			if m.cancel != nil && !m.stopping {
 				m.stopping = true
 				m.cancel()
-				m.events = append(m.events, watchUILedgerEntry{
+				m.ledger.addEntry(ledgerEntry{
 					at:    time.Now(),
 					level: "warn",
 					text:  "Stopping watcher and persisting index...",
 				})
 			}
 		case "p":
-			if m.paused {
-				m.paused = false
-				m.pausedAtIdx = 0
-			} else {
-				m.paused = true
-				m.pausedAtIdx = len(m.events)
-			}
+			m.ledger.togglePause()
 		case "?":
 			m.showHelp = !m.showHelp
 		case "tab":
 			m.cycleSessionFocus()
 		}
+
 	case watchUIContextMsg:
 		m.projectRoot = msg.projectRoot
 		m.provider = msg.provider
 		m.model = msg.model
 		m.backend = msg.backend
 		m.rpg = msg.rpg
+
 	case watchUIPhaseMsg:
 		if msg.current < 0 {
 			msg.current = 0
@@ -229,16 +222,16 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.current = len(m.phases) - 1
 		}
 		m.currentStep = msg.current
+
 	case watchUIScanMsg:
-		m.scanCurrent = msg.current
-		m.scanTotal = msg.total
+		m.progress.setScanProgress(msg.current, msg.total)
 		m.scanFile = msg.file
 		if msg.total > 0 {
 			m.currentStep = 1
 		}
+
 	case watchUIEmbedMsg:
-		m.embedCompleted = msg.completed
-		m.embedTotal = msg.total
+		m.progress.setEmbedProgress(msg.completed, msg.total)
 		if msg.total > 0 {
 			m.currentStep = 2
 		}
@@ -247,43 +240,41 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.embedRetryInfo = ""
 		}
+
 	case watchUISummaryMsg:
 		m.filesIndexed = msg.filesIndexed
 		m.filesSkipped = msg.filesSkipped
 		m.chunksCreated = msg.chunksCreated
 		m.filesRemoved = msg.filesRemoved
+
 	case watchUISymbolMsg:
 		m.symbolCount = msg.count
 		m.currentStep = 3
+
 	case watchUILedgerMsg:
 		source := msg.source
 		if source == "" {
 			source = m.projectRoot
 		}
-		m.events = append(m.events, watchUILedgerEntry{
+
+		entry := ledgerEntry{
 			source: source,
 			at:     time.Now(),
 			level:  msg.level,
 			text:   msg.text,
-		})
+		}
+		m.ledger.addEntry(entry)
+
 		if session, ok := m.sessions[source]; ok {
 			session.events++
 			session.updatedAt = time.Now()
 			m.sessions[source] = session
 		}
-		if len(m.events) > watchLedgerLimit {
-			dropped := len(m.events) - watchLedgerLimit
-			m.events = m.events[len(m.events)-watchLedgerLimit:]
-			if m.paused && m.pausedAtIdx > 0 {
-				m.pausedAtIdx -= dropped
-				if m.pausedAtIdx < 0 {
-					m.pausedAtIdx = 0
-				}
-			}
-		}
+
 	case watchUIHealthMsg:
 		m.totalEvents = msg.totalEvents
 		m.lastSuccess = msg.lastSuccess
+
 	case watchUIScopeMsg:
 		if msg.totalProjects < 1 {
 			msg.totalProjects = 1
@@ -291,34 +282,80 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalProjects = msg.totalProjects
 		m.recomputeReadyProjects()
 		m.ensureSessionFocusValid()
+
 	case watchUIReadyMsg:
 		m.upsertSession(msg.projectRoot, "running", "steady")
 		m.recomputeReadyProjects()
 		m.ensureSessionFocusValid()
+
 	case watchUISessionMsg:
 		m.upsertSession(msg.projectRoot, msg.state, msg.note)
 		m.recomputeReadyProjects()
 		m.ensureSessionFocusValid()
 		if msg.state == "removed" {
-			return m, watchUIPruneCmd()
+			cmds = append(cmds, watchUIPruneCmd())
 		}
+
 	case watchUIErrorMsg:
 		m.err = msg.err
-		m.events = append(m.events, watchUILedgerEntry{
+		m.ledger.addEntry(ledgerEntry{
 			source: m.projectRoot,
 			at:     time.Now(),
 			level:  "error",
 			text:   msg.err.Error(),
 		})
+
 	case watchUIDoneMsg:
 		m.done = true
 		return m, tea.Quit
+
 	case watchUIPruneMsg:
 		if m.pruneRemovedSessions(msg.at) {
-			return m, watchUIPruneCmd()
+			cmds = append(cmds, watchUIPruneCmd())
 		}
 	}
-	return m, nil
+
+	// Update components
+	m.ledger, cmd = m.ledger.Update(msg)
+	cmds = append(cmds, cmd)
+
+	m.progress, cmd = m.progress.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m *watchUIModel) recalculateLayout() {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+
+	leftW := int(float64(m.width-2) * 0.68)
+	if leftW < 40 {
+		leftW = m.width - 2
+	}
+	rightW := (m.width - 2) - leftW
+	if rightW < 24 {
+		rightW = 24
+		if leftW+rightW > m.width-2 {
+			leftW = (m.width - 2) - rightW
+		}
+	}
+
+	// Layout logic:
+	// Header: approx 5 lines? We need to measure renders really, but let's assume fixed.
+	// RenderFooter: 1 line + padding
+	// Header ~4 lines
+	// LifecycleRail ~1 line
+	// Help/Footer ~3 lines
+	// Total chrome ~8 lines.
+	// Use explicit calculations if possible, but safe estimate:
+	availableHeight := m.height - 11
+
+	_, bottomHeight := panelHeights(availableHeight)
+
+	m.ledger.setSize(leftW-2, bottomHeight-2) // -2 for borders
+	m.progress.setSize(leftW - 2)
 }
 
 func (m watchUIModel) View() string {
@@ -561,12 +598,18 @@ func (m watchUIModel) renderMainPanels() string {
 func (m watchUIModel) renderProgressPanel(width, height int) string {
 	lines := []string{
 		m.theme.subtitle.Render("Lifecycle Snapshot"),
-		m.theme.text.Render(fmt.Sprintf("Scan:   %d/%d", m.scanCurrent, m.scanTotal)),
-		m.theme.text.Render(fmt.Sprintf("Embed:  %d/%d", m.embedCompleted, m.embedTotal)),
+	}
+
+	// Delegate bars to progress component
+	lines = append(lines, m.progress.View())
+
+	// Add other stats
+	lines = append(lines,
 		m.theme.text.Render(fmt.Sprintf("Symbol: %d extracted", m.symbolCount)),
 		m.theme.text.Render(fmt.Sprintf("Stats: indexed=%d chunks=%d removed=%d skipped=%d",
 			m.filesIndexed, m.chunksCreated, m.filesRemoved, m.filesSkipped)),
-	}
+	)
+
 	if m.scanFile != "" {
 		lines = append(lines, m.theme.muted.Render("Current file: "+truncateRunes(m.scanFile, width-6)))
 	}
@@ -577,67 +620,13 @@ func (m watchUIModel) renderProgressPanel(width, height int) string {
 }
 
 func (m watchUIModel) renderLedgerPanel(width, height int) string {
-	lines := []string{m.theme.subtitle.Render("Event Ledger · " + m.selectedSessionLabel())}
-	if m.paused {
-		lines = append(lines, m.theme.warn.Render("[paused]"))
+	label := m.theme.subtitle.Render("Event Ledger · " + m.selectedSessionLabel())
+	if m.ledger.paused {
+		label += m.theme.warn.Render(" [paused]")
 	}
 
-	entries := m.events
-	hidden := 0
-	if m.paused {
-		if m.pausedAtIdx < 0 {
-			m.pausedAtIdx = 0
-		}
-		if m.pausedAtIdx > len(m.events) {
-			m.pausedAtIdx = len(m.events)
-		}
-		hidden = len(m.events) - m.pausedAtIdx
-		entries = m.events[:m.pausedAtIdx]
-	}
-	maxRows := height - 3
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	focusedRoot := m.selectedSessionRoot()
-	if focusedRoot != "" {
-		filtered := make([]watchUILedgerEntry, 0, len(entries))
-		for _, ev := range entries {
-			if ev.source == focusedRoot {
-				filtered = append(filtered, ev)
-			}
-		}
-		entries = filtered
-	}
-	if len(entries) > maxRows {
-		entries = entries[len(entries)-maxRows:]
-	}
-
-	if len(entries) == 0 {
-		lines = append(lines, m.theme.muted.Render("No events yet"))
-	} else {
-		for _, ev := range entries {
-			levelStyle := m.theme.info
-			switch ev.level {
-			case "warn":
-				levelStyle = m.theme.warn
-			case "error":
-				levelStyle = m.theme.danger
-			case "ok":
-				levelStyle = m.theme.ok
-			}
-			ts := ev.at.Format("15:04:05")
-			sourceLabel := truncateRunes(watchSessionLabel(ev.source), 16)
-			lines = append(lines, fmt.Sprintf("%s %s %s %s",
-				m.theme.muted.Render(ts),
-				levelStyle.Render(strings.ToUpper(ev.level)),
-				m.theme.muted.Render(sourceLabel),
-				truncateRunes(ev.text, width-40)))
-		}
-	}
-	if m.paused && hidden > 0 {
-		lines = append(lines, m.theme.warn.Render(fmt.Sprintf("+%d new events buffered", hidden)))
-	}
-	return m.theme.panel.Width(width).Height(height).Render(strings.Join(lines, "\n"))
+	content := m.ledger.View()
+	return m.theme.panel.Width(width).Height(height).Render(lipgloss.JoinVertical(lipgloss.Left, label, content))
 }
 
 func (m watchUIModel) renderSessionPanel(width, height int) string {
@@ -782,7 +771,7 @@ func (m watchUIModel) renderFooter() string {
 	if removed > 0 {
 		parts = append(parts, m.theme.warn.Render(fmt.Sprintf("removed=%d", removed)))
 	}
-	if m.paused {
+	if m.ledger.paused {
 		parts = append(parts, m.theme.warn.Render("ledger paused"))
 	}
 	return m.theme.panel.Width(m.width - 2).Render(strings.Join(parts, "  |  "))
