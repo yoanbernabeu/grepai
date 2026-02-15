@@ -40,6 +40,9 @@ type RPGIndexerConfig struct {
 	FeatureGroupStrategy string
 }
 
+// ProgressObserver is a callback for reporting indexing progress.
+type ProgressObserver func(step string, current, total int)
+
 // NewRPGIndexer creates a new RPG indexer instance.
 func NewRPGIndexer(rpgStore RPGStore, extractor FeatureExtractor, projectRoot string, cfg RPGIndexerConfig) *RPGIndexer {
 	graph := rpgStore.GetGraph()
@@ -57,7 +60,7 @@ func NewRPGIndexer(rpgStore RPGStore, extractor FeatureExtractor, projectRoot st
 }
 
 // BuildFull performs a complete rebuild of the RPG graph from scratch.
-func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolStore, vectorStore store.VectorStore) error {
+func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolStore, vectorStore store.VectorStore, observer ProgressObserver) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -73,13 +76,17 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 	if err != nil {
 		return fmt.Errorf("failed to list documents: %w", err)
 	}
+	totalDocs := len(docs)
 
 	// Track which files we've seen
 	filesProcessed := make(map[string]bool)
 
 	// Step 1: Create file and symbol nodes from trace store
 	// First, we need to get all symbols - we'll iterate through all files
-	for _, filePath := range docs {
+	for i, filePath := range docs {
+		if observer != nil {
+			observer("rpg-nodes", i+1, totalDocs)
+		}
 		if filesProcessed[filePath] {
 			continue
 		}
@@ -130,13 +137,23 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 		}
 	}
 
+	if observer != nil {
+		observer("rpg-edges", 0, 1) // Indeterminate progress for edge building
+	}
+
 	// Step 2: Rebuild derived edges (invokes/imports/semantic).
 	if err := idx.refreshDerivedEdgesFullLocked(ctx, symbolStore); err != nil {
 		return fmt.Errorf("failed to refresh derived edges: %w", err)
 	}
+	if observer != nil {
+		observer("rpg-edges", 1, 1)
+	}
 
 	// Step 4: Link vector chunks to symbols
-	for _, filePath := range docs {
+	for i, filePath := range docs {
+		if observer != nil {
+			observer("rpg-chunks", i+1, totalDocs)
+		}
 		chunks, err := vectorStore.GetChunksForFile(ctx, filePath)
 		if err != nil {
 			continue

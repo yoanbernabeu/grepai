@@ -9,14 +9,24 @@ import (
 )
 
 type progressModel struct {
-	scanBar  progress.Model
-	embedBar progress.Model
+	scanBar    progress.Model
+	embedBar   progress.Model
+	rpgNodeBar progress.Model
+	rpgEdgeBar progress.Model
 
 	scanCurrent int
 	scanTotal   int
 
 	embedCurrent int
 	embedTotal   int
+
+	rpgNodeStep    string
+	rpgNodeCurrent int
+	rpgNodeTotal   int
+
+	rpgEdgeStep    string
+	rpgEdgeCurrent int
+	rpgEdgeTotal   int
 
 	width int
 	theme tuiTheme
@@ -35,7 +45,10 @@ func newProgressModel(theme tuiTheme) progressModel {
 	return progressModel{
 		scanBar:  scan,
 		embedBar: embed,
-		theme:    theme,
+
+		rpgNodeBar: progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage()),
+		rpgEdgeBar: progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage()),
+		theme:      theme,
 	}
 }
 
@@ -61,6 +74,10 @@ func (m *progressModel) setSize(w int) {
 	}
 	m.scanBar.Width = available
 	m.embedBar.Width = available
+	m.scanBar.Width = available
+	m.embedBar.Width = available
+	m.rpgNodeBar.Width = available
+	m.rpgEdgeBar.Width = available
 }
 
 func (m *progressModel) setScanProgress(current, total int) {
@@ -71,6 +88,18 @@ func (m *progressModel) setScanProgress(current, total int) {
 func (m *progressModel) setEmbedProgress(current, total int) {
 	m.embedCurrent = current
 	m.embedTotal = total
+}
+
+func (m *progressModel) setRPGNodeProgress(step string, current, total int) {
+	m.rpgNodeStep = step
+	m.rpgNodeCurrent = current
+	m.rpgNodeTotal = total
+}
+
+func (m *progressModel) setRPGEdgeProgress(step string, current, total int) {
+	m.rpgEdgeStep = step
+	m.rpgEdgeCurrent = current
+	m.rpgEdgeTotal = total
 }
 
 func (m progressModel) View() string {
@@ -87,6 +116,18 @@ func (m progressModel) View() string {
 	scanStatus := fmt.Sprintf("%d/%d", m.scanCurrent, m.scanTotal)
 	embedStatus := fmt.Sprintf("%d/%d", m.embedCurrent, m.embedTotal)
 
+	rpgNodePct := 0.0
+	if m.rpgNodeTotal > 0 {
+		rpgNodePct = float64(m.rpgNodeCurrent) / float64(m.rpgNodeTotal)
+	}
+	rpgNodeStatus := fmt.Sprintf("%s %d/%d", m.rpgNodeStep, m.rpgNodeCurrent, m.rpgNodeTotal)
+
+	rpgEdgePct := 0.0
+	if m.rpgEdgeTotal > 0 {
+		rpgEdgePct = float64(m.rpgEdgeCurrent) / float64(m.rpgEdgeTotal)
+	}
+	rpgEdgeStatus := fmt.Sprintf("%s %d/%d", m.rpgEdgeStep, m.rpgEdgeCurrent, m.rpgEdgeTotal)
+
 	scanView := lipgloss.JoinHorizontal(lipgloss.Center,
 		m.theme.text.Width(6).Render("Scan"),
 		m.scanBar.ViewAs(scanPct),
@@ -99,5 +140,21 @@ func (m progressModel) View() string {
 		m.theme.muted.Render(" "+embedStatus),
 	)
 
-	return lipgloss.JoinVertical(lipgloss.Left, scanView, embedView)
+	if m.rpgNodeTotal == 0 && m.rpgEdgeTotal == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left, scanView, embedView)
+	}
+
+	rpgNodeView := lipgloss.JoinHorizontal(lipgloss.Center,
+		m.theme.text.Width(6).Render("Nodes"),
+		m.rpgNodeBar.ViewAs(rpgNodePct),
+		m.theme.muted.Render(" "+rpgNodeStatus),
+	)
+
+	rpgEdgeView := lipgloss.JoinHorizontal(lipgloss.Center,
+		m.theme.text.Width(6).Render("Edges"),
+		m.rpgEdgeBar.ViewAs(rpgEdgePct),
+		m.theme.muted.Render(" "+rpgEdgeStatus),
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left, scanView, embedView, rpgNodeView, rpgEdgeView)
 }

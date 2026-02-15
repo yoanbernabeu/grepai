@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/store"
+	"github.com/yoanbernabeu/grepai/trace"
 )
 
 func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
@@ -65,6 +66,38 @@ func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
 	}
 	if edgeCount1 != 2 {
 		t.Errorf("Expected 2 EdgeMapsToChunk edges, got %d", edgeCount1)
+	}
+}
+
+func TestBuildFull_EmptyDocsReportsCompletedEdgeProgress(t *testing.T) {
+	ctx := context.Background()
+	rpgStore := NewGOBRPGStore(filepath.Join(t.TempDir(), "rpg.gob"))
+	extractor := NewLocalExtractor()
+	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	type progressEvent struct {
+		step    string
+		current int
+		total   int
+	}
+	events := make([]progressEvent, 0, 2)
+	err := indexer.BuildFull(ctx, symbolStore, vectorStore, func(step string, current, total int) {
+		events = append(events, progressEvent{step: step, current: current, total: total})
+	})
+	if err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+
+	if len(events) == 0 {
+		t.Fatal("expected progress events, got none")
+	}
+	last := events[len(events)-1]
+	if last.step != "rpg-edges" || last.current != 1 || last.total != 1 {
+		t.Fatalf("last progress = %s %d/%d, want rpg-edges 1/1", last.step, last.current, last.total)
 	}
 }
 

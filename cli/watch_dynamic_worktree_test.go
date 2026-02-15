@@ -60,6 +60,9 @@ func steadyWatchSessionRunner(
 	_ watchSessionEventObserver,
 	_ func(current, total int, file string),
 	_ func(info indexer.BatchProgressInfo),
+	_ func(step string, current, total int),
+	_ watchActivityObserver,
+	_ watchStatsObserver,
 ) error {
 	onReady()
 	<-ctx.Done()
@@ -131,6 +134,9 @@ func TestDynamicWatch_RemoveLinkedWorktreeDuringRun(t *testing.T) {
 		_ watchSessionEventObserver,
 		_ func(current, total int, file string),
 		_ func(info indexer.BatchProgressInfo),
+		_ func(step string, current, total int),
+		_ watchActivityObserver,
+		_ watchStatsObserver,
 	) error {
 		onReady()
 		<-ctx.Done()
@@ -242,6 +248,9 @@ func TestDynamicWatch_LinkedFailureIsIsolatedWithRetry(t *testing.T) {
 		_ watchSessionEventObserver,
 		_ func(current, total int, file string),
 		_ func(info indexer.BatchProgressInfo),
+		_ func(step string, current, total int),
+		_ watchActivityObserver,
+		_ watchStatsObserver,
 	) error {
 		if projectRoot == mainRoot {
 			onReady()
@@ -288,10 +297,29 @@ func TestDynamicWatch_LinkedFailureIsIsolatedWithRetry(t *testing.T) {
 		)
 	}()
 
-	waitForWatchLifecycleState(t, lifecycleCh, mainRoot, "running", time.Second)
-	waitForWatchLifecycleState(t, lifecycleCh, linkedRoot, "error", time.Second)
-	waitForWatchLifecycleState(t, lifecycleCh, linkedRoot, "retrying", time.Second)
-	waitForWatchLifecycleState(t, lifecycleCh, linkedRoot, "running", 2*time.Second)
+	type lifecycleKey struct {
+		projectRoot string
+		state       string
+	}
+	pending := map[lifecycleKey]bool{
+		{projectRoot: canonicalPath(mainRoot), state: "running"}:   true,
+		{projectRoot: canonicalPath(linkedRoot), state: "error"}:   true,
+		{projectRoot: canonicalPath(linkedRoot), state: "retrying"}: true,
+		{projectRoot: canonicalPath(linkedRoot), state: "running"}: true,
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for len(pending) > 0 {
+		select {
+		case ev := <-lifecycleCh:
+			delete(pending, lifecycleKey{
+				projectRoot: canonicalPath(ev.projectRoot),
+				state:       ev.state,
+			})
+		case <-deadline.C:
+			t.Fatalf("timeout waiting lifecycle states, missing=%v", pending)
+		}
+	}
 	waitForWatchScopeValue(t, initialReadyCh, 2, 2*time.Second)
 
 	select {
@@ -320,6 +348,9 @@ func TestDynamicWatch_MainFailureStopsAll(t *testing.T) {
 		_ watchSessionEventObserver,
 		_ func(current, total int, file string),
 		_ func(info indexer.BatchProgressInfo),
+		_ func(step string, current, total int),
+		_ watchActivityObserver,
+		_ watchStatsObserver,
 	) error {
 		if projectRoot == mainRoot {
 			onReady()
@@ -370,6 +401,9 @@ func TestDynamicWatch_InitialReadySelector_MainOnly(t *testing.T) {
 		_ watchSessionEventObserver,
 		_ func(current, total int, file string),
 		_ func(info indexer.BatchProgressInfo),
+		_ func(step string, current, total int),
+		_ watchActivityObserver,
+		_ watchStatsObserver,
 	) error {
 		if projectRoot == mainRoot {
 			onReady()

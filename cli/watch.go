@@ -717,7 +717,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event, nil, nil)
 		}
 	}
 }
@@ -920,10 +920,10 @@ const (
 )
 
 func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func()) error {
-	return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, nil, nil, nil)
+	return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, nil, nil, nil, nil, nil, nil)
 }
 
-func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func(), onEvent watchEventObserver, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo)) error {
+func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb embedder.Embedder, isBackgroundChild bool, onReady func(), onEvent watchEventObserver, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), onRPG func(step string, current, total int), onActivity watchActivityObserver, onStats watchStatsObserver) error {
 	// Load configuration
 	cfg, err := config.Load(projectRoot)
 	if err != nil {
@@ -1024,13 +1024,15 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 
 	if rpgIndexer != nil {
-		if err := rpgIndexer.BuildFull(ctx, symbolStore, st); err != nil {
+		if err := rpgIndexer.BuildFull(ctx, symbolStore, st, onRPG); err != nil {
 			log.Printf("Warning: failed to build RPG graph for %s: %v", projectRoot, err)
 		} else {
 			rpgStats := rpgStore.GetGraph().Stats()
 			log.Printf("RPG graph built for %s: %d nodes, %d edges", projectRoot, rpgStats.TotalNodes, rpgStats.TotalEdges)
 		}
 	}
+
+	emitInitialStatsSnapshot(ctx, st, symbolStore, onStats)
 
 	if err := st.Persist(ctx); err != nil {
 		log.Printf("Warning: failed to persist index: %v", err)
@@ -1057,10 +1059,43 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 
 	// Run watch loop (responds to ctx.Done() for graceful shutdown)
-	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgIndexer, rpgStore, tracedLanguages, projectRoot, cfg, onEvent)
+	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgIndexer, rpgStore, tracedLanguages, projectRoot, cfg, onEvent, onActivity, onStats)
 }
 
-func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgIndexer *rpg.RPGIndexer, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver) error {
+func emitInitialStatsSnapshot(ctx context.Context, vectorStore store.VectorStore, symbolStore trace.SymbolStore, onStats watchStatsObserver) {
+	if onStats == nil {
+		return
+	}
+
+	var delta watchStatsDelta
+	hasSnapshot := false
+
+	if vectorStore != nil {
+		stats, err := vectorStore.GetStats(ctx)
+		if err != nil {
+			log.Printf("Warning: failed to read vector stats snapshot: %v", err)
+		} else if stats != nil {
+			delta.ChunksCreated = stats.TotalChunks
+			hasSnapshot = true
+		}
+	}
+
+	if symbolStore != nil {
+		stats, err := symbolStore.GetStats(ctx)
+		if err != nil {
+			log.Printf("Warning: failed to read symbol stats snapshot: %v", err)
+		} else if stats != nil {
+			delta.SymbolsFound = stats.TotalSymbols
+			hasSnapshot = true
+		}
+	}
+
+	if hasSnapshot {
+		onStats(delta)
+	}
+}
+
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgIndexer *rpg.RPGIndexer, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver) error {
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
 
@@ -1104,7 +1139,7 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			if onEvent != nil {
 				onEvent(projectRoot, event)
 			}
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgIndexer, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event, onActivity, onStats)
 		}
 	}
 }
@@ -1140,6 +1175,9 @@ type watchSupervisorSessionRunner func(
 	onEvent watchSessionEventObserver,
 	onScan func(current, total int, file string),
 	onEmbed func(info indexer.BatchProgressInfo),
+	onRPG func(step string, current, total int),
+	onActivity watchActivityObserver,
+	onStats watchStatsObserver,
 ) error
 
 type watchInitialReadySelector func(mainRoot, projectRoot string) bool
@@ -1153,6 +1191,9 @@ type dynamicWatchSupervisorConfig struct {
 	eventObserver         watchSessionEventObserver
 	scanObserver          func(current, total int, file string)
 	embedObserver         func(info indexer.BatchProgressInfo)
+	rpgObserver           func(step string, current, total int)
+	activityObserver      watchActivityObserver
+	statsObserver         watchStatsObserver
 	scopeObserver         func(totalProjects int)
 	initialReadyObserver  func(totalProjects int)
 	initialReadySelector  watchInitialReadySelector
@@ -1214,6 +1255,12 @@ func withWatchSupervisorEmbedObserver(observer func(info indexer.BatchProgressIn
 	}
 }
 
+func withWatchSupervisorRPGObserver(observer func(step string, current, total int)) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.rpgObserver = observer
+	}
+}
+
 func withWatchSupervisorScopeObserver(observer func(totalProjects int)) dynamicWatchSupervisorOption {
 	return func(cfg *dynamicWatchSupervisorConfig) {
 		cfg.scopeObserver = observer
@@ -1240,6 +1287,18 @@ func withWatchSupervisorReconcileInterval(interval time.Duration) dynamicWatchSu
 	}
 }
 
+func withWatchSupervisorActivityObserver(observer watchActivityObserver) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.activityObserver = observer
+	}
+}
+
+func withWatchSupervisorStatsObserver(observer watchStatsObserver) dynamicWatchSupervisorOption {
+	return func(cfg *dynamicWatchSupervisorConfig) {
+		cfg.statsObserver = observer
+	}
+}
+
 func withWatchSupervisorRetryBackoff(backoff func(attempt int) time.Duration) dynamicWatchSupervisorOption {
 	return func(cfg *dynamicWatchSupervisorConfig) {
 		cfg.retryBackoff = backoff
@@ -1258,12 +1317,15 @@ func newDynamicWatchSupervisorConfig() dynamicWatchSupervisorConfig {
 			onEvent watchSessionEventObserver,
 			onScan func(current, total int, file string),
 			onEmbed func(info indexer.BatchProgressInfo),
+			onRPG func(step string, current, total int),
+			onActivity watchActivityObserver,
+			onStats watchStatsObserver,
 		) error {
 			var observer watchEventObserver
 			if onEvent != nil {
 				observer = watchEventObserver(onEvent)
 			}
-			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer, onScan, onEmbed)
+			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer, onScan, onEmbed, onRPG, onActivity, onStats)
 		},
 		reconcileInterval: worktreeReconcileInterval,
 		retryBackoff:      computeWatchSessionRetryBackoff,
@@ -1294,6 +1356,18 @@ type watchSessionRetrySignal struct {
 	attempt     int
 }
 
+type watchStatsDelta struct {
+	FilesIndexed  int
+	FilesRemoved  int
+	ChunksCreated int
+	ChunksRemoved int
+	SymbolsFound  int
+	SymbolsLost   int
+}
+
+type watchActivityObserver func(state, file string)
+type watchStatsObserver func(delta watchStatsDelta)
+
 func runDynamicWatchSupervisor(ctx context.Context, mainRoot string, emb embedder.Embedder, opts ...dynamicWatchSupervisorOption) error {
 	cfg := newDynamicWatchSupervisorConfig()
 	for _, opt := range opts {
@@ -1312,12 +1386,15 @@ func runDynamicWatchSupervisor(ctx context.Context, mainRoot string, emb embedde
 			onEvent watchSessionEventObserver,
 			onScan func(current, total int, file string),
 			onEmbed func(info indexer.BatchProgressInfo),
+			onRPG func(step string, current, total int),
+			onActivity watchActivityObserver,
+			onStats watchStatsObserver,
 		) error {
 			var observer watchEventObserver
 			if onEvent != nil {
 				observer = watchEventObserver(onEvent)
 			}
-			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer, onScan, onEmbed)
+			return watchProjectWithEventObserver(ctx, projectRoot, emb, isBackgroundChild, onReady, observer, onScan, onEmbed, onRPG, onActivity, onStats)
 		}
 	}
 	if cfg.reconcileInterval <= 0 {
@@ -1423,6 +1500,9 @@ func runDynamicWatchSupervisor(ctx context.Context, mainRoot string, emb embedde
 				cfg.eventObserver,
 				cfg.scanObserver,
 				cfg.embedObserver,
+				cfg.rpgObserver,
+				cfg.activityObserver,
+				cfg.statsObserver,
 			)
 			sessionResults <- watchSessionResult{
 				projectRoot: project,
@@ -1873,8 +1953,32 @@ func runWatchForeground() error {
 	)
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgIndexer *rpg.RPGIndexer, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent) {
-	log.Printf("[%s] %s", event.Type, event.Path)
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgIndexer *rpg.RPGIndexer, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver) {
+	if onActivity != nil {
+		op := "processing"
+		if event.Type == watcher.EventDelete {
+			op = "removing"
+		}
+		onActivity(op, event.Path)
+		defer onActivity("steady", "")
+	}
+
+	// Capture previous state for stats delta
+	var oldChunkCount int
+	var oldSymbolCount int
+	var fileExisted bool
+
+	if vectorStore != nil {
+		if doc, err := vectorStore.GetDocument(ctx, event.Path); err == nil && doc != nil {
+			oldChunkCount = len(doc.ChunkIDs)
+			fileExisted = true
+		}
+	}
+	if symbolStore != nil {
+		if syms, err := symbolStore.GetSymbolsForFile(ctx, event.Path); err == nil {
+			oldSymbolCount = len(syms)
+		}
+	}
 
 	switch event.Type {
 	case watcher.EventCreate, watcher.EventModify:
@@ -1905,6 +2009,18 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		}
 		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
 
+		// Report stats (files/chunks)
+		if onStats != nil {
+			delta := watchStatsDelta{
+				ChunksCreated: chunks,
+				ChunksRemoved: oldChunkCount,
+			}
+			if !fileExisted {
+				delta.FilesIndexed = 1
+			}
+			onStats(delta)
+		}
+
 		// Update last_index_time with throttling (only write if 30 seconds have passed)
 		now := time.Now()
 		if now.Sub(*lastConfigWrite) >= configWriteThrottle {
@@ -1925,6 +2041,13 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
 			} else {
 				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
+
+				if onStats != nil {
+					onStats(watchStatsDelta{
+						SymbolsFound: len(symbols),
+						SymbolsLost:  oldSymbolCount,
+					})
+				}
 
 				// Update RPG graph.
 				if rpgIndexer != nil {
@@ -1966,6 +2089,15 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		if err := symbolStore.DeleteFile(ctx, event.Path); err != nil {
 			log.Printf("Failed to remove symbols for %s: %v", event.Path, err)
 		}
+
+		if onStats != nil {
+			onStats(watchStatsDelta{
+				FilesRemoved:  1,
+				ChunksRemoved: oldChunkCount,
+				SymbolsLost:   oldSymbolCount,
+			})
+		}
+
 		if rpgIndexer != nil {
 			if err := rpgIndexer.HandleFileEvent(ctx, "delete", event.Path, nil); err != nil {
 				log.Printf("Warning: failed to update RPG for deleted %s: %v", event.Path, err)
@@ -2417,6 +2549,8 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 				&runtime.lastConfigWrite,
 				runtime.manager,
 				event.event,
+				nil,
+				nil,
 			)
 		}
 	}
@@ -2524,7 +2658,10 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 			MaxTraversalDepth:    projectCfg.RPG.MaxTraversalDepth,
 			FeatureGroupStrategy: projectCfg.RPG.FeatureGroupStrategy,
 		})
-		if err := rpgIndexer.BuildFull(ctx, symbolStore, vectorStore); err != nil {
+
+		// TODO: Pass nil progress observer for now as this path (workspace mode) doesn't seem to use it yet
+		// or plumbing is deeper. For now preserving build.
+		if err := rpgIndexer.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
 			log.Printf("Warning: failed to build RPG graph for %s: %v", project.Path, err)
 		}
 		if err := rpgStore.Persist(ctx); err != nil {

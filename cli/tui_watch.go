@@ -53,6 +53,12 @@ type watchUIEmbedMsg struct {
 	status    int
 }
 
+type watchUIRPGMsg struct {
+	step    string
+	current int
+	total   int
+}
+
 type watchUISummaryMsg struct {
 	filesIndexed  int
 	filesSkipped  int
@@ -98,6 +104,15 @@ type watchUIPruneMsg struct {
 	at time.Time
 }
 
+type watchUIActivityMsg struct {
+	state string
+	file  string
+}
+
+type watchUIStatsMsg struct {
+	delta watchStatsDelta
+}
+
 type watchUIModel struct {
 	theme tuiTheme
 
@@ -116,8 +131,9 @@ type watchUIModel struct {
 	currentStep int
 
 	// Progress state (partially handled by progressModel, but we keep text details here)
-	scanFile       string
-	embedRetryInfo string
+	scanFile        string
+	embedRetryInfo  string
+	currentActivity string
 
 	// Stats
 	filesIndexed  int
@@ -242,6 +258,23 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.embedRetryInfo = ""
 		}
 
+	case watchUIRPGMsg:
+		if strings.Contains(msg.step, "node") || msg.step == "rpg-nodes" {
+			m.progress.setRPGNodeProgress(msg.step, msg.current, msg.total)
+		} else {
+			// edges, chunks, etc.
+			// "rpg-edges" is the intermediate step
+			// "rpg-chunks" is the last step
+			m.progress.setRPGEdgeProgress(msg.step, msg.current, msg.total)
+		}
+
+		if msg.total > 0 && m.currentStep < 3 {
+			// RPG usually happens after embed, before steady state?
+			// Or parallel? Let's assume it contributes to the "Symbol" phase or similar.
+			// Actually RPG is built from symbols.
+			m.currentStep = 3
+		}
+
 	case watchUISummaryMsg:
 		m.filesIndexed = msg.filesIndexed
 		m.filesSkipped = msg.filesSkipped
@@ -275,6 +308,19 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watchUIHealthMsg:
 		m.totalEvents = msg.totalEvents
 		m.lastSuccess = msg.lastSuccess
+
+	case watchUIActivityMsg:
+		activity := msg.state
+		if msg.file != "" {
+			activity += " (" + filepath.Base(msg.file) + ")"
+		}
+		m.currentActivity = activity
+
+	case watchUIStatsMsg:
+		m.filesIndexed += msg.delta.FilesIndexed
+		m.filesRemoved += msg.delta.FilesRemoved
+		m.chunksCreated += msg.delta.ChunksCreated - msg.delta.ChunksRemoved
+		m.symbolCount += msg.delta.SymbolsFound - msg.delta.SymbolsLost
 
 	case watchUIScopeMsg:
 		if msg.totalProjects < 1 {
@@ -613,6 +659,9 @@ func (m watchUIModel) renderProgressPanel(width, height int) string {
 
 	if m.scanFile != "" {
 		lines = append(lines, m.theme.muted.Render("Current file: "+truncateRunes(m.scanFile, width-6)))
+	}
+	if m.currentActivity != "" {
+		lines = append(lines, m.theme.info.Render("Activity: "+truncateRunes(m.currentActivity, width-6)))
 	}
 	if m.embedRetryInfo != "" {
 		lines = append(lines, m.theme.warn.Render("Embed "+m.embedRetryInfo))
@@ -1075,6 +1124,24 @@ func runWatchUIWorker(ctx context.Context, p *tea.Program) (err error) {
 			if info.TotalChunks > 0 && info.CompletedChunks < info.TotalChunks {
 				p.Send(watchUIPhaseMsg{current: 2}) // Embedding
 			}
+		}),
+		withWatchSupervisorRPGObserver(func(step string, current, total int) {
+			p.Send(watchUIRPGMsg{
+				step:    step,
+				current: current,
+				total:   total,
+			})
+		}),
+		withWatchSupervisorActivityObserver(func(state, file string) {
+			p.Send(watchUIActivityMsg{
+				state: state,
+				file:  file,
+			})
+		}),
+		withWatchSupervisorStatsObserver(func(delta watchStatsDelta) {
+			p.Send(watchUIStatsMsg{
+				delta: delta,
+			})
 		}),
 	)
 }
