@@ -112,6 +112,10 @@ func (m initUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.stepForward()
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			// Allow direct selection by number (1-based index)
+			idx := int(msg.String()[0] - '1')
+			m.selectByIndex(idx)
 		}
 	}
 	return m, nil
@@ -153,6 +157,19 @@ func (m *initUIModel) moveSelection(delta int) {
 		m.providerIdx = wrapIndex(m.providerIdx+delta, len(initProviderOptions))
 	case initStepBackend:
 		m.backendIdx = wrapIndex(m.backendIdx+delta, len(initBackendOptions))
+	}
+}
+
+func (m *initUIModel) selectByIndex(idx int) {
+	switch m.step {
+	case initStepProvider:
+		if idx >= 0 && idx < len(initProviderOptions) {
+			m.providerIdx = idx
+		}
+	case initStepBackend:
+		if idx >= 0 && idx < len(initBackendOptions) {
+			m.backendIdx = idx
+		}
 	}
 }
 
