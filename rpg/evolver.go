@@ -191,10 +191,10 @@ func (ev *Evolver) ensureFileHierarchyPlacement(filePath string, oldFeatures, ne
 	if subcatName == "" {
 		subcatName = "general"
 	}
-	subcatID := ev.hierarchy.EnsureSubcategory(catID, subcatName)
 
 	currentParents := ev.currentFileFeatureParents(fileID)
 	if len(currentParents) == 0 {
+		subcatID := ev.hierarchy.EnsureSubcategory(catID, subcatName)
 		ev.graph.AddEdge(&Edge{
 			From:      subcatID,
 			To:        fileID,
@@ -209,6 +209,8 @@ func (ev *Evolver) ensureFileHierarchyPlacement(filePath string, oldFeatures, ne
 	if drift < ev.driftThreshold {
 		return
 	}
+
+	subcatID := ev.hierarchy.EnsureSubcategory(catID, subcatName)
 
 	for _, parentID := range currentParents {
 		ev.graph.RemoveEdgesBetween(parentID, fileID)

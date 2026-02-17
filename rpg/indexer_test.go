@@ -12,6 +12,71 @@ import (
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
+type countingFeatureExtractor struct {
+	atomicCalls  int
+	featureCalls int
+}
+
+func (e *countingFeatureExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
+	e.featureCalls++
+	return "handle-request"
+}
+
+func (e *countingFeatureExtractor) ExtractAtomicFeatures(symbolName, signature, receiver, comment string) []string {
+	e.atomicCalls++
+	return []string{"handle request"}
+}
+
+func (e *countingFeatureExtractor) GenerateSummary(ctx context.Context, name, contextStr string) (string, error) {
+	return "summary", nil
+}
+
+func (e *countingFeatureExtractor) Mode() string { return "counting" }
+
+func TestBuildFull_DoesNotDuplicateFeatureExtractionCalls(t *testing.T) {
+	ctx := context.Background()
+	rpgStore := NewGOBRPGStore(filepath.Join(t.TempDir(), "rpg.gob"))
+	extractor := &countingFeatureExtractor{}
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
+
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	filePath := "cli/server.go"
+	if err := vectorStore.SaveDocument(ctx, store.Document{
+		Path:    filePath,
+		ModTime: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+
+	if err := symbolStore.SaveFile(ctx, filePath, []trace.Symbol{
+		{
+			Name:      "HandleRequest",
+			Kind:      trace.KindFunction,
+			File:      filePath,
+			Line:      10,
+			EndLine:   20,
+			Signature: "func HandleRequest()",
+			Language:  "go",
+		},
+	}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	if err := indexer.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+
+	if extractor.featureCalls != 0 {
+		t.Fatalf("expected no direct ExtractFeature calls during BuildFull when atomic features are available, got %d", extractor.featureCalls)
+	}
+	if extractor.atomicCalls != 2 {
+		t.Fatalf("expected exactly 2 ExtractAtomicFeatures calls (file + symbol), got %d", extractor.atomicCalls)
+	}
+}
+
 func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
 	// Setup: create a graph with a file node and symbol node
 	g := NewGraph()

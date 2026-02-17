@@ -96,8 +96,14 @@ func (idx *RPGEncoder) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 		now := time.Now()
 		baseName := filepath.Base(filePath)
 		nameWithoutExt := fileNameStem(baseName)
-		fileFallbackPrimary := idx.extractor.ExtractFeature(nameWithoutExt, "", "", "")
 		fileFallbackAtomic := idx.extractor.ExtractAtomicFeatures(nameWithoutExt, "", "", "")
+		fileFallbackPrimary := "unknown"
+		if len(fileFallbackAtomic) > 0 {
+			fileFallbackPrimary = primaryFromAtomicFeature(fileFallbackAtomic[0])
+		}
+		if fileFallbackPrimary == "" || fileFallbackPrimary == "unknown" {
+			fileFallbackPrimary = idx.extractor.ExtractFeature(nameWithoutExt, "", "", "")
+		}
 
 		// Create file node
 		fileNodeID := MakeNodeID(KindFile, filePath)
@@ -119,7 +125,13 @@ func (idx *RPGEncoder) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 		fileAtomicCandidates := make([]string, 0, len(symbols))
 		for _, sym := range symbols {
 			atomicFeatures := idx.extractor.ExtractAtomicFeatures(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
-			primaryFeature := idx.extractor.ExtractFeature(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+			primaryFeature := "unknown"
+			if len(atomicFeatures) > 0 {
+				primaryFeature = primaryFromAtomicFeature(atomicFeatures[0])
+			}
+			if primaryFeature == "" || primaryFeature == "unknown" {
+				primaryFeature = idx.extractor.ExtractFeature(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+			}
 			nodeID := makeSymbolNodeID(filePath, sym)
 			symNode := &Node{
 				ID:         nodeID,

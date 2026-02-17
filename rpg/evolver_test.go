@@ -240,6 +240,51 @@ func TestHandleModify(t *testing.T) {
 	}
 }
 
+func TestHandleModify_DoesNotCreateOrphanSubcategoryWhenDriftBelowThreshold(t *testing.T) {
+	g := NewGraph()
+	ext := NewLocalExtractor()
+	h := NewHierarchyBuilder(g, ext)
+	// Use a high threshold so semantic movement does not trigger reroute.
+	ev := NewEvolver(g, ext, h, 0.9)
+
+	ev.HandleAdd("server.go", []trace.Symbol{
+		{Name: "HandleRequest", Signature: "func HandleRequest()", Language: "go", Line: 10, EndLine: 20},
+	})
+
+	if g.GetNode("subcat:root/server/request") == nil {
+		t.Fatal("setup failed: expected request subcategory to exist")
+	}
+	if g.GetNode("subcat:root/server/process") != nil {
+		t.Fatal("setup failed: process subcategory should not exist yet")
+	}
+
+	// This changes the dominant subcategory candidate from request -> process,
+	// but drift (0.667) stays below threshold (0.9), so no reroute should happen.
+	ev.HandleModify("server.go", []trace.Symbol{
+		{Name: "ProcessRequest", Signature: "func ProcessRequest()", Language: "go", Line: 10, EndLine: 20},
+	})
+
+	if g.GetNode("subcat:root/server/process") != nil {
+		t.Error("low-drift modification should not create orphan process subcategory")
+	}
+
+	fileNode := g.GetNode("file:server.go")
+	if fileNode == nil {
+		t.Fatal("file node should exist")
+	}
+
+	hasRequestParent := false
+	for _, e := range g.GetIncoming(fileNode.ID) {
+		if e.Type == EdgeFeatureParent && e.From == "subcat:root/server/request" {
+			hasRequestParent = true
+			break
+		}
+	}
+	if !hasRequestParent {
+		t.Error("file should remain attached to request subcategory when drift is below threshold")
+	}
+}
+
 func TestCalculateDrift(t *testing.T) {
 	tests := []struct {
 		name        string
