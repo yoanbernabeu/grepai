@@ -231,6 +231,7 @@ func buildIgnoredMask(content string, lang string) []bool {
 	)
 
 	state := stateNormal
+	parenDepth := 0
 	for i := 0; i < len(content); i++ {
 		ch := content[i]
 		next := byte(0)
@@ -255,10 +256,17 @@ func buildIgnoredMask(content string, lang string) []bool {
 			continue
 		case stateParenBlockComment:
 			mask[i] = true
-			if ch == '*' && next == ')' {
+			if ch == '(' && next == '*' {
+				parenDepth++
 				mask[i+1] = true
 				i++
-				state = stateNormal
+			} else if ch == '*' && next == ')' {
+				mask[i+1] = true
+				i++
+				parenDepth--
+				if parenDepth == 0 {
+					state = stateNormal
+				}
 			}
 			continue
 		case stateSingleQuote:
@@ -309,6 +317,7 @@ func buildIgnoredMask(content string, lang string) []bool {
 			mask[i] = true
 			mask[i+1] = true
 			i++
+			parenDepth = 1
 			state = stateParenBlockComment
 			continue
 		}

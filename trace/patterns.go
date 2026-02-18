@@ -597,11 +597,11 @@ var fsharpPatterns = &LanguagePatterns{
 		regexp.MustCompile(`(?m)^\s*type\s+(?:private\s+|internal\s+|public\s+)?(I[A-Z][a-zA-Z0-9_']*)\s*=`),
 	},
 	Types: []*regexp.Regexp{
-		// type TypeName = (DUs, records, abbreviations - may overlap with Interfaces, that's OK)
-		regexp.MustCompile(`(?m)^\s*type\s+(?:private\s+|internal\s+|public\s+)?([A-Z][a-zA-Z0-9_']*)\s+=`),
+		// type TypeName = (DUs, records, abbreviations - excludes I* interfaces)
+		regexp.MustCompile(`(?m)^\s*type\s+(?:private\s+|internal\s+|public\s+)?([A-HJ-Z][a-zA-Z0-9_']*|I[^A-Z][a-zA-Z0-9_']*)\s+=`),
 	},
 	FunctionCall: regexp.MustCompile(`\b([a-zA-Z_][a-zA-Z0-9_']*)\s*\(`),
-	MethodCall:   regexp.MustCompile(`\.([a-zA-Z_][a-zA-Z0-9_']*)\s*[\(\[]`),
+	MethodCall:   regexp.MustCompile(`\.([a-zA-Z_][a-zA-Z0-9_']*)\s*\(`),
 }
 
 // IsKeyword checks if a name is a language keyword.

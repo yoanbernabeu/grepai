@@ -914,6 +914,11 @@ module Nested =
 		}
 	}
 
+	// ILogger should NOT appear as KindType — only as KindInterface
+	if foundTypes["ILogger"] {
+		t.Error("ILogger extracted as both KindType and KindInterface (duplicate)")
+	}
+
 	expectedClasses := []string{"Greeter", "Nested"}
 	for _, name := range expectedClasses {
 		if !foundClasses[name] {
@@ -1007,5 +1012,28 @@ func TestRegexExtractor_ExtractReferences_FSharp_IgnoresCommentsAndStrings(t *te
 	}
 	if foundRefs["fakeCall"] {
 		t.Error("unexpected string artifact: fakeCall")
+	}
+
+	// Verify nested block comments are fully masked
+	nestedContent := `let testFunc x =
+  (* outer (* nestedHidden(x) *) stillHidden(x) *)
+  realCall(x)
+`
+	nestedRefs, err := extractor.ExtractReferences(ctx, "nested.fs", nestedContent)
+	if err != nil {
+		t.Fatalf("ExtractReferences (nested comments) failed: %v", err)
+	}
+	nestedFound := make(map[string]bool)
+	for _, ref := range nestedRefs {
+		nestedFound[ref.SymbolName] = true
+	}
+	if !nestedFound["realCall"] {
+		t.Error("missing reference to realCall in nested comment test")
+	}
+	if nestedFound["nestedHidden"] {
+		t.Error("nested block comment artifact: nestedHidden")
+	}
+	if nestedFound["stillHidden"] {
+		t.Error("nested block comment not fully masked: stillHidden leaked")
 	}
 }
