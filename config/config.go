@@ -258,6 +258,7 @@ func DefaultConfig() *Config {
 				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
+				".fs", ".fsx", ".fsi", // F#
 				".pas", ".dpr", // Pascal/Delphi
 			},
 			ExcludePatterns: []string{

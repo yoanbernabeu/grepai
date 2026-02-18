@@ -149,7 +149,7 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 
 	var refs []Reference
 	lines := strings.Split(content, "\n")
-	ignored := buildIgnoredMask(content)
+	ignored := buildIgnoredMask(content, patterns.Language)
 
 	// Build function boundaries for caller detection
 	functionBoundaries := e.buildFunctionBoundaries(content, patterns)
@@ -217,12 +217,14 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 
 // buildIgnoredMask marks bytes inside strings and comments.
 // Regex-based call extraction uses this mask to skip obvious artifacts.
-func buildIgnoredMask(content string) []bool {
+// lang is used to handle language-specific comment syntax (e.g., F#'s (* *) block comments).
+func buildIgnoredMask(content string, lang string) []bool {
 	mask := make([]bool, len(content))
 	const (
 		stateNormal = iota
 		stateLineComment
 		stateBlockComment
+		stateParenBlockComment // F#/OCaml (* *) block comments
 		stateSingleQuote
 		stateDoubleQuote
 		stateBacktick
@@ -246,6 +248,14 @@ func buildIgnoredMask(content string) []bool {
 		case stateBlockComment:
 			mask[i] = true
 			if ch == '*' && next == '/' {
+				mask[i+1] = true
+				i++
+				state = stateNormal
+			}
+			continue
+		case stateParenBlockComment:
+			mask[i] = true
+			if ch == '*' && next == ')' {
 				mask[i+1] = true
 				i++
 				state = stateNormal
@@ -293,6 +303,13 @@ func buildIgnoredMask(content string) []bool {
 			mask[i+1] = true
 			i++
 			state = stateBlockComment
+			continue
+		}
+		if lang == "fsharp" && ch == '(' && next == '*' {
+			mask[i] = true
+			mask[i+1] = true
+			i++
+			state = stateParenBlockComment
 			continue
 		}
 		if ch == '\'' {
@@ -447,6 +464,28 @@ func findFunctionEnd(content string, start int, lang string) int {
 				return pos
 			}
 		}
+	case "fsharp":
+		// F# uses indentation-based scoping, same as Python
+		startLine := countLines(content[:start])
+		lines := strings.Split(content, "\n")
+		if startLine >= len(lines) {
+			return len(content)
+		}
+
+		baseIndent := getIndentation(lines[startLine])
+		for i := startLine + 1; i < len(lines); i++ {
+			line := lines[i]
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if getIndentation(line) <= baseIndent && strings.TrimSpace(line) != "" {
+				pos := 0
+				for j := 0; j < i; j++ {
+					pos += len(lines[j]) + 1
+				}
+				return pos
+			}
+		}
 	}
 
 	return len(content)
@@ -470,14 +509,16 @@ func getIndentation(line string) int {
 // findContainingFunction finds which function contains the given position.
 func findContainingFunction(pos int, boundaries []functionBoundary) functionBoundary {
 	var best functionBoundary
+	found := false
 	for _, b := range boundaries {
 		if b.StartPos <= pos && pos < b.EndPos {
-			if b.StartPos > best.StartPos {
+			if !found || b.StartPos > best.StartPos {
 				best = b
+				found = true
 			}
 		}
 	}
-	if best.Name == "" {
+	if !found {
 		best.Name = "<top-level>"
 	}
 	return best

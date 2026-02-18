@@ -12,7 +12,7 @@ description: Analyze function relationships with grepai trace
 - **Find callers**: Discover which functions call a specific symbol
 - **Find callees**: See what functions a symbol calls
 - **Build call graphs**: Visualize call relationships with configurable depth
-- **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP, Java, C/C++, Rust, Zig
+- **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP, Java, C/C++, Rust, Zig, C#, F#
 - **Two extraction modes**: Fast (regex) and Precise (tree-sitter AST)
 - **JSON output**: Perfect for AI agents and automation
 
@@ -95,6 +95,7 @@ grepai trace callers "MyFunction" --mode precise
 | Zig | `.zig` | Good |
 | Rust | `.rs` | Good |
 | C# | `.cs` | Good |
+| F# | `.fs`, `.fsx`, `.fsi` | Good |
 | Pascal/Delphi | `.pas`, `.dpr` | Good |
 
 ### JSON Output
