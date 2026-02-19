@@ -76,9 +76,13 @@ func lockFile(f *os.File) error {
 }
 
 // sysProcAttr returns platform-specific process attributes for spawning background processes.
-// On Windows, returns nil as no special process attributes are needed for background spawning.
+// On Windows, uses CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW to fully detach the child
+// from the parent's console. Without CREATE_NO_WINDOW, the child still receives
+// CTRL_CLOSE_EVENT (mapped to SIGTERM by Go) when the parent's console closes.
 func sysProcAttr() *syscall.SysProcAttr {
-	return nil
+	return &syscall.SysProcAttr{
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | 0x08000000, // CREATE_NO_WINDOW
+	}
 }
 
 // livenessCheck uses polling on Windows since ExtraFiles is not supported.
