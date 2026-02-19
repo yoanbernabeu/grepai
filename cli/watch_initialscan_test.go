@@ -544,6 +544,9 @@ func TestEmitInitialStatsSnapshot_ReportsExistingTotals(t *testing.T) {
 	if got.ChunksCreated != 2 {
 		t.Fatalf("chunks created = %d, want 2", got.ChunksCreated)
 	}
+	if got.FilesIndexed != 1 {
+		t.Fatalf("files indexed = %d, want 1", got.FilesIndexed)
+	}
 	if got.SymbolsFound != 2 {
 		t.Fatalf("symbols found = %d, want 2", got.SymbolsFound)
 	}

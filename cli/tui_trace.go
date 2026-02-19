@@ -232,6 +232,35 @@ func buildTraceRows(result trace.TraceResult, view traceViewKind) []traceRow {
 				detail: detail,
 			})
 		}
+		if len(rows) == 0 && len(result.Graph.Edges) > 0 {
+			edges := append([]trace.CallEdge(nil), result.Graph.Edges...)
+			sort.Slice(edges, func(i, j int) bool {
+				if edges[i].Caller != edges[j].Caller {
+					return edges[i].Caller < edges[j].Caller
+				}
+				if edges[i].Callee != edges[j].Callee {
+					return edges[i].Callee < edges[j].Callee
+				}
+				if edges[i].File != edges[j].File {
+					return edges[i].File < edges[j].File
+				}
+				return edges[i].Line < edges[j].Line
+			})
+			for _, edge := range edges {
+				detail := []string{
+					fmt.Sprintf("caller: %s", safeValue(edge.Caller)),
+					fmt.Sprintf("callee: %s", safeValue(edge.Callee)),
+					fmt.Sprintf("callsite: %s:%d", safeValue(edge.File), edge.Line),
+				}
+				if strings.TrimSpace(edge.CallType) != "" {
+					detail = append(detail, fmt.Sprintf("type: %s", edge.CallType))
+				}
+				rows = append(rows, traceRow{
+					title:  fmt.Sprintf("%s -> %s", edge.Caller, edge.Callee),
+					detail: detail,
+				})
+			}
+		}
 	}
 
 	return rows
@@ -244,8 +273,8 @@ func traceEmptyState(view traceViewKind, result trace.TraceResult) (string, stri
 			return "No symbol match", "No symbol matched this query in the current index.", "Try a different symbol name, or run `grepai watch` if the index is stale"
 		}
 	case traceViewGraph:
-		if result.Graph == nil || len(result.Graph.Nodes) == 0 {
-			return "No graph data", "No call graph nodes were found for this symbol.", "Try a different symbol or increase `--depth`"
+		if result.Graph == nil || (len(result.Graph.Nodes) == 0 && len(result.Graph.Edges) == 0) {
+			return "No graph data", "No call graph nodes or edges were found for this symbol.", "Try a different symbol or increase `--depth`"
 		}
 	}
 	return "No trace rows", "No symbol or edge data found for this query.", "Run `grepai watch` then retry"

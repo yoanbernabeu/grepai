@@ -399,6 +399,8 @@ func (m *watchUIModel) applyIncrementalStats(projectRoot string, delta watchStat
 	}
 
 	drift := m.snapshotDrift[root]
+	drift.FilesIndexed += delta.FilesIndexed
+	drift.FilesRemoved += delta.FilesRemoved
 	drift.ChunksCreated += delta.ChunksCreated
 	drift.ChunksRemoved += delta.ChunksRemoved
 	drift.SymbolsFound += delta.SymbolsFound
@@ -407,6 +409,8 @@ func (m *watchUIModel) applyIncrementalStats(projectRoot string, delta watchStat
 }
 
 func (m *watchUIModel) applySnapshotContribution(delta watchStatsDelta, sign int) {
+	m.filesIndexed += sign * delta.FilesIndexed
+	m.filesRemoved += sign * delta.FilesRemoved
 	m.chunksCreated += sign * (delta.ChunksCreated - delta.ChunksRemoved)
 	m.symbolCount += sign * (delta.SymbolsFound - delta.SymbolsLost)
 }

@@ -1091,6 +1091,7 @@ func emitInitialStatsSnapshot(ctx context.Context, vectorStore store.VectorStore
 		if err != nil {
 			log.Printf("Warning: failed to read vector stats snapshot: %v", err)
 		} else if stats != nil {
+			delta.FilesIndexed = stats.TotalFiles
 			delta.ChunksCreated = stats.TotalChunks
 			hasSnapshot = true
 		}

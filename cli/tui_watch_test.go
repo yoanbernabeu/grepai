@@ -118,25 +118,37 @@ func TestWatchUIModelSnapshotRebaseAvoidsDoubleCount(t *testing.T) {
 		projectRoot: root,
 		delta: watchStatsDelta{
 			Snapshot:      true,
+			FilesIndexed:  10,
 			ChunksCreated: 100,
 			SymbolsFound:  40,
 		},
 	})
 	m = next.(watchUIModel)
-	if m.chunksCreated != 100 || m.symbolCount != 40 {
-		t.Fatalf("after baseline snapshot, chunks=%d symbols=%d, want 100/40", m.chunksCreated, m.symbolCount)
+	if m.filesIndexed != 10 || m.chunksCreated != 100 || m.symbolCount != 40 {
+		t.Fatalf(
+			"after baseline snapshot, files=%d chunks=%d symbols=%d, want 10/100/40",
+			m.filesIndexed,
+			m.chunksCreated,
+			m.symbolCount,
+		)
 	}
 
 	next, _ = m.Update(watchUIStatsMsg{
 		projectRoot: root,
 		delta: watchStatsDelta{
+			FilesIndexed:  1,
 			ChunksCreated: 5,
 			SymbolsFound:  2,
 		},
 	})
 	m = next.(watchUIModel)
-	if m.chunksCreated != 105 || m.symbolCount != 42 {
-		t.Fatalf("after incremental drift, chunks=%d symbols=%d, want 105/42", m.chunksCreated, m.symbolCount)
+	if m.filesIndexed != 11 || m.chunksCreated != 105 || m.symbolCount != 42 {
+		t.Fatalf(
+			"after incremental drift, files=%d chunks=%d symbols=%d, want 11/105/42",
+			m.filesIndexed,
+			m.chunksCreated,
+			m.symbolCount,
+		)
 	}
 
 	// Re-emitting snapshot after session restart should rebase, not double-count.
@@ -144,13 +156,19 @@ func TestWatchUIModelSnapshotRebaseAvoidsDoubleCount(t *testing.T) {
 		projectRoot: root,
 		delta: watchStatsDelta{
 			Snapshot:      true,
+			FilesIndexed:  11,
 			ChunksCreated: 105,
 			SymbolsFound:  42,
 		},
 	})
 	m = next.(watchUIModel)
-	if m.chunksCreated != 105 || m.symbolCount != 42 {
-		t.Fatalf("after restart snapshot rebase, chunks=%d symbols=%d, want 105/42", m.chunksCreated, m.symbolCount)
+	if m.filesIndexed != 11 || m.chunksCreated != 105 || m.symbolCount != 42 {
+		t.Fatalf(
+			"after restart snapshot rebase, files=%d chunks=%d symbols=%d, want 11/105/42",
+			m.filesIndexed,
+			m.chunksCreated,
+			m.symbolCount,
+		)
 	}
 }
 
