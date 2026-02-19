@@ -391,33 +391,23 @@ func (m *initUIModel) initProviderInputs() {
 	m.focusIndex = 0
 
 	provider := initProviderOptions[m.providerIdx]
+	providerDefaults := config.DefaultEmbedderForProvider(provider)
 
 	// Common Endpoint Input
 	tiEndpoint := textinput.New()
 	tiEndpoint.Placeholder = "Endpoint URL"
 	tiEndpoint.CharLimit = 200
 	tiEndpoint.Width = 50
+	tiEndpoint.SetValue(providerDefaults.Endpoint)
 
 	// Common Model Input (optional/readonly depending on provider)
 	tiModel := textinput.New()
 	tiModel.Placeholder = "Model Name"
 	tiModel.CharLimit = 100
 	tiModel.Width = 50
+	tiModel.SetValue(providerDefaults.Model)
 
-	switch provider {
-	case "ollama":
-		tiEndpoint.SetValue("http://localhost:11434")
-		tiModel.SetValue("nomic-embed-text")
-		m.providerInputs = append(m.providerInputs, tiEndpoint, tiModel)
-	case "lmstudio":
-		tiEndpoint.SetValue("http://127.0.0.1:1234")
-		tiModel.SetValue("text-embedding-nomic-embed-text-v1.5")
-		m.providerInputs = append(m.providerInputs, tiEndpoint, tiModel)
-	case "openai":
-		tiEndpoint.SetValue("https://api.openai.com/v1")
-		tiModel.SetValue("text-embedding-3-small")
-		m.providerInputs = append(m.providerInputs, tiEndpoint, tiModel)
-	}
+	m.providerInputs = append(m.providerInputs, tiEndpoint, tiModel)
 }
 
 func (m *initUIModel) initBackendInputs() {
@@ -425,23 +415,24 @@ func (m *initUIModel) initBackendInputs() {
 	m.focusIndex = 0
 
 	backend := initBackendOptions[m.backendIdx]
+	backendDefaults := config.DefaultStoreForBackend(backend)
 	switch backend {
 	case "gob":
 		// No config needed
 	case "postgres":
 		tiDSN := textinput.New()
 		tiDSN.Placeholder = "postgres://user:pass@localhost:5432/grepai"
-		tiDSN.SetValue("postgres://localhost:5432/grepai")
+		tiDSN.SetValue(backendDefaults.Postgres.DSN)
 		tiDSN.Width = 60
 		m.backendInputs = append(m.backendInputs, tiDSN)
 	case "qdrant":
 		tiEndpoint := textinput.New()
 		tiEndpoint.Placeholder = "localhost"
-		tiEndpoint.SetValue("localhost")
+		tiEndpoint.SetValue(backendDefaults.Qdrant.Endpoint)
 
 		tiPort := textinput.New()
 		tiPort.Placeholder = "6334"
-		tiPort.SetValue("6334")
+		tiPort.SetValue(strconv.Itoa(backendDefaults.Qdrant.Port))
 
 		tiCollection := textinput.New()
 		tiCollection.Placeholder = "Collection Name (optional)"
@@ -700,23 +691,7 @@ func (m initUIModel) buildConfig() (*config.Config, error) {
 
 	// Provider Config from Inputs
 	provider := initProviderOptions[m.providerIdx]
-	cfg.Embedder.Provider = provider
-	switch provider {
-	case "ollama":
-		cfg.Embedder.Model = "nomic-embed-text"
-		cfg.Embedder.Endpoint = "http://localhost:11434"
-		dim := 768
-		cfg.Embedder.Dimensions = &dim
-	case "lmstudio":
-		cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
-		cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
-		dim := lmStudioEmbeddingDimensions
-		cfg.Embedder.Dimensions = &dim
-	case "openai":
-		cfg.Embedder.Model = "text-embedding-3-small"
-		cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-		cfg.Embedder.Dimensions = nil // API usually handles this
-	}
+	cfg.Embedder = config.DefaultEmbedderForProvider(provider)
 
 	if len(m.providerInputs) >= 2 {
 		cfg.Embedder.Endpoint = m.providerInputs[0].Value()
@@ -725,19 +700,14 @@ func (m initUIModel) buildConfig() (*config.Config, error) {
 
 	// Backend Config from Inputs
 	backend := initBackendOptions[m.backendIdx]
-	cfg.Store.Backend = backend
+	cfg.Store = config.DefaultStoreForBackend(backend)
 
-	switch backend {
+	switch cfg.Store.Backend {
 	case "postgres":
-		cfg.Store.Postgres.DSN = "postgres://localhost:5432/grepai"
 		if len(m.backendInputs) > 0 {
 			cfg.Store.Postgres.DSN = m.backendInputs[0].Value()
 		}
 	case "qdrant":
-		cfg.Store.Qdrant.Endpoint = "localhost"
-		cfg.Store.Qdrant.Port = 6334
-		cfg.Store.Qdrant.UseTLS = false
-		cfg.Store.Qdrant.Collection = ""
 		if len(m.backendInputs) >= 2 {
 			cfg.Store.Qdrant.Endpoint = m.backendInputs[0].Value()
 			if port, err := strconv.Atoi(m.backendInputs[1].Value()); err == nil {

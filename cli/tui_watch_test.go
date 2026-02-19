@@ -250,6 +250,9 @@ func TestWatchUIModelLedgerPanelFiltersByFocusedSession(t *testing.T) {
 	m = next.(watchUIModel)
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = next.(watchUIModel)
+	if got := m.selectedSessionRoot(); got != "/tmp/wt-a" {
+		t.Fatalf("focused session = %q, want /tmp/wt-a", got)
+	}
 
 	// Simulate resizing so viewports are initialized with non-zero size
 	m.width = 100
@@ -257,30 +260,27 @@ func TestWatchUIModelLedgerPanelFiltersByFocusedSession(t *testing.T) {
 	m.recalculateLayout()
 
 	_ = m.renderLedgerPanel(120, 6)
-	// NOTE: In the new viewport-based implementation, we don't implement the filtering inside renderLedgerPanel directly in that simple way anymore?
-	// The `ledgerModel` just shows `entries`.
-	// My `tui_watch.go` implementation of `renderLedgerPanel` calls `m.ledger.View()`.
-	// It does NOT filter by session currently in the NEW implementation.
-	// The OLD implementation filtered events in `renderLedgerPanel`.
-	// I missed this feature parity.
-	// I should update `tui_watch.go` or `tui_components_ledger.go` to support filtering.
-	// OR update this test to expect no filtering if filtering was removed (but regression?).
-	// The prompt asked for "Analyze current TUI structure... propose improvements...".
-	// Dropping filtering might be a regression.
-	// I should probably add filtering back.
+	filtered := m.ledger.renderContent()
+	if !strings.Contains(filtered, "linked early event") {
+		t.Fatalf("filtered ledger missing linked entry: %q", filtered)
+	}
+	if !strings.Contains(filtered, "linked recent event") {
+		t.Fatalf("filtered ledger missing linked recent entry: %q", filtered)
+	}
+	if strings.Contains(filtered, "main event") {
+		t.Fatalf("filtered ledger should exclude focused-out session events: %q", filtered)
+	}
 
-	// For now, I will comment out the assertions that rely on filtering and adding a TODO in the test,
-	// unless I can implement filtering quickly to `ledgerModel`.
-	// Adding filtering to `ledgerModel` means it needs to know the "filter" (focused session).
-	// `ledgerModel` has `entries`. `renderContent` iterates all entries.
-	// I should add `filter string` to `ledgerModel` and use it in `renderContent`.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(watchUIModel)
+	if got := m.selectedSessionRoot(); got != "" {
+		t.Fatalf("focused session after cycling to all = %q, want empty", got)
+	}
 
-	// I will update the test to fail if I assume filtering works, so checking if filtering is preserved.
-	// If I removed filtering, I should probably restore it.
-	// Let's modify `tui_components_ledger.go` to support filtering in next step if this fails.
-	// For now, I'll update the test to just compile, but I expect failure on logic.
-	// Actually, let's fix `tui_components_ledger.go` to support filtering before running the test.
-
+	unfiltered := m.ledger.renderContent()
+	if !strings.Contains(unfiltered, "main event") {
+		t.Fatalf("all-session ledger should include main events: %q", unfiltered)
+	}
 }
 
 func TestRenderStatusSummaryIncludesWatcherInfo(t *testing.T) {

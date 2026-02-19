@@ -74,8 +74,6 @@ func (m *progressModel) setSize(w int) {
 	}
 	m.scanBar.Width = available
 	m.embedBar.Width = available
-	m.scanBar.Width = available
-	m.embedBar.Width = available
 	m.rpgNodeBar.Width = available
 	m.rpgEdgeBar.Width = available
 }

@@ -17,13 +17,14 @@ type ledgerEntry struct {
 }
 
 type ledgerModel struct {
-	viewport   viewport.Model
-	entries    []ledgerEntry
-	width      int
-	height     int
-	theme      tuiTheme
-	paused     bool
-	autoScroll bool
+	viewport     viewport.Model
+	entries      []ledgerEntry
+	width        int
+	height       int
+	theme        tuiTheme
+	paused       bool
+	autoScroll   bool
+	sourceFilter string
 }
 
 func newLedgerModel(theme tuiTheme) ledgerModel {
@@ -87,6 +88,14 @@ func (m *ledgerModel) addEntry(e ledgerEntry) {
 	m.updateContent()
 }
 
+func (m *ledgerModel) setSourceFilter(source string) {
+	if m.sourceFilter == source {
+		return
+	}
+	m.sourceFilter = source
+	m.updateContent()
+}
+
 func (m *ledgerModel) updateContent() {
 	content := m.renderContent()
 	m.viewport.SetContent(content)
@@ -102,6 +111,10 @@ func (m *ledgerModel) togglePause() {
 func (m ledgerModel) renderContent() string {
 	var b strings.Builder
 	for _, ev := range m.entries {
+		if m.sourceFilter != "" && ev.source != m.sourceFilter {
+			continue
+		}
+
 		levelStyle := m.theme.info
 		switch ev.level {
 		case "warn":

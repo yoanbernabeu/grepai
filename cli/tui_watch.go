@@ -362,6 +362,8 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	m.syncLedgerFilter()
+
 	// Update components
 	m.ledger, cmd = m.ledger.Update(msg)
 	cmds = append(cmds, cmd)
@@ -506,6 +508,10 @@ func (m *watchUIModel) ensureSessionFocusValid() {
 	if session.state == "removed" {
 		m.sessionFocus = -1
 	}
+}
+
+func (m *watchUIModel) syncLedgerFilter() {
+	m.ledger.setSourceFilter(m.selectedSessionRoot())
 }
 
 func (m *watchUIModel) pruneRemovedSessions(now time.Time) bool {
