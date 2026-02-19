@@ -107,6 +107,53 @@ func TestWatchUIModelScopeTracksReadyProjects(t *testing.T) {
 	}
 }
 
+func TestWatchUIModelSnapshotRebaseAvoidsDoubleCount(t *testing.T) {
+	m := newWatchUIModel(nil)
+	root := "/tmp/main"
+
+	next, _ := m.Update(watchUIContextMsg{projectRoot: root})
+	m = next.(watchUIModel)
+
+	next, _ = m.Update(watchUIStatsMsg{
+		projectRoot: root,
+		delta: watchStatsDelta{
+			Snapshot:      true,
+			ChunksCreated: 100,
+			SymbolsFound:  40,
+		},
+	})
+	m = next.(watchUIModel)
+	if m.chunksCreated != 100 || m.symbolCount != 40 {
+		t.Fatalf("after baseline snapshot, chunks=%d symbols=%d, want 100/40", m.chunksCreated, m.symbolCount)
+	}
+
+	next, _ = m.Update(watchUIStatsMsg{
+		projectRoot: root,
+		delta: watchStatsDelta{
+			ChunksCreated: 5,
+			SymbolsFound:  2,
+		},
+	})
+	m = next.(watchUIModel)
+	if m.chunksCreated != 105 || m.symbolCount != 42 {
+		t.Fatalf("after incremental drift, chunks=%d symbols=%d, want 105/42", m.chunksCreated, m.symbolCount)
+	}
+
+	// Re-emitting snapshot after session restart should rebase, not double-count.
+	next, _ = m.Update(watchUIStatsMsg{
+		projectRoot: root,
+		delta: watchStatsDelta{
+			Snapshot:      true,
+			ChunksCreated: 105,
+			SymbolsFound:  42,
+		},
+	})
+	m = next.(watchUIModel)
+	if m.chunksCreated != 105 || m.symbolCount != 42 {
+		t.Fatalf("after restart snapshot rebase, chunks=%d symbols=%d, want 105/42", m.chunksCreated, m.symbolCount)
+	}
+}
+
 func TestWatchUIModelSessionFocusCyclesWithTab(t *testing.T) {
 	m := newWatchUIModel(nil)
 

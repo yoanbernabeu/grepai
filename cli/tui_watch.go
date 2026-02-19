@@ -143,6 +143,7 @@ type watchUIModel struct {
 	filesRemoved  int
 	symbolCount   int
 	snapshots     map[string]watchStatsDelta
+	snapshotDrift map[string]watchStatsDelta
 
 	totalEvents int
 	lastSuccess time.Time
@@ -190,6 +191,7 @@ func newWatchUIModel(cancel context.CancelFunc) watchUIModel {
 		ledger:        newLedgerModel(theme),
 		progress:      newProgressModel(theme),
 		snapshots:     make(map[string]watchStatsDelta),
+		snapshotDrift: make(map[string]watchStatsDelta),
 	}
 }
 
@@ -323,7 +325,7 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.delta.Snapshot {
 			m.applySnapshotStats(msg.projectRoot, msg.delta)
 		} else {
-			m.applyIncrementalStats(msg.delta)
+			m.applyIncrementalStats(msg.projectRoot, msg.delta)
 		}
 
 	case watchUIScopeMsg:
@@ -378,11 +380,35 @@ func (m watchUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *watchUIModel) applyIncrementalStats(delta watchStatsDelta) {
+func (m *watchUIModel) applyStatsDelta(delta watchStatsDelta) {
 	m.filesIndexed += delta.FilesIndexed
 	m.filesRemoved += delta.FilesRemoved
 	m.chunksCreated += delta.ChunksCreated - delta.ChunksRemoved
 	m.symbolCount += delta.SymbolsFound - delta.SymbolsLost
+}
+
+func (m *watchUIModel) applyIncrementalStats(projectRoot string, delta watchStatsDelta) {
+	m.applyStatsDelta(delta)
+
+	root := projectRoot
+	if root == "" {
+		root = m.projectRoot
+	}
+	if root == "" {
+		return
+	}
+
+	drift := m.snapshotDrift[root]
+	drift.ChunksCreated += delta.ChunksCreated
+	drift.ChunksRemoved += delta.ChunksRemoved
+	drift.SymbolsFound += delta.SymbolsFound
+	drift.SymbolsLost += delta.SymbolsLost
+	m.snapshotDrift[root] = drift
+}
+
+func (m *watchUIModel) applySnapshotContribution(delta watchStatsDelta, sign int) {
+	m.chunksCreated += sign * (delta.ChunksCreated - delta.ChunksRemoved)
+	m.symbolCount += sign * (delta.SymbolsFound - delta.SymbolsLost)
 }
 
 func (m *watchUIModel) applySnapshotStats(projectRoot string, delta watchStatsDelta) {
@@ -392,19 +418,23 @@ func (m *watchUIModel) applySnapshotStats(projectRoot string, delta watchStatsDe
 	}
 	if root == "" {
 		// Fallback to incremental semantics when no source is available.
-		m.applyIncrementalStats(delta)
+		m.applyStatsDelta(delta)
 		return
 	}
 
 	if prev, ok := m.snapshots[root]; ok {
-		m.filesIndexed -= prev.FilesIndexed
-		m.filesRemoved -= prev.FilesRemoved
-		m.chunksCreated -= prev.ChunksCreated - prev.ChunksRemoved
-		m.symbolCount -= prev.SymbolsFound - prev.SymbolsLost
+		m.applySnapshotContribution(prev, -1)
 	}
 
-	m.applyIncrementalStats(delta)
+	// Rebase incremental activity since the previous snapshot for this project.
+	// The refreshed snapshot already includes these changes.
+	if drift, ok := m.snapshotDrift[root]; ok {
+		m.applySnapshotContribution(drift, -1)
+	}
+
+	m.applySnapshotContribution(delta, 1)
 	m.snapshots[root] = delta
+	delete(m.snapshotDrift, root)
 }
 
 func (m *watchUIModel) recalculateLayout() {
