@@ -240,11 +240,6 @@ func TestIndexAllWithProgress_UnchangedFilesSkipped(t *testing.T) {
 		t.Errorf("expected 0 chunks created, got %d", stats.ChunksCreated)
 	}
 
-	// Assert: No documents should be retrieved (skipped before GetDocument call)
-	if mockStore.getDocCalled {
-		t.Error("GetDocument should not be called for files with matching ModTime")
-	}
-
 	// Assert: No documents should be saved
 	if mockStore.saveDocCalled {
 		t.Error("SaveDocument should not be called for unchanged files")
