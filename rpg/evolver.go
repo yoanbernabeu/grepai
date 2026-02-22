@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -34,7 +33,7 @@ func NewEvolver(graph *Graph, extractor FeatureExtractor, hierarchy *HierarchyBu
 
 // HandleDelete removes all nodes associated with a file and prunes orphaned
 // hierarchy nodes.
-func (ev *Evolver) HandleDelete(filePath string) {
+func (ev *Evolver) HandleDelete(ctx context.Context, filePath string) {
 	nodes := ev.graph.GetNodesByFile(filePath)
 	if len(nodes) == 0 {
 		return
@@ -65,9 +64,9 @@ func (ev *Evolver) HandleDelete(filePath string) {
 // HandleModify re-extracts semantic features for all symbols in the changed file,
 // updates file-level semantics, and reroutes file hierarchy placement when drift
 // crosses the configured threshold.
-func (ev *Evolver) HandleModify(filePath string, symbols []trace.Symbol) {
+func (ev *Evolver) HandleModify(ctx context.Context, filePath string, symbols []trace.Symbol) {
 	now := time.Now()
-	fileNode := ev.ensureFileNode(filePath, now)
+	fileNode := ev.ensureFileNode(ctx, filePath, now)
 	oldFileFeatures := append([]string(nil), getNodeAtomicFeatures(fileNode)...)
 
 	existingSymbols := make(map[string]*Node)
@@ -82,8 +81,8 @@ func (ev *Evolver) HandleModify(filePath string, symbols []trace.Symbol) {
 		nodeID := makeSymbolNodeID(filePath, sym)
 		newSymbolIDs[nodeID] = true
 
-		atomicFeatures := ev.extractor.ExtractAtomicFeatures(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
-		primaryFeature := ev.extractor.ExtractFeature(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+		atomicFeatures := ev.extractor.ExtractAtomicFeatures(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+		primaryFeature := ev.extractor.ExtractFeature(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
 
 		if existing, ok := existingSymbols[nodeID]; ok {
 			setNodeFeatures(existing, atomicFeatures, primaryFeature)
@@ -106,26 +105,26 @@ func (ev *Evolver) HandleModify(filePath string, symbols []trace.Symbol) {
 		}
 	}
 
-	ev.refreshFileSemantics(fileNode, filePath, now)
+	ev.refreshFileSemantics(ctx, fileNode, filePath, now)
 	ev.ensureFileHierarchyPlacement(filePath, oldFileFeatures, getNodeAtomicFeatures(fileNode), now)
 }
 
 // HandleAdd adds nodes for a newly created file.
-func (ev *Evolver) HandleAdd(filePath string, symbols []trace.Symbol) {
+func (ev *Evolver) HandleAdd(ctx context.Context, filePath string, symbols []trace.Symbol) {
 	now := time.Now()
-	fileNode := ev.ensureFileNode(filePath, now)
+	fileNode := ev.ensureFileNode(ctx, filePath, now)
 
 	for _, sym := range symbols {
-		atomicFeatures := ev.extractor.ExtractAtomicFeatures(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
-		primaryFeature := ev.extractor.ExtractFeature(sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+		atomicFeatures := ev.extractor.ExtractAtomicFeatures(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+		primaryFeature := ev.extractor.ExtractFeature(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
 		ev.addSymbolNode(filePath, sym, atomicFeatures, primaryFeature, now)
 	}
 
-	ev.refreshFileSemantics(fileNode, filePath, now)
+	ev.refreshFileSemantics(ctx, fileNode, filePath, now)
 	ev.ensureFileHierarchyPlacement(filePath, nil, getNodeAtomicFeatures(fileNode), now)
 }
 
-func (ev *Evolver) ensureFileNode(filePath string, now time.Time) *Node {
+func (ev *Evolver) ensureFileNode(ctx context.Context, filePath string, now time.Time) *Node {
 	fileID := MakeNodeID(KindFile, filePath)
 	existing := ev.graph.GetNode(fileID)
 	if existing != nil {
@@ -133,8 +132,8 @@ func (ev *Evolver) ensureFileNode(filePath string, now time.Time) *Node {
 	}
 
 	stem := fileNameStem(filepath.Base(filePath))
-	fallbackPrimary := ev.extractor.ExtractFeature(stem, "", "", "")
-	fallbackAtomic := ev.extractor.ExtractAtomicFeatures(stem, "", "", "")
+	fallbackPrimary := ev.extractor.ExtractFeature(ctx, stem, "", "", "")
+	fallbackAtomic := ev.extractor.ExtractAtomicFeatures(ctx, stem, "", "", "")
 
 	fileNode := &Node{
 		ID:        fileID,
@@ -147,19 +146,19 @@ func (ev *Evolver) ensureFileNode(filePath string, now time.Time) *Node {
 	return fileNode
 }
 
-func (ev *Evolver) refreshFileSemantics(fileNode *Node, filePath string, now time.Time) {
+func (ev *Evolver) refreshFileSemantics(ctx context.Context, fileNode *Node, filePath string, now time.Time) {
 	if fileNode == nil {
 		return
 	}
 
 	symbolFeatures := ev.collectFileSymbolFeatures(filePath)
-	fallbackPrimary := ev.extractor.ExtractFeature(fileNameStem(filepath.Base(filePath)), "", "", "")
+	fallbackPrimary := ev.extractor.ExtractFeature(ctx, fileNameStem(filepath.Base(filePath)), "", "", "")
 	if len(symbolFeatures) == 0 {
-		symbolFeatures = ev.extractor.ExtractAtomicFeatures(fileNameStem(filepath.Base(filePath)), "", "", "")
+		symbolFeatures = ev.extractor.ExtractAtomicFeatures(ctx, fileNameStem(filepath.Base(filePath)), "", "", "")
 	}
 	setNodeFeatures(fileNode, symbolFeatures, fallbackPrimary)
 
-	summary, err := ev.extractor.GenerateSummary(context.Background(), filePath, buildSummaryContext(filePath, getNodeAtomicFeatures(fileNode)))
+	summary, err := ev.extractor.GenerateSummary(ctx, filePath, buildSummaryContext(filePath, getNodeAtomicFeatures(fileNode)))
 	if err == nil {
 		fileNode.Summary = strings.TrimSpace(summary)
 	}
@@ -213,7 +212,7 @@ func (ev *Evolver) ensureFileHierarchyPlacement(filePath string, oldFeatures, ne
 	subcatID := ev.hierarchy.EnsureSubcategory(catID, subcatName)
 
 	for _, parentID := range currentParents {
-		ev.graph.RemoveEdgesBetween(parentID, fileID)
+		ev.graph.RemoveEdgesBetweenOfType(parentID, fileID, EdgeFeatureParent)
 	}
 	if !edgeExists(ev.graph, subcatID, fileID, EdgeFeatureParent) {
 		ev.graph.AddEdge(&Edge{
@@ -248,39 +247,7 @@ func (ev *Evolver) currentFileFeatureParents(fileID string) []string {
 }
 
 func (ev *Evolver) selectSubcategoryForFile(filePath string) string {
-	counts := make(map[string]int)
-	for _, node := range ev.graph.GetNodesByFile(filePath) {
-		if node.Kind != KindSymbol {
-			continue
-		}
-		features := getNodeAtomicFeatures(node)
-		if len(features) == 0 {
-			continue
-		}
-		cluster := ev.hierarchy.extractClusterKey(features[0])
-		if cluster != "" {
-			counts[cluster]++
-		}
-	}
-	if len(counts) == 0 {
-		return ""
-	}
-
-	type entry struct {
-		name  string
-		count int
-	}
-	entries := make([]entry, 0, len(counts))
-	for name, count := range counts {
-		entries = append(entries, entry{name: name, count: count})
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].count != entries[j].count {
-			return entries[i].count > entries[j].count
-		}
-		return entries[i].name < entries[j].name
-	})
-	return entries[0].name
+	return selectSubcategoryByFrequency(ev.graph.GetNodesByFile(filePath), "", ev.hierarchy)
 }
 
 // addSymbolNode creates or updates a symbol node and links it to its file.

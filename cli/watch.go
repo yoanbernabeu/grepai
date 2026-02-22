@@ -960,7 +960,7 @@ func watchProject(ctx context.Context, projectRoot string, emb embedder.Embedder
 		if err := rpgEncoder.BuildFull(ctx, symbolStore, st, nil); err != nil {
 			log.Printf("Warning: failed to build RPG graph for %s: %v", projectRoot, err)
 		} else {
-			rpgStats := rpgStore.GetGraph().Stats()
+			rpgStats := rpgEncoder.Stats()
 			log.Printf("RPG graph built for %s: %d nodes, %d edges", projectRoot, rpgStats.TotalNodes, rpgStats.TotalEdges)
 		}
 	}

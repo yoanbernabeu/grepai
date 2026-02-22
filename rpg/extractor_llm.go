@@ -27,7 +27,6 @@ type LLMExtractor struct {
 	cfg      LLMExtractorConfig
 	client   *http.Client
 	fallback *LocalExtractor
-	ctx      context.Context // parent context for cancellation propagation
 }
 
 // NewLLMExtractor creates an LLM-based feature extractor with local fallback.
@@ -44,31 +43,20 @@ func NewLLMExtractor(cfg LLMExtractorConfig) *LLMExtractor {
 
 func (e *LLMExtractor) Mode() string { return "llm" }
 
-// WithContext returns a copy of the extractor that uses the given context for LLM calls.
-func (e *LLMExtractor) WithContext(ctx context.Context) *LLMExtractor {
-	cp := *e
-	cp.ctx = ctx
-	return &cp
-}
-
 // ExtractFeature calls the LLM to generate a semantic feature label.
 // Falls back to local extraction on any error.
-func (e *LLMExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
-	features := e.ExtractAtomicFeatures(symbolName, signature, receiver, comment)
+func (e *LLMExtractor) ExtractFeature(ctx context.Context, symbolName, signature, receiver, comment string) string {
+	features := e.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
 	if len(features) == 0 {
-		return e.fallback.ExtractFeature(symbolName, signature, receiver, comment)
+		return e.fallback.ExtractFeature(ctx, symbolName, signature, receiver, comment)
 	}
 	return primaryFromAtomicFeature(features[0])
 }
 
 // ExtractAtomicFeatures calls the LLM to generate atomic semantic features.
 // Falls back to local extraction on any error.
-func (e *LLMExtractor) ExtractAtomicFeatures(symbolName, signature, receiver, comment string) []string {
-	parent := e.ctx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, e.cfg.Timeout)
+func (e *LLMExtractor) ExtractAtomicFeatures(ctx context.Context, symbolName, signature, receiver, comment string) []string {
+	ctx, cancel := context.WithTimeout(ctx, e.cfg.Timeout)
 	defer cancel()
 
 	prompt := buildAtomicFeaturePrompt(symbolName, signature, receiver, comment)
@@ -76,12 +64,12 @@ func (e *LLMExtractor) ExtractAtomicFeatures(symbolName, signature, receiver, co
 
 	response, err := e.callCompletion(ctx, systemPrompt, prompt)
 	if err != nil {
-		return e.fallback.ExtractAtomicFeatures(symbolName, signature, receiver, comment)
+		return e.fallback.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
 	}
 
 	features := parseAtomicFeatureResponse(response)
 	if len(features) == 0 {
-		return e.fallback.ExtractAtomicFeatures(symbolName, signature, receiver, comment)
+		return e.fallback.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
 	}
 	return features
 }
@@ -131,7 +119,7 @@ func (e *LLMExtractor) callCompletion(ctx context.Context, systemPrompt, userPro
 		return "", fmt.Errorf("LLM returned status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
@@ -153,7 +141,6 @@ func (e *LLMExtractor) callCompletion(ctx context.Context, systemPrompt, userPro
 	}
 
 	label := strings.TrimSpace(result.Choices[0].Message.Content)
-	// label = sanitizeLabel(label) // Moved to specific callers
 	if label == "" {
 		return "", fmt.Errorf("empty label from LLM")
 	}

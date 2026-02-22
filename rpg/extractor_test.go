@@ -1,6 +1,9 @@
 package rpg
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestLocalExtractor_ExtractFeature(t *testing.T) {
 	ext := NewLocalExtractor()
@@ -90,7 +93,7 @@ func TestLocalExtractor_ExtractFeature(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ext.ExtractFeature(tt.symbolName, tt.signature, tt.receiver, tt.comment)
+			result := ext.ExtractFeature(context.Background(), tt.symbolName, tt.signature, tt.receiver, tt.comment)
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
@@ -217,7 +220,7 @@ func TestLocalExtractor_Mode(t *testing.T) {
 func TestLocalExtractor_ExtractAtomicFeatures(t *testing.T) {
 	ext := NewLocalExtractor()
 
-	features := ext.ExtractAtomicFeatures("HandleRequest", "", "Server", "")
+	features := ext.ExtractAtomicFeatures(context.Background(), "HandleRequest", "", "Server", "")
 	if len(features) != 1 {
 		t.Fatalf("Expected 1 atomic feature, got %d", len(features))
 	}

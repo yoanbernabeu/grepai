@@ -11,11 +11,11 @@ import (
 type FeatureExtractor interface {
 	// ExtractFeature generates a feature label for a symbol.
 	// Returns a verb-object string like "handle-request", "validate-token", "parse-config".
-	ExtractFeature(symbolName, signature, receiver, comment string) string
+	ExtractFeature(ctx context.Context, symbolName, signature, receiver, comment string) string
 
 	// ExtractAtomicFeatures generates one or more atomic semantic features.
 	// Returns normalized verb-object phrases like "handle request".
-	ExtractAtomicFeatures(symbolName, signature, receiver, comment string) []string
+	ExtractAtomicFeatures(ctx context.Context, symbolName, signature, receiver, comment string) []string
 
 	// GenerateSummary generates a high-level summary for a node.
 	// Returns the summary string or error.
@@ -81,8 +81,8 @@ var knownVerbs = map[string]bool{
 // ExtractFeature generates a feature label for a symbol using heuristic rules.
 // It splits the symbol name into words, identifies a verb-object pattern,
 // and returns a lowercase kebab-case string like "handle-request".
-func (e *LocalExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
-	features := e.ExtractAtomicFeatures(symbolName, signature, receiver, comment)
+func (e *LocalExtractor) ExtractFeature(_ context.Context, symbolName, signature, receiver, comment string) string {
+	features := e.ExtractAtomicFeatures(context.Background(), symbolName, signature, receiver, comment)
 	if len(features) == 0 {
 		return "unknown"
 	}
@@ -90,7 +90,7 @@ func (e *LocalExtractor) ExtractFeature(symbolName, signature, receiver, comment
 }
 
 // ExtractAtomicFeatures generates normalized atomic semantic features.
-func (e *LocalExtractor) ExtractAtomicFeatures(symbolName, signature, receiver, comment string) []string {
+func (e *LocalExtractor) ExtractAtomicFeatures(_ context.Context, symbolName, signature, receiver, comment string) []string {
 	if symbolName == "" {
 		return []string{"unknown"}
 	}

@@ -1,6 +1,7 @@
 package rpg
 
 import (
+	"context"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/trace"
@@ -29,7 +30,7 @@ func TestHandleAdd(t *testing.T) {
 		},
 	}
 
-	ev.HandleAdd("cli/server.go", symbols)
+	ev.HandleAdd(context.Background(), "cli/server.go", symbols)
 
 	// Verify file node was created
 	fileNode := g.GetNode("file:cli/server.go")
@@ -113,7 +114,7 @@ func TestHandleDelete(t *testing.T) {
 	symbols := []trace.Symbol{
 		{Name: "HandleRequest", Signature: "func HandleRequest()", Language: "go", Line: 10, EndLine: 20},
 	}
-	ev.HandleAdd("cli/server.go", symbols)
+	ev.HandleAdd(context.Background(), "cli/server.go", symbols)
 
 	// Verify nodes exist
 	if g.GetNode("file:cli/server.go") == nil {
@@ -126,7 +127,7 @@ func TestHandleDelete(t *testing.T) {
 	initialNodeCount := len(g.Nodes)
 
 	// Delete the file
-	ev.HandleDelete("cli/server.go")
+	ev.HandleDelete(context.Background(), "cli/server.go")
 
 	// Verify file node was removed
 	if g.GetNode("file:cli/server.go") != nil {
@@ -162,7 +163,7 @@ func TestHandleModify(t *testing.T) {
 		{Name: "HandleRequest", Signature: "func HandleRequest()", Language: "go", Line: 10, EndLine: 20},
 		{Name: "ValidateToken", Signature: "func ValidateToken()", Language: "go", Line: 25, EndLine: 35},
 	}
-	ev.HandleAdd("server.go", initialSymbols)
+	ev.HandleAdd(context.Background(), "server.go", initialSymbols)
 
 	sym1 := g.GetNode("sym:server.go:HandleRequest")
 	if sym1 == nil {
@@ -175,7 +176,7 @@ func TestHandleModify(t *testing.T) {
 		{Name: "HandleRequest", Signature: "func HandleRequest(ctx context.Context)", Language: "go", Line: 10, EndLine: 25},
 		{Name: "ProcessRequest", Signature: "func ProcessRequest()", Language: "go", Line: 30, EndLine: 40},
 	}
-	ev.HandleModify("server.go", modifiedSymbols)
+	ev.HandleModify(context.Background(), "server.go", modifiedSymbols)
 
 	// HandleRequest should still exist (low drift, in-place update)
 	sym1After := g.GetNode("sym:server.go:HandleRequest")
@@ -206,7 +207,7 @@ func TestHandleModify(t *testing.T) {
 	}
 
 	initialCount := len(g.Nodes)
-	ev.HandleModify("server.go", veryDifferentSymbols)
+	ev.HandleModify(context.Background(), "server.go", veryDifferentSymbols)
 
 	// HandleRequest should be gone
 	if g.GetNode("sym:server.go:HandleRequest") != nil {
@@ -247,7 +248,7 @@ func TestHandleModify_DoesNotCreateOrphanSubcategoryWhenDriftBelowThreshold(t *t
 	// Use a high threshold so semantic movement does not trigger reroute.
 	ev := NewEvolver(g, ext, h, 0.9)
 
-	ev.HandleAdd("server.go", []trace.Symbol{
+	ev.HandleAdd(context.Background(), "server.go", []trace.Symbol{
 		{Name: "HandleRequest", Signature: "func HandleRequest()", Language: "go", Line: 10, EndLine: 20},
 	})
 
@@ -260,7 +261,7 @@ func TestHandleModify_DoesNotCreateOrphanSubcategoryWhenDriftBelowThreshold(t *t
 
 	// This changes the dominant subcategory candidate from request -> process,
 	// but drift (0.667) stays below threshold (0.9), so no reroute should happen.
-	ev.HandleModify("server.go", []trace.Symbol{
+	ev.HandleModify(context.Background(), "server.go", []trace.Symbol{
 		{Name: "ProcessRequest", Signature: "func ProcessRequest()", Language: "go", Line: 10, EndLine: 20},
 	})
 

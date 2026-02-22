@@ -3,8 +3,10 @@ package rpg
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,12 +19,12 @@ type countingFeatureExtractor struct {
 	featureCalls int
 }
 
-func (e *countingFeatureExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
+func (e *countingFeatureExtractor) ExtractFeature(_ context.Context, symbolName, signature, receiver, comment string) string {
 	e.featureCalls++
 	return "handle-request"
 }
 
-func (e *countingFeatureExtractor) ExtractAtomicFeatures(symbolName, signature, receiver, comment string) []string {
+func (e *countingFeatureExtractor) ExtractAtomicFeatures(_ context.Context, symbolName, signature, receiver, comment string) []string {
 	e.atomicCalls++
 	return []string{"handle request"}
 }
@@ -553,7 +555,7 @@ func TestCapGroup_SmallGroup(t *testing.T) {
 	for i := range group {
 		group[i] = &Node{ID: fmt.Sprintf("sym:%d", i), Path: fmt.Sprintf("pkg%d/file.go", i)}
 	}
-	result := capGroup(group, "sample")
+	result := capGroup(group, "sample", rand.New(rand.NewSource(42)))
 	if len(result) != 1 {
 		t.Fatalf("expected 1 subgroup, got %d", len(result))
 	}
@@ -568,7 +570,7 @@ func TestCapGroup_SampleStrategy(t *testing.T) {
 	for i := range group {
 		group[i] = &Node{ID: fmt.Sprintf("sym:%d", i), Path: fmt.Sprintf("pkg%d/file.go", i)}
 	}
-	result := capGroup(group, "sample")
+	result := capGroup(group, "sample", rand.New(rand.NewSource(42)))
 	if len(result) != 1 {
 		t.Fatalf("expected 1 subgroup for sample strategy, got %d", len(result))
 	}
@@ -592,7 +594,7 @@ func TestCapGroup_SplitStrategy(t *testing.T) {
 	// Also add a singleton directory (should be skipped)
 	group = append(group, &Node{ID: "sym:dirD/0", Path: "dirD/file.go"})
 
-	result := capGroup(group, "split")
+	result := capGroup(group, "split", rand.New(rand.NewSource(42)))
 	// Should return 3 subgroups (dirA, dirB, dirC) - dirD has only 1 node so skipped
 	if len(result) != 3 {
 		t.Fatalf("expected 3 subgroups for split strategy, got %d", len(result))
@@ -615,7 +617,7 @@ func TestCapGroup_SplitStrategy_FallbackSampling(t *testing.T) {
 		group = append(group, &Node{ID: fmt.Sprintf("sym:smalldir/%d", i), Path: "smalldir/file.go"})
 	}
 
-	result := capGroup(group, "split")
+	result := capGroup(group, "split", rand.New(rand.NewSource(42)))
 	// Should return 2 subgroups: bigdir (sampled to cap) and smalldir (5 nodes)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 subgroups, got %d", len(result))
@@ -635,6 +637,41 @@ func TestCapGroup_SplitStrategy_FallbackSampling(t *testing.T) {
 	if smallCount != 1 {
 		t.Errorf("expected 1 subgroup of size 5, found %d", smallCount)
 	}
+}
+
+func TestRPGEncoderConcurrentStatsAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	rpgStore := NewGOBRPGStore(filepath.Join(tmpDir, "test.gob"))
+	if err := rpgStore.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer rpgStore.Close()
+
+	encoder := NewRPGEncoder(rpgStore, NewLocalExtractor(), "/tmp", RPGEncoderConfig{})
+
+	var wg sync.WaitGroup
+	const iterations = 100
+
+	// Goroutine 1: Simulate watch loop mutations via Stats()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = encoder.Stats()
+		}
+	}()
+
+	// Goroutine 2: Simulate graph access
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = encoder.Stats()
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestWireFeatureSimilarity_LargeGroupSplit(t *testing.T) {

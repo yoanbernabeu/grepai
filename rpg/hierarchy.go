@@ -1,6 +1,7 @@
 package rpg
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -189,7 +190,7 @@ func (h *HierarchyBuilder) ClusterSymbols(symbols []*Node) map[string][]*Node {
 			feature = atomics[0]
 		}
 		if feature == "" {
-			feature = h.extractor.ExtractFeature(sn.SymbolName, sn.Signature, sn.Receiver, "")
+			feature = h.extractor.ExtractFeature(context.Background(), sn.SymbolName, sn.Signature, sn.Receiver, "")
 			setNodeFeatures(sn, []string{atomicFromPrimaryFeature(feature)}, feature)
 		}
 
@@ -199,21 +200,24 @@ func (h *HierarchyBuilder) ClusterSymbols(symbols []*Node) map[string][]*Node {
 	return clusters
 }
 
-func (h *HierarchyBuilder) selectFileSubcategory(filePath string, symbols []*Node) string {
-	if len(symbols) == 0 {
-		return ""
-	}
-
+// selectSubcategoryByFrequency determines the most frequent cluster key among
+// symbol atomic features for a given file path. When filePath is non-empty,
+// only symbols whose Path matches are considered. Symbols without atomic
+// features are skipped.
+func selectSubcategoryByFrequency(symbols []*Node, filePath string, hb *HierarchyBuilder) string {
 	counts := make(map[string]int)
-	for _, symbol := range symbols {
-		if symbol.Path != filePath {
+	for _, sym := range symbols {
+		if sym.Kind != KindSymbol {
 			continue
 		}
-		atomics := getNodeAtomicFeatures(symbol)
-		if len(atomics) == 0 {
+		if filePath != "" && sym.Path != filePath {
 			continue
 		}
-		cluster := h.extractClusterKey(atomics[0])
+		features := getNodeAtomicFeatures(sym)
+		if len(features) == 0 {
+			continue
+		}
+		cluster := hb.extractClusterKey(features[0])
 		if cluster != "" {
 			counts[cluster]++
 		}
@@ -237,6 +241,10 @@ func (h *HierarchyBuilder) selectFileSubcategory(filePath string, symbols []*Nod
 		return entries[i].name < entries[j].name
 	})
 	return entries[0].name
+}
+
+func (h *HierarchyBuilder) selectFileSubcategory(filePath string, symbols []*Node) string {
+	return selectSubcategoryByFrequency(symbols, filePath, h)
 }
 
 // EnsureArea ensures an area node exists and returns its ID.
