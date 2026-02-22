@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/internal/fileutil"
 )
 
 // GOBSymbolStore implements SymbolStore using GOB encoding.
@@ -52,11 +54,11 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 		return s.loadUnlocked()
 	}
 	defer lockFile.Close()
-	if err := flockShared(lockFile); err != nil {
+	if err := fileutil.FlockShared(lockFile, false); err != nil {
 		return s.loadUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
 
 	return s.loadUnlocked()
@@ -105,7 +107,7 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := ensureParentDir(s.indexPath); err != nil {
+	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare symbol index directory: %w", err)
 	}
 
@@ -114,11 +116,11 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 		return s.persistUnlocked()
 	}
 	defer lockFile.Close()
-	if err := flockExclusive(lockFile); err != nil {
+	if err := fileutil.FlockExclusive(lockFile, false); err != nil {
 		return s.persistUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
 
 	return s.persistUnlocked()
@@ -156,29 +158,12 @@ func (s *GOBSymbolStore) persistUnlocked() error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("failed to close symbol index temp file: %w", err)
 	}
-	if err := replaceFileAtomically(tmpPath, s.indexPath); err != nil {
+	if err := fileutil.ReplaceFileAtomically(tmpPath, s.indexPath); err != nil {
 		return fmt.Errorf("failed to replace symbol index file: %w", err)
 	}
 	cleanupTemp = false
 
 	return nil
-}
-
-func replaceFileAtomically(tempPath, targetPath string) error {
-	if err := os.Rename(tempPath, targetPath); err == nil {
-		return nil
-	}
-
-	if err := os.Remove(targetPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.Rename(tempPath, targetPath)
-}
-
-func ensureParentDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0755)
 }
 
 // SaveFile persists symbols and references for a file.

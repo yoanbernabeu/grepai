@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/yoanbernabeu/grepai/internal/fileutil"
 )
 
 // GOBRPGStore implements RPGStore using GOB encoding.
@@ -34,21 +37,25 @@ func NewGOBRPGStore(indexPath string) *GOBRPGStore {
 
 // Load reads the graph from persistent storage.
 func (s *GOBRPGStore) Load(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
+		log.Printf("rpg: flock open failed, proceeding without lock: %v", err)
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return s.loadUnlocked()
 	}
 	defer lockFile.Close()
-	if err := flockShared(lockFile); err != nil {
+	if err := fileutil.FlockShared(lockFile, true); err != nil {
+		log.Printf("rpg: flock shared acquire failed, proceeding without lock: %v", err)
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return s.loadUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
-
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.loadUnlocked()
 }
 
@@ -95,25 +102,29 @@ func (s *GOBRPGStore) loadUnlocked() error {
 
 // Persist writes the graph to persistent storage.
 func (s *GOBRPGStore) Persist(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := ensureParentDir(s.indexPath); err != nil {
+	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare rpg index directory: %w", err)
 	}
 
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
+		log.Printf("rpg: flock open failed for persist, proceeding without lock: %v", err)
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return s.persistUnlocked()
 	}
 	defer lockFile.Close()
-	if err := flockExclusive(lockFile); err != nil {
+	if err := fileutil.FlockExclusive(lockFile, true); err != nil {
+		log.Printf("rpg: flock exclusive acquire failed, proceeding without lock: %v", err)
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return s.persistUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
-
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.persistUnlocked()
 }
 
@@ -148,31 +159,12 @@ func (s *GOBRPGStore) persistUnlocked() error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("failed to close rpg index temp file: %w", err)
 	}
-	if err := replaceFileAtomically(tmpPath, s.indexPath); err != nil {
+	if err := fileutil.ReplaceFileAtomically(tmpPath, s.indexPath); err != nil {
 		return fmt.Errorf("failed to replace rpg index file: %w", err)
 	}
 	cleanupTemp = false
 
 	return nil
-}
-
-func replaceFileAtomically(tempPath, targetPath string) error {
-	if err := os.Rename(tempPath, targetPath); err == nil {
-		return nil
-	}
-
-	if err := os.Remove(targetPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.Rename(tempPath, targetPath)
-}
-
-// ensureParentDir creates parent directories if missing.
-// Duplicated in store/ and trace/ to avoid cross-package dependency for a trivial helper.
-func ensureParentDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0755)
 }
 
 // Close cleanly shuts down the store by persisting data.
