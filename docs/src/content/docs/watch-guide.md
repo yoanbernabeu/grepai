@@ -80,6 +80,8 @@ The watcher indexes files with these extensions:
 | Ruby | `.rb` |
 | C# | `.cs` |
 | Pascal/Delphi | `.pas`, `.dpr` |
+| GDScript (Godot) | `.gd` |
+| Godot Scene | `.tscn` |
 
 ### What Gets Skipped
 

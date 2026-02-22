@@ -96,6 +96,7 @@ grepai trace callers "MyFunction" --mode precise
 | Rust | `.rs` | Good |
 | C# | `.cs` | Good |
 | Pascal/Delphi | `.pas`, `.dpr` | Good |
+| GDScript (Godot) | `.gd` | Good |
 
 ### JSON Output
 
@@ -150,6 +151,7 @@ trace:
     - .cs
     - .pas
     - .dpr
+    - .gd
   exclude_patterns:
     - "*_test.go"
     - "*.spec.ts"

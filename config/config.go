@@ -259,6 +259,7 @@ func DefaultConfig() *Config {
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
 				".pas", ".dpr", // Pascal/Delphi
+				".gd",          // GDScript (Godot)
 			},
 			ExcludePatterns: []string{
 				"*_test.go",

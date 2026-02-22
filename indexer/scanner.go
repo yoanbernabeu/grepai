@@ -95,6 +95,8 @@ var SupportedExtensions = map[string]bool{
 	".hcl":    true,
 	".pas":    true, // Pascal source file
 	".dpr":    true, // Delphi project file
+	".gd":     true, // GDScript (Godot)
+	".tscn":   true, // Godot scene file
 }
 
 type FileInfo struct {

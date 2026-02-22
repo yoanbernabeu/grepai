@@ -50,6 +50,7 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".cs":   csharpPatterns,
 	".pas":  pascalPatterns,
 	".dpr":  pascalPatterns,
+	".gd":   gdscriptPatterns,
 }
 
 // Go patterns
@@ -285,6 +286,25 @@ var languageKeywords = map[string]map[string]bool{
 		"get": true, "set": true, "init": true, "value": true, "await": true,
 		"yield": true, "lock": true, "this": true, "base": true,
 		"add": true, "remove": true, "toString": true, "equals": true, "getHashCode": true,
+	},
+	"gdscript": {
+		// Control flow
+		"if": true, "elif": true, "else": true, "for": true, "while": true,
+		"match": true, "break": true, "continue": true, "return": true, "pass": true,
+		// Type / logic operators
+		"is": true, "as": true, "not": true, "and": true, "or": true, "in": true,
+		// Object references
+		"self": true, "super": true,
+		// Literals
+		"null": true, "true": true, "false": true,
+		// Common built-in functions
+		"print": true, "printerr": true, "push_error": true, "push_warning": true,
+		"len": true, "range": true, "typeof": true, "str": true, "int": true,
+		"float": true, "bool": true, "abs": true, "min": true, "max": true,
+		"clamp": true, "sign": true, "pow": true, "sqrt": true,
+		"floor": true, "ceil": true, "round": true,
+		"load": true, "preload": true, "await": true, "yield": true,
+		"assert": true,
 	},
 	"pascal": {
 		// Control flow
@@ -545,6 +565,32 @@ var pascalPatterns = &LanguagePatterns{
 		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*type\s+[A-Za-z_][A-Za-z0-9_]*\s*;`),
 		// TArrayType = array of Type
 		regexp.MustCompile(`(?mi)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*array\s+of\s+[A-Za-z_][A-Za-z0-9_]*\s*;`),
+	},
+	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+}
+
+// GDScript (Godot) patterns
+var gdscriptPatterns = &LanguagePatterns{
+	Extension: ".gd",
+	Language:  "gdscript",
+	Functions: []*regexp.Regexp{
+		// func function_name(params): or static func function_name(params):
+		regexp.MustCompile(`(?m)^(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	},
+	Methods: []*regexp.Regexp{
+		// Methods inside inner classes (indented)
+		regexp.MustCompile(`(?m)^[ \t]+(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	},
+	Classes: []*regexp.Regexp{
+		// class_name MyClass  (global class declaration, optionally extends)
+		regexp.MustCompile(`(?m)^class_name\s+([A-Za-z_][A-Za-z0-9_]*)`),
+		// class InnerClass:  (inner class, optionally extends)
+		regexp.MustCompile(`(?m)^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:extends\s+[A-Za-z_][A-Za-z0-9_.]*)?:`),
+	},
+	Types: []*regexp.Regexp{
+		// enum MyEnum { ... }
+		regexp.MustCompile(`(?m)^enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{`),
 	},
 	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),

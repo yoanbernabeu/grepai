@@ -83,6 +83,7 @@ trace:
     - .cs
     - .pas
     - .dpr
+    - .gd
   # Patterns to exclude from symbol indexing
   exclude_patterns:
     - "*_test.go"

@@ -30,6 +30,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".cs":   true,
 		".pas":  true,
 		".dpr":  true,
+		".gd":   true,
 	}
 
 	for _, lang := range langs {
@@ -787,6 +788,97 @@ func run() {
 	}
 	if foundRefs["func"] {
 		t.Error("unexpected anonymous function declaration artifact: func")
+	}
+}
+
+func TestRegexExtractor_ExtractSymbols_GDScript(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `extends CharacterBody2D
+
+class_name Player
+
+enum State { IDLE, RUNNING, JUMPING }
+
+var speed: float = 200.0
+const MAX_JUMPS = 2
+
+func _ready() -> void:
+	set_process(true)
+
+func _physics_process(delta: float) -> void:
+	move_and_slide()
+
+static func create(pos: Vector2) -> Player:
+	var p = Player.new()
+	p.position = pos
+	return p
+
+class Inventory:
+	var items: Array = []
+
+	func add_item(item: String) -> void:
+		items.append(item)
+
+	func remove_item(item: String) -> bool:
+		var idx = items.find(item)
+		if idx >= 0:
+			items.remove_at(idx)
+			return true
+		return false
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "player.gd", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundFunctions := make(map[string]bool)
+	foundMethods := make(map[string]bool)
+	foundClasses := make(map[string]bool)
+	foundTypes := make(map[string]bool)
+
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindFunction:
+			foundFunctions[sym.Name] = true
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		case KindClass:
+			foundClasses[sym.Name] = true
+		case KindType:
+			foundTypes[sym.Name] = true
+		}
+	}
+
+	// Top-level functions
+	expectedFunctions := []string{"_ready", "_physics_process", "create"}
+	for _, name := range expectedFunctions {
+		if !foundFunctions[name] {
+			t.Errorf("missing function: %s", name)
+		}
+	}
+
+	// Methods inside inner class
+	expectedMethods := []string{"add_item", "remove_item"}
+	for _, name := range expectedMethods {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+
+	// Classes (global class_name and inner class)
+	expectedClasses := []string{"Player", "Inventory"}
+	for _, name := range expectedClasses {
+		if !foundClasses[name] {
+			t.Errorf("missing class: %s", name)
+		}
+	}
+
+	// Enum type
+	if !foundTypes["State"] {
+		t.Error("missing enum type: State")
 	}
 }
 
