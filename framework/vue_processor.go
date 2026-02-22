@@ -1,0 +1,241 @@
+package framework
+
+import (
+	"bytes"
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"regexp"
+	"strings"
+)
+
+//go:embed scripts/vue_processor.mjs
+var vueProcessorScript string
+
+type VueProcessor struct {
+	nodePath string
+}
+
+func NewVueProcessor(nodePath string) *VueProcessor {
+	if nodePath == "" {
+		nodePath = "node"
+	}
+	return &VueProcessor{nodePath: nodePath}
+}
+
+func (p *VueProcessor) Name() string { return "vue" }
+func (p *VueProcessor) Supports(filePath string) bool {
+	return hasExt(filePath, ".vue")
+}
+func (p *VueProcessor) Capabilities() ProcessorCapabilities {
+	return ProcessorCapabilities{Embedding: true, Trace: true, Compiled: true}
+}
+
+func (p *VueProcessor) TransformForEmbedding(ctx context.Context, filePath, source string) (TransformResult, error) {
+	return p.transform(ctx, filePath, source)
+}
+
+func (p *VueProcessor) TransformForTrace(ctx context.Context, filePath, source string) (TransformResult, error) {
+	return p.transform(ctx, filePath, source)
+}
+
+type vueScriptInput struct {
+	FilePath string `json:"filePath"`
+	Source   string `json:"source"`
+}
+
+type vueScriptOutput struct {
+	EmbeddingText        string   `json:"embeddingText"`
+	TraceText            string   `json:"traceText"`
+	VirtualPath          string   `json:"virtualPath"`
+	GeneratedToSourceMap []int    `json:"generatedToSourceLine"`
+	Warnings             []string `json:"warnings"`
+}
+
+func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (TransformResult, error) {
+	in, _ := json.Marshal(vueScriptInput{FilePath: filePath, Source: source})
+	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript)
+	cmd.Stdin = bytes.NewReader(in)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		fallback, fbErr := p.fallback(filePath, source)
+		if fbErr == nil {
+			fallback.Warnings = append(fallback.Warnings,
+				fmt.Sprintf("vue compiler unavailable: %s", strings.TrimSpace(stderr.String())))
+			return fallback, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		return TransformResult{}, fmt.Errorf("%w: vue processor failed: %v (%s)", ErrUnavailable, err, strings.TrimSpace(stderr.String()))
+	}
+
+	var out vueScriptOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		return TransformResult{}, fmt.Errorf("%w: invalid vue processor output: %v", ErrUnavailable, err)
+	}
+	text := out.EmbeddingText
+	if text == "" {
+		text = source
+	}
+	virtual := out.VirtualPath
+	if virtual == "" {
+		virtual = filePath + ".__trace__.ts"
+	}
+	return TransformResult{
+		Processor:             p.Name(),
+		FilePath:              filePath,
+		VirtualPath:           virtual,
+		Text:                  text,
+		GeneratedToSourceLine: out.GeneratedToSourceMap,
+		Warnings:              out.Warnings,
+		Transformed:           true,
+	}, nil
+}
+
+var scriptBlockRE = regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)
+var styleBlockRE = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style>`)
+
+func (p *VueProcessor) fallback(filePath, source string) (TransformResult, error) {
+	matches := scriptBlockRE.FindAllStringSubmatchIndex(source, -1)
+	var out strings.Builder
+	mapping := make([]int, 0, len(source)/20)
+	for idx, m := range matches {
+		if len(m) < 4 {
+			continue
+		}
+		start, end := m[2], m[3]
+		block := source[start:end]
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		if idx > 0 && out.Len() > 0 {
+			out.WriteString("\n")
+			mapping = append(mapping, 0)
+		}
+
+		sourceStart := strings.Count(source[:start], "\n") + 1
+		lines := strings.Split(block, "\n")
+		for i, line := range lines {
+			if i > 0 {
+				out.WriteString("\n")
+			}
+			out.WriteString(line)
+			mapping = append(mapping, sourceStart+i)
+		}
+	}
+
+	styleMatches := styleBlockRE.FindAllStringSubmatchIndex(source, -1)
+	styleBindingIndex := 0
+	for _, m := range styleMatches {
+		if len(m) < 4 {
+			continue
+		}
+		start, end := m[2], m[3]
+		block := source[start:end]
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		lineOffset := strings.Count(source[:start], "\n") + 1
+		refs := extractStyleVBindRefs(block, lineOffset)
+		if len(refs) == 0 {
+			continue
+		}
+		if out.Len() > 0 {
+			out.WriteString("\n")
+			mapping = append(mapping, 0)
+		}
+		header := fmt.Sprintf("function __vue_style_bindings__%d() {", styleBindingIndex)
+		out.WriteString(header)
+		mapping = append(mapping, refs[0].line)
+		for _, ref := range refs {
+			out.WriteString("\n  __css_v_bind__(" + ref.expr + ");")
+			mapping = append(mapping, ref.line)
+		}
+		out.WriteString("\n}")
+		mapping = append(mapping, refs[len(refs)-1].line)
+		styleBindingIndex++
+	}
+
+	if out.Len() == 0 {
+		return TransformResult{}, fmt.Errorf("no script blocks or style v-bind expressions found")
+	}
+
+	return TransformResult{
+		Processor:             p.Name(),
+		FilePath:              filePath,
+		VirtualPath:           filePath + ".__trace__.ts",
+		Text:                  out.String(),
+		GeneratedToSourceLine: mapping,
+		Transformed:           true,
+	}, nil
+}
+
+type styleVBindRef struct {
+	expr string
+	line int
+}
+
+func extractStyleVBindRefs(styleContent string, startLine int) []styleVBindRef {
+	lines := strings.Split(styleContent, "\n")
+	refs := make([]styleVBindRef, 0, len(lines))
+	for i, line := range lines {
+		exprs := extractVBindExprsFromLine(line)
+		for _, raw := range exprs {
+			expr := normalizeStyleVBindExpr(raw)
+			if expr == "" {
+				continue
+			}
+			refs = append(refs, styleVBindRef{
+				expr: expr,
+				line: startLine + i,
+			})
+		}
+	}
+	return refs
+}
+
+func extractVBindExprsFromLine(line string) []string {
+	const needle = "v-bind("
+	out := make([]string, 0, 2)
+	start := 0
+
+	for start < len(line) {
+		idx := strings.Index(line[start:], needle)
+		if idx < 0 {
+			break
+		}
+		openIdx := start + idx + len(needle)
+		depth := 1
+		i := openIdx
+		for i < len(line) && depth > 0 {
+			switch line[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			i++
+		}
+		if depth != 0 {
+			break
+		}
+		out = append(out, line[openIdx:i-1])
+		start = i
+	}
+
+	return out
+}
+
+func normalizeStyleVBindExpr(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') || (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') {
+			return strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		}
+	}
+	return trimmed
+}

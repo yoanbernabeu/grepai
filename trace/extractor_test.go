@@ -1014,6 +1014,48 @@ end`
 	}
 }
 
+func TestRegexExtractor_ExtractReferences_TypeScriptSkipsDeclarationArtifacts(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := "export function formatUserName(name: string): string {\n" +
+		"  return name.trim().toUpperCase()\n" +
+		"}\n\n" +
+		"export function getGreeting(name: string): string {\n" +
+		"  return formatUserName(name)\n" +
+		"}\n\n" +
+		"export function buildActivityLabel(name: string, count: number): string {\n" +
+		"  return formatUserName(name) + ' has ' + String(count) + ' alerts'\n" +
+		"}\n"
+
+	refs, err := extractor.ExtractReferences(ctx, "test.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	var selfCall bool
+	callers := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.SymbolName != "formatUserName" {
+			continue
+		}
+		if ref.CallerName == "formatUserName" {
+			selfCall = true
+		}
+		callers[ref.CallerName] = true
+	}
+
+	if selfCall {
+		t.Fatal("unexpected self-call artifact for function declaration")
+	}
+	if !callers["getGreeting"] {
+		t.Fatal("expected getGreeting -> formatUserName reference")
+	}
+	if !callers["buildActivityLabel"] {
+		t.Fatal("expected buildActivityLabel -> formatUserName reference")
+	}
+}
+
 func TestIsKeyword(t *testing.T) {
 	tests := []struct {
 		name     string

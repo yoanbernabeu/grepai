@@ -177,6 +177,9 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 					continue
 				}
 
+				if isDeclarationCallArtifact(content, match[0], name, patterns.Language) {
+					continue
+				}
 				appendRef(name, match[0])
 			}
 		}
@@ -459,6 +462,69 @@ func buildIgnoredMask(content string, lang string) []bool {
 	}
 
 	return mask
+}
+
+// isDeclarationCallArtifact filters regex call matches that are actually
+// function/method declarations in JS/TS-like languages.
+func isDeclarationCallArtifact(content string, pos int, name string, lang string) bool {
+	if lang != "javascript" && lang != "typescript" {
+		return false
+	}
+
+	lineStart := strings.LastIndex(content[:pos], "\n") + 1
+	lineEndRel := strings.Index(content[pos:], "\n")
+	lineEnd := len(content)
+	if lineEndRel >= 0 {
+		lineEnd = pos + lineEndRel
+	}
+	line := strings.TrimSpace(content[lineStart:lineEnd])
+	if line == "" {
+		return false
+	}
+
+	declPrefixes := []string{
+		"function " + name + "(",
+		"async function " + name + "(",
+		"export function " + name + "(",
+		"export async function " + name + "(",
+		"export default function " + name + "(",
+		"export default async function " + name + "(",
+	}
+	for _, p := range declPrefixes {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+
+	// Class/object method declaration styles:
+	// - methodName(args) { ... }
+	// - public async methodName(args) { ... }
+	// These must include "{" on the same line.
+	if strings.Contains(line, "{") {
+		withoutMods := stripTSMethodModifiers(line)
+		if strings.HasPrefix(withoutMods, name+"(") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func stripTSMethodModifiers(line string) string {
+	out := strings.TrimSpace(line)
+	mods := []string{"public ", "private ", "protected ", "static ", "readonly ", "abstract ", "override ", "async "}
+	for {
+		changed := false
+		for _, m := range mods {
+			if strings.HasPrefix(out, m) {
+				out = strings.TrimSpace(strings.TrimPrefix(out, m))
+				changed = true
+			}
+		}
+		if !changed {
+			return out
+		}
+	}
 }
 
 // ExtractAll extracts both symbols and references in one pass.
