@@ -104,6 +104,8 @@ func NewGraph() *Graph {
 // AddNode adds or updates a node and maintains indexes.
 // If a node with the same ID already exists, old index entries are removed first
 // to prevent stale reference accumulation.
+//
+// TODO: consider map[string]int index for O(1) stale-entry removal during bulk operations
 func (g *Graph) AddNode(n *Node) {
 	// If node already exists, remove old index entries first
 	if old, exists := g.Nodes[n.ID]; exists {
@@ -284,6 +286,48 @@ func (g *Graph) RemoveEdgesBetween(from, to string) {
 	}
 }
 
+// RemoveEdgesBetweenOfType removes edges of a specific type between two nodes.
+func (g *Graph) RemoveEdgesBetweenOfType(from, to string, edgeType EdgeType) {
+	// Remove from main edge list
+	filtered := make([]*Edge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		if !(e.From == from && e.To == to && e.Type == edgeType) {
+			filtered = append(filtered, e)
+		}
+	}
+	g.Edges = filtered
+
+	// Remove from forward adjacency
+	if edges, ok := g.adjForward[from]; ok {
+		cleaned := make([]*Edge, 0, len(edges))
+		for _, e := range edges {
+			if !(e.To == to && e.Type == edgeType) {
+				cleaned = append(cleaned, e)
+			}
+		}
+		if len(cleaned) == 0 {
+			delete(g.adjForward, from)
+		} else {
+			g.adjForward[from] = cleaned
+		}
+	}
+
+	// Remove from reverse adjacency
+	if edges, ok := g.adjReverse[to]; ok {
+		cleaned := make([]*Edge, 0, len(edges))
+		for _, e := range edges {
+			if !(e.From == from && e.Type == edgeType) {
+				cleaned = append(cleaned, e)
+			}
+		}
+		if len(cleaned) == 0 {
+			delete(g.adjReverse, to)
+		} else {
+			g.adjReverse[to] = cleaned
+		}
+	}
+}
+
 // RemoveEdgesIf removes edges that match the predicate and rebuilds edge indexes.
 func (g *Graph) RemoveEdgesIf(predicate func(*Edge) bool) {
 	if predicate == nil {
@@ -433,6 +477,8 @@ func (g *Graph) Stats() GraphStats {
 // For files: "file:<path>"
 // For hierarchy: "area:<name>", "cat:<parent>/<name>", "subcat:<parent>/<name>"
 // For chunks: "chunk:<chunkID>"
+//
+// TODO: consider adding ParseNodeID to avoid prefix-stripping in callers
 func MakeNodeID(kind NodeKind, parts ...string) string {
 	switch kind {
 	case KindSymbol:

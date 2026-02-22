@@ -259,6 +259,49 @@ func TestRemoveEdgesBetween(t *testing.T) {
 	}
 }
 
+func TestRemoveEdgesBetweenOfType(t *testing.T) {
+	g := NewGraph()
+	now := time.Now()
+
+	node1 := &Node{ID: "node1", Kind: KindSymbol, UpdatedAt: now}
+	node2 := &Node{ID: "node2", Kind: KindSymbol, UpdatedAt: now}
+	g.AddNode(node1)
+	g.AddNode(node2)
+
+	// Add two edges of different types between the same pair of nodes
+	edgeInvokes := &Edge{From: "node1", To: "node2", Type: EdgeInvokes, Weight: 1.0, UpdatedAt: now}
+	edgeParent := &Edge{From: "node1", To: "node2", Type: EdgeFeatureParent, Weight: 1.0, UpdatedAt: now}
+	g.AddEdge(edgeInvokes)
+	g.AddEdge(edgeParent)
+
+	// Remove only the EdgeFeatureParent edge
+	g.RemoveEdgesBetweenOfType("node1", "node2", EdgeFeatureParent)
+
+	// Only the EdgeInvokes edge should remain
+	if len(g.Edges) != 1 {
+		t.Fatalf("Expected 1 edge remaining, got %d", len(g.Edges))
+	}
+	if g.Edges[0].Type != EdgeInvokes {
+		t.Errorf("Expected EdgeInvokes to remain, got %v", g.Edges[0].Type)
+	}
+
+	// Forward adjacency should still have the EdgeInvokes edge
+	if len(g.adjForward["node1"]) != 1 {
+		t.Fatalf("Expected 1 outgoing edge from node1, got %d", len(g.adjForward["node1"]))
+	}
+	if g.adjForward["node1"][0].Type != EdgeInvokes {
+		t.Errorf("Expected EdgeInvokes in forward adjacency, got %v", g.adjForward["node1"][0].Type)
+	}
+
+	// Reverse adjacency should still have the EdgeInvokes edge
+	if len(g.adjReverse["node2"]) != 1 {
+		t.Fatalf("Expected 1 incoming edge to node2, got %d", len(g.adjReverse["node2"]))
+	}
+	if g.adjReverse["node2"][0].Type != EdgeInvokes {
+		t.Errorf("Expected EdgeInvokes in reverse adjacency, got %v", g.adjReverse["node2"][0].Type)
+	}
+}
+
 func TestGetNodesByKind(t *testing.T) {
 	g := NewGraph()
 	now := time.Now()
