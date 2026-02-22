@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-02-22
+
+### Added
+
+- **F# Language Support for Trace**: Symbol extraction and call graph analysis now supports F# with Ionide tree-sitter grammar (#152) - @WillEhrendreich
+- **Search Path Filter**: New `--path` flag for `grepai search` to filter results by file path with backend pushdown (#141) - @jeremyakers
+
+### Fixed
+
+- **Worktree Deduplication**: Fix worktree dedup and multi-project chunk storage (#142) - @justinkatzman
+
 ## [0.32.1] - 2026-02-19
 
 ### Changed
@@ -573,7 +584,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.32.1...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/yoanbernabeu/grepai/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/yoanbernabeu/grepai/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/yoanbernabeu/grepai/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/yoanbernabeu/grepai/compare/v0.30.0...v0.31.0

@@ -23,6 +23,7 @@ var (
 	searchCompact   bool
 	searchWorkspace string
 	searchProjects  []string
+	searchPath      string
 )
 
 // SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
@@ -66,6 +67,7 @@ func init() {
 	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal format without content (requires --json or --toon)")
 	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "Workspace name for cross-project search")
 	searchCmd.Flags().StringArrayVar(&searchProjects, "project", nil, "Project name(s) to search (requires --workspace, can be repeated)")
+	searchCmd.Flags().StringVar(&searchPath, "path", "", "Path prefix to filter search results")
 	searchCmd.MarkFlagsMutuallyExclusive("json", "toon")
 }
 
@@ -128,7 +130,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Workspace mode
 	if searchWorkspace != "" {
-		return runWorkspaceSearch(ctx, query)
+		return runWorkspaceSearch(ctx, query, searchProjects, searchPath)
 	}
 
 	// Find project root
@@ -184,8 +186,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Create searcher with boost config
 	searcher := search.NewSearcher(st, emb, cfg.Search)
 
+	normalizedPath, err := search.NormalizeProjectPathPrefix(searchPath, projectRoot)
+	if err != nil {
+		return fmt.Errorf("invalid --path value: %w", err)
+	}
+
 	// Search with boosting
-	results, err := searcher.Search(ctx, query, searchLimit)
+	results, err := searcher.Search(ctx, query, searchLimit, normalizedPath)
 	if err != nil {
 		if searchJSON {
 			return outputSearchErrorJSON(err)
@@ -387,7 +394,7 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 	// Create searcher with boost config
 	searcher := search.NewSearcher(st, emb, cfg.Search)
 
-	return searcher.Search(ctx, query, limit)
+	return searcher.Search(ctx, query, limit, "")
 }
 
 func init() {
@@ -396,7 +403,7 @@ func init() {
 }
 
 // runWorkspaceSearch handles workspace-level search operations
-func runWorkspaceSearch(ctx context.Context, query string) error {
+func runWorkspaceSearch(ctx context.Context, query string, projects []string, pathOpt string) error {
 	// Load workspace config
 	wsCfg, err := config.LoadWorkspaceConfig()
 	if err != nil {
@@ -409,6 +416,11 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	ws, err := wsCfg.GetWorkspace(searchWorkspace)
 	if err != nil {
 		return err
+	}
+
+	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathOpt, ws, projects)
+	if err != nil {
+		return fmt.Errorf("invalid --path value: %w", err)
 	}
 
 	// Validate backend
@@ -454,8 +466,21 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	}
 	searcher := search.NewSearcher(st, emb, searchCfg)
 
+	// Construct full path prefix for database query
+	// Database stores paths as: workspaceName/projectName/relativePath
+	// When a single project is specified, include it in the path prefix to push filtering to database level
+	fullPathPrefix := ws.Name + "/"
+	if len(resolvedProjects) == 1 {
+		// If exactly one project specified, include it in the path prefix for database-level filtering
+		// This ensures file_path LIKE 'workspace/project/%' filter is applied
+		fullPathPrefix += resolvedProjects[0] + "/"
+	}
+	if normalizedPath != "" {
+		fullPathPrefix += normalizedPath
+	}
+
 	// Search
-	results, err := searcher.Search(ctx, query, searchLimit)
+	results, err := searcher.Search(ctx, query, searchLimit, fullPathPrefix)
 	if err != nil {
 		if searchJSON {
 			return outputSearchErrorJSON(err)
@@ -466,12 +491,12 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Filter by projects if specified
+	// Filter by projects if specified (additional client-side filtering for multiple projects)
 	// File paths are stored as: workspaceName/projectName/relativePath
-	if len(searchProjects) > 0 {
+	if len(resolvedProjects) > 0 {
 		filteredResults := make([]store.SearchResult, 0)
 		for _, r := range results {
-			for _, projectName := range searchProjects {
+			for _, projectName := range resolvedProjects {
 				// Match workspace/project/ prefix
 				expectedPrefix := ws.Name + "/" + projectName + "/"
 				if strings.HasPrefix(r.Chunk.FilePath, expectedPrefix) {

@@ -54,9 +54,17 @@ func (m *mockStore) DeleteByFile(ctx context.Context, filePath string) error {
 	return nil
 }
 
-func (m *mockStore) Search(ctx context.Context, queryVector []float32, limit int) ([]store.SearchResult, error) {
+func (m *mockStore) Search(ctx context.Context, queryVector []float32, limit int, opts store.SearchOptions) ([]store.SearchResult, error) {
 	results := make([]store.SearchResult, 0, len(m.chunks))
 	for _, chunk := range m.chunks {
+		// Filter by path prefix if provided
+		if opts.PathPrefix != "" && len(chunk.FilePath) < len(opts.PathPrefix) {
+			continue
+		}
+		if opts.PathPrefix != "" && chunk.FilePath[:len(opts.PathPrefix)] != opts.PathPrefix {
+			continue
+		}
+
 		results = append(results, store.SearchResult{
 			Chunk: chunk,
 			Score: 1.0,
@@ -238,11 +246,6 @@ func TestIndexAllWithProgress_UnchangedFilesSkipped(t *testing.T) {
 	// Assert: No chunks should be created
 	if stats.ChunksCreated != 0 {
 		t.Errorf("expected 0 chunks created, got %d", stats.ChunksCreated)
-	}
-
-	// Assert: No documents should be retrieved (skipped before GetDocument call)
-	if mockStore.getDocCalled {
-		t.Error("GetDocument should not be called for files with matching ModTime")
 	}
 
 	// Assert: No documents should be saved

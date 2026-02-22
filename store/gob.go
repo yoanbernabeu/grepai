@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -61,13 +62,17 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 	return nil
 }
 
-func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int) ([]SearchResult, error) {
+func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int, opts SearchOptions) ([]SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	results := make([]SearchResult, 0, len(s.chunks))
 
 	for _, chunk := range s.chunks {
+		// Filter by path prefix if provided
+		if opts.PathPrefix != "" && !strings.HasPrefix(chunk.FilePath, opts.PathPrefix) {
+			continue
+		}
 		score := cosineSimilarity(queryVector, chunk.Vector)
 		results = append(results, SearchResult{
 			Chunk: chunk,

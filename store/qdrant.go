@@ -220,14 +220,31 @@ func (s *QdrantStore) DeleteByFile(ctx context.Context, filePath string) error {
 	return nil
 }
 
-func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit int) ([]SearchResult, error) {
+func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit int, opts SearchOptions) ([]SearchResult, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("limit must be positive, got: %d", limit)
 	}
+
+	// Fetch more results to account for filtering by path prefix
+	fetchLimit := limit
+	if opts.PathPrefix != "" {
+		// Fetch 2x the limit to allow for filtering
+		maxInt := int(^uint(0) >> 1)
+		if limit > maxInt/2 {
+			fetchLimit = maxInt
+		} else {
+			fetchLimit = limit * 2
+		}
+	}
+	if fetchLimit < 0 {
+		return nil, fmt.Errorf("invalid fetch limit: %d", fetchLimit)
+	}
+	fetchLimitU64 := uint64(fetchLimit)
+
 	searchResult, err := s.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: s.collectionName,
 		Query:          qdrant.NewQuery(queryVector...),
-		Limit:          qdrant.PtrOf(uint64(limit)),
+		Limit:          qdrant.PtrOf(fetchLimitU64),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 	})
 	if err != nil {
@@ -237,10 +254,21 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 	results := make([]SearchResult, 0, len(searchResult))
 	for _, point := range searchResult {
 		chunk := s.parseChunkPayload(point.Payload)
+
+		// Filter by path prefix if provided
+		if opts.PathPrefix != "" && !strings.HasPrefix(chunk.FilePath, opts.PathPrefix) {
+			continue
+		}
+
 		results = append(results, SearchResult{
 			Chunk: *chunk,
 			Score: point.Score,
 		})
+
+		// Stop once we have enough results
+		if len(results) >= limit {
+			break
+		}
 	}
 
 	return results, nil

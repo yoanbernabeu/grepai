@@ -63,6 +63,21 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash) WHERE content_hash != ''`,
 		buildEnsureVectorSQL(s.dimensions),
+		// Migrate chunks primary key from (id) to (project_id, id) so that
+		// worktrees sharing the same database get their own chunk rows instead
+		// of silently overwriting each other via ON CONFLICT (id).
+		`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conrelid = 'chunks'::regclass
+				AND contype = 'p'
+				AND array_length(conkey, 1) = 1
+			) THEN
+				ALTER TABLE chunks DROP CONSTRAINT chunks_pkey;
+				ALTER TABLE chunks ADD PRIMARY KEY (project_id, id);
+			END IF;
+		END $$`,
 	}
 
 	for _, query := range queries {
@@ -75,6 +90,10 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 }
 
 func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+
 	batch := &pgx.Batch{}
 
 	for _, chunk := range chunks {
@@ -82,7 +101,7 @@ func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 		batch.Queue(
 			`INSERT INTO chunks (id, project_id, file_path, start_line, end_line, content, vector, hash, content_hash, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			ON CONFLICT (id) DO UPDATE SET
+			ON CONFLICT (project_id, id) DO UPDATE SET
 				file_path = EXCLUDED.file_path,
 				start_line = EXCLUDED.start_line,
 				end_line = EXCLUDED.end_line,
@@ -119,18 +138,29 @@ func (s *PostgresStore) DeleteByFile(ctx context.Context, filePath string) error
 	return nil
 }
 
-func (s *PostgresStore) Search(ctx context.Context, queryVector []float32, limit int) ([]SearchResult, error) {
+func (s *PostgresStore) Search(ctx context.Context, queryVector []float32, limit int, opts SearchOptions) ([]SearchResult, error) {
 	vec := pgvector.NewVector(queryVector)
 
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, file_path, start_line, end_line, content, vector, hash, updated_at,
-			1 - (vector <=> $1) as score
-		FROM chunks
-		WHERE project_id = $2
-		ORDER BY vector <=> $1
-		LIMIT $3`,
-		vec, s.projectID, limit,
-	)
+	query := `SELECT id, file_path, start_line, end_line, content, vector, hash, updated_at,
+		1 - (vector <=> $1) as score
+	FROM chunks
+	WHERE project_id = $2`
+
+	args := []interface{}{vec, s.projectID}
+	nextParam := 3
+
+	// Add path prefix filter if provided
+	if opts.PathPrefix != "" {
+		query += ` AND file_path LIKE $` + fmt.Sprintf("%d", nextParam)
+		args = append(args, opts.PathPrefix+"%")
+		nextParam++
+	}
+
+	query += ` ORDER BY vector <=> $1
+	LIMIT $` + fmt.Sprintf("%d", nextParam)
+	args = append(args, limit)
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search: %w", err)
 	}

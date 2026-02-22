@@ -142,6 +142,16 @@ func TestRunInitialScan_SkipsIndexedFileByLastIndexTime(t *testing.T) {
 	vecStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
 	idx := indexer.NewIndexer(projectRoot, vecStore, emb, chunker, scanner, time.Now().Add(1*time.Hour))
 
+	// Seed a document with ChunkIDs so the lastIndexTime gate can skip it.
+	// The new logic requires doc != nil && len(doc.ChunkIDs) > 0 to skip.
+	if err := vecStore.SaveDocument(ctx, store.Document{
+		Path:     "main.go",
+		Hash:     "seeded",
+		ChunkIDs: []string{"c1"},
+	}); err != nil {
+		t.Fatalf("failed to seed document: %v", err)
+	}
+
 	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectRoot, "symbols.gob"))
 	defer symbolStore.Close()
 
@@ -210,9 +220,10 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		t.Fatalf("failed to scan source file: %v", err)
 	}
 	if err := vecStore.SaveDocument(ctx, store.Document{
-		Path:    "main.go",
-		Hash:    fileInfo.Hash,
-		ModTime: time.Unix(fileInfo.ModTime, 0),
+		Path:     "main.go",
+		Hash:     fileInfo.Hash,
+		ModTime:  time.Unix(fileInfo.ModTime, 0),
+		ChunkIDs: []string{"c1"},
 	}); err != nil {
 		t.Fatalf("failed to seed document: %v", err)
 	}
@@ -307,9 +318,10 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 	projectName := "proj"
 	prefixedPath := workspaceName + "/" + projectName + "/proj/main.go"
 	if err := st.SaveDocument(ctx, store.Document{
-		Path:    prefixedPath,
-		Hash:    fileInfo.Hash,
-		ModTime: time.Unix(fileInfo.ModTime, 0),
+		Path:     prefixedPath,
+		Hash:     fileInfo.Hash,
+		ModTime:  time.Unix(fileInfo.ModTime, 0),
+		ChunkIDs: []string{"c1"},
 	}); err != nil {
 		t.Fatalf("failed to seed workspace document: %v", err)
 	}
