@@ -3,6 +3,7 @@ package rpg
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 )
@@ -46,6 +47,9 @@ func (s *Summarizer) SummarizeHierarchy(ctx context.Context, force bool) error {
 
 func (s *Summarizer) summarizeNodes(ctx context.Context, kind NodeKind, force bool) error {
 	nodes := s.graph.GetNodesByKind(kind)
+	consecutiveFailures := 0
+	const maxConsecutiveFailures = 3
+
 	for _, node := range nodes {
 		if node.Summary != "" && !force {
 			continue
@@ -56,10 +60,16 @@ func (s *Summarizer) summarizeNodes(ctx context.Context, kind NodeKind, force bo
 			// Log error but continue? Or fail?
 			// For now, let's log and continue, as LLM failures shouldn't block everything.
 			// In a real app we'd have better logging.
-			fmt.Printf("Failed to summarize node %s: %v\n", node.ID, err)
+			log.Printf("Failed to summarize node %s: %v\n", node.ID, err)
+			consecutiveFailures++
+			if consecutiveFailures >= maxConsecutiveFailures {
+				log.Printf("rpg: summarization circuit breaker tripped after %d consecutive failures, skipping remaining nodes", maxConsecutiveFailures)
+				break
+			}
 			continue
 		}
 		node.Summary = summary
+		consecutiveFailures = 0
 	}
 	return nil
 }

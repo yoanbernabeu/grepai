@@ -204,7 +204,7 @@ func (qe *QueryEngine) searchNodeInternal(query string, scope string, kinds []No
 // FetchNode retrieves detailed information about a specific node.
 func (qe *QueryEngine) FetchNode(_ context.Context, req FetchNodeRequest) (*FetchNodeResult, error) {
 	if strings.TrimSpace(req.NodeID) == "" {
-		return nil, nil
+		return nil, fmt.Errorf("node ID is required")
 	}
 	node := qe.graph.GetNode(req.NodeID)
 	if node == nil {
@@ -395,6 +395,15 @@ func (qe *QueryEngine) Explore(_ context.Context, req ExploreRequest) (*ExploreR
 // Hierarchy nodes (area/category/subcategory) already store their full path in Feature.
 // File nodes use incoming feature-parent links, symbol nodes inherit file path.
 func (qe *QueryEngine) getFeaturePath(nodeID string) string {
+	return qe.getFeaturePathWithDepth(nodeID, 0)
+}
+
+// getFeaturePathWithDepth returns the full feature path for a node with depth limiting.
+func (qe *QueryEngine) getFeaturePathWithDepth(nodeID string, depth int) string {
+	if depth > 4 {
+		return ""
+	}
+
 	node := qe.graph.GetNode(nodeID)
 	if node == nil {
 		return ""
@@ -425,7 +434,7 @@ func (qe *QueryEngine) getFeaturePath(nodeID string) string {
 			}
 			fileNode := qe.graph.GetNode(e.From)
 			if fileNode != nil && fileNode.Kind == KindFile {
-				return qe.getFeaturePath(fileNode.ID)
+				return qe.getFeaturePathWithDepth(fileNode.ID, depth+1)
 			}
 		}
 		return ""
@@ -438,7 +447,7 @@ func (qe *QueryEngine) getFeaturePath(nodeID string) string {
 			}
 			symNode := qe.graph.GetNode(e.From)
 			if symNode != nil && symNode.Kind == KindSymbol {
-				return qe.getFeaturePath(symNode.ID)
+				return qe.getFeaturePathWithDepth(symNode.ID, depth+1)
 			}
 		}
 	}
@@ -500,6 +509,13 @@ func readNodeCodePreview(node *Node) string {
 	if node == nil || strings.TrimSpace(node.Path) == "" {
 		return ""
 	}
+	info, err := os.Stat(node.Path)
+	if err != nil {
+		return ""
+	}
+	if info.Size() > 1<<20 { // 1MB limit
+		return ""
+	}
 	content, err := os.ReadFile(node.Path)
 	if err != nil {
 		return ""
@@ -516,7 +532,7 @@ func readNodeCodePreview(node *Node) string {
 	}
 	if end < start {
 		// For file nodes without explicit range, return a small prefix.
-		end = minInt(start+19, len(lines))
+		end = min(start+19, len(lines))
 	}
 
 	startIdx := start - 1
@@ -531,13 +547,6 @@ func readNodeCodePreview(node *Node) string {
 		return ""
 	}
 	return strings.Join(lines[startIdx:endIdx], "\n")
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func (qe *QueryEngine) resolveFetchNodeIDs(req FetchNodeRequest) []string {
