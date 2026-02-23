@@ -15,6 +15,7 @@ import (
 	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
+	"github.com/yoanbernabeu/grepai/fsharp"
 )
 
 // TreeSitterExtractor implements SymbolExtractor using tree-sitter AST parsing.
@@ -37,6 +38,9 @@ func NewTreeSitterExtractor() (*TreeSitterExtractor, error) {
 		".py":  python.GetLanguage(),
 		".php": php.GetLanguage(),
 		".cs":  csharp.GetLanguage(),
+		".fs":  fsharp.GetLanguage(),
+		".fsx": fsharp.GetLanguage(),
+		".fsi": fsharp.GetLanguage(),
 	}
 
 	for extension, lang := range languages {
@@ -100,6 +104,8 @@ func (e *TreeSitterExtractor) walkNodeForSymbols(node *sitter.Node, content []by
 		e.extractPHPSymbol(node, nodeType, content, filePath, symbols)
 	case ".cs":
 		e.extractCSharpSymbol(node, nodeType, content, filePath, symbols)
+	case ".fs", ".fsx", ".fsi":
+		e.extractFSharpSymbol(node, nodeType, content, filePath, symbols)
 	}
 
 	for i := 0; i < int(node.ChildCount()); i++ {
@@ -399,6 +405,177 @@ func (e *TreeSitterExtractor) extractCSharpSymbol(node *sitter.Node, nodeType st
 	}
 }
 
+func (e *TreeSitterExtractor) extractFSharpSymbol(node *sitter.Node, nodeType string, content []byte, filePath string, symbols *[]Symbol) {
+	switch nodeType {
+	case "value_declaration":
+		// Module-level let bindings: let add x y = ...
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child.Type() == "function_or_value_defn" {
+				for j := 0; j < int(child.ChildCount()); j++ {
+					gc := child.Child(j)
+					if gc.Type() == "function_declaration_left" {
+						nameNode := findChildByType(gc, "identifier")
+						if nameNode != nil {
+							name := nameNode.Content(content)
+							*symbols = append(*symbols, Symbol{
+								Name:     name,
+								Kind:     KindFunction,
+								File:     filePath,
+								Line:     int(node.StartPoint().Row) + 1,
+								EndLine:  int(node.EndPoint().Row) + 1,
+								Language: "fsharp",
+							})
+						}
+						return
+					}
+				}
+			}
+		}
+
+	case "type_definition":
+		// Find the inner type defn node
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			childType := child.Type()
+
+			switch childType {
+			case "union_type_defn", "record_type_defn", "enum_type_defn", "type_abbrev_defn":
+				nameNode := findChildByType(child, "type_name")
+				if nameNode != nil {
+					idNode := findChildByType(nameNode, "identifier")
+					if idNode != nil {
+						*symbols = append(*symbols, Symbol{
+							Name:     idNode.Content(content),
+							Kind:     KindType,
+							File:     filePath,
+							Line:     int(node.StartPoint().Row) + 1,
+							EndLine:  int(node.EndPoint().Row) + 1,
+							Language: "fsharp",
+						})
+					}
+				}
+
+			case "anon_type_defn":
+				nameNode := findChildByType(child, "type_name")
+				if nameNode != nil {
+					idNode := findChildByType(nameNode, "identifier")
+					if idNode != nil {
+						name := idNode.Content(content)
+						kind := KindClass
+						// Check if it's an interface (all members are abstract with no constructor args)
+						if hasOnlyAbstractMembers(child) && findChildByType(child, "primary_constr_args") == nil {
+							kind = KindInterface
+						}
+						*symbols = append(*symbols, Symbol{
+							Name:     name,
+							Kind:     kind,
+							File:     filePath,
+							Line:     int(node.StartPoint().Row) + 1,
+							EndLine:  int(node.EndPoint().Row) + 1,
+							Language: "fsharp",
+						})
+					}
+				}
+			}
+		}
+
+	case "member_defn":
+		// Instance/static/override/abstract members
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			switch child.Type() {
+			case "method_or_prop_defn":
+				propIdent := findChildByType(child, "property_or_ident")
+				if propIdent != nil {
+					// Last identifier is the method name (first might be "this")
+					var lastName string
+					for j := 0; j < int(propIdent.ChildCount()); j++ {
+						gc := propIdent.Child(j)
+						if gc.Type() == "identifier" {
+							lastName = gc.Content(content)
+						}
+					}
+					if lastName != "" {
+						*symbols = append(*symbols, Symbol{
+							Name:     lastName,
+							Kind:     KindMethod,
+							File:     filePath,
+							Line:     int(node.StartPoint().Row) + 1,
+							EndLine:  int(node.EndPoint().Row) + 1,
+							Language: "fsharp",
+						})
+					}
+				}
+				return
+			case "member_signature":
+				// abstract member Log: string -> unit
+				idNode := findChildByType(child, "identifier")
+				if idNode != nil {
+					*symbols = append(*symbols, Symbol{
+						Name:     idNode.Content(content),
+						Kind:     KindMethod,
+						File:     filePath,
+						Line:     int(node.StartPoint().Row) + 1,
+						EndLine:  int(node.EndPoint().Row) + 1,
+						Language: "fsharp",
+					})
+				}
+				return
+			}
+		}
+
+	case "module_defn":
+		idNode := findChildByType(node, "identifier")
+		if idNode != nil {
+			*symbols = append(*symbols, Symbol{
+				Name:     idNode.Content(content),
+				Kind:     KindClass,
+				File:     filePath,
+				Line:     int(node.StartPoint().Row) + 1,
+				EndLine:  int(node.EndPoint().Row) + 1,
+				Language: "fsharp",
+			})
+		}
+	}
+}
+
+func findChildByType(node *sitter.Node, typeName string) *sitter.Node {
+	for i := 0; i < int(node.ChildCount()); i++ {
+		child := node.Child(i)
+		if child.Type() == typeName {
+			return child
+		}
+	}
+	return nil
+}
+
+func hasOnlyAbstractMembers(node *sitter.Node) bool {
+	hasMembers := false
+	for i := 0; i < int(node.ChildCount()); i++ {
+		child := node.Child(i)
+		if child.Type() == "type_extension_elements" {
+			for j := 0; j < int(child.ChildCount()); j++ {
+				gc := child.Child(j)
+				if gc.Type() == "member_defn" {
+					hasMembers = true
+					hasAbstract := false
+					for k := 0; k < int(gc.ChildCount()); k++ {
+						if gc.Child(k).Type() == "abstract" {
+							hasAbstract = true
+							break
+						}
+					}
+					if !hasAbstract {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return hasMembers
+}
+
 // ExtractReferences extracts all symbol references from a file.
 func (e *TreeSitterExtractor) ExtractReferences(ctx context.Context, filePath string, content string) ([]Reference, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -424,29 +601,33 @@ func (e *TreeSitterExtractor) ExtractReferences(ctx context.Context, filePath st
 func (e *TreeSitterExtractor) walkNodeForCalls(node *sitter.Node, content []byte, filePath string, ext string, refs *[]Reference) {
 	nodeType := node.Type()
 
-	if nodeType == "call_expression" || nodeType == "invocation_expression" {
-		funcNode := node.ChildByFieldName("function")
-		if funcNode == nil {
-			funcNode = node.ChildByFieldName("expression")
-		}
-		if funcNode != nil {
-			name := funcNode.Content(content)
-			// Get just the function name (remove receiver if present)
-			if idx := strings.LastIndex(name, "."); idx >= 0 {
-				name = name[idx+1:]
+	switch ext {
+	case ".fs", ".fsx", ".fsi":
+		e.walkFSharpCalls(node, nodeType, content, filePath, refs)
+	default:
+		if nodeType == "call_expression" || nodeType == "invocation_expression" {
+			funcNode := node.ChildByFieldName("function")
+			if funcNode == nil {
+				funcNode = node.ChildByFieldName("expression")
 			}
+			if funcNode != nil {
+				name := funcNode.Content(content)
+				if idx := strings.LastIndex(name, "."); idx >= 0 {
+					name = name[idx+1:]
+				}
 
-			caller := e.findContainingFunction(node, content)
+				caller := e.findContainingFunction(node, content, ext)
 
-			*refs = append(*refs, Reference{
-				SymbolName: name,
-				File:       filePath,
-				Line:       int(node.StartPoint().Row) + 1,
-				Column:     int(node.StartPoint().Column),
-				Context:    truncateContext(string(content[node.StartByte():node.EndByte()])),
-				CallerName: caller,
-				CallerFile: filePath,
-			})
+				*refs = append(*refs, Reference{
+					SymbolName: name,
+					File:       filePath,
+					Line:       int(node.StartPoint().Row) + 1,
+					Column:     int(node.StartPoint().Column),
+					Context:    truncateContext(string(content[node.StartByte():node.EndByte()])),
+					CallerName: caller,
+					CallerFile: filePath,
+				})
+			}
 		}
 	}
 
@@ -456,14 +637,111 @@ func (e *TreeSitterExtractor) walkNodeForCalls(node *sitter.Node, content []byte
 	}
 }
 
-func (e *TreeSitterExtractor) findContainingFunction(node *sitter.Node, content []byte) string {
+func (e *TreeSitterExtractor) walkFSharpCalls(node *sitter.Node, nodeType string, content []byte, filePath string, refs *[]Reference) {
+	if nodeType != "application_expression" {
+		return
+	}
+
+	// In F#, application_expression's first child is the function being called.
+	// For `helper input` → first child is long_identifier_or_op "helper"
+	// For `String.Format(...)` → first child is long_identifier_or_op "String.Format"
+	// For nested curried calls like `sprintf "%s" name`, the outer application_expression
+	// has an inner application_expression as first child. We only want the innermost function name.
+
+	firstChild := node.Child(0)
+	if firstChild == nil {
+		return
+	}
+
+	// Skip if first child is itself an application_expression (curried call — outer layer)
+	if firstChild.Type() == "application_expression" {
+		return
+	}
+
+	name := extractFSharpCallName(firstChild, content)
+	if name == "" {
+		return
+	}
+
+	// Filter keywords
+	if isFSharpKeyword(name) {
+		return
+	}
+
+	caller := e.findContainingFunction(node, content, ".fs")
+
+	*refs = append(*refs, Reference{
+		SymbolName: name,
+		File:       filePath,
+		Line:       int(node.StartPoint().Row) + 1,
+		Column:     int(node.StartPoint().Column),
+		Context:    truncateContext(string(content[node.StartByte():node.EndByte()])),
+		CallerName: caller,
+		CallerFile: filePath,
+	})
+}
+
+func extractFSharpCallName(node *sitter.Node, content []byte) string {
+	text := node.Content(content)
+	// For dotted access like "String.Format" or "Logger.log", take the last part
+	if idx := strings.LastIndex(text, "."); idx >= 0 {
+		return text[idx+1:]
+	}
+	return text
+}
+
+func isFSharpKeyword(name string) bool {
+	switch name {
+	case "let", "in", "if", "then", "else", "elif", "match", "with", "for", "while", "do",
+		"try", "finally", "raise", "yield", "return", "fun", "function", "not", "true",
+		"false", "null", "new", "module", "namespace", "open", "type", "and", "or", "when",
+		"as", "of", "mutable", "rec", "inline", "private", "public", "internal",
+		"begin", "end", "upcast", "downcast", "lazy", "assert", "base", "this",
+		"async", "task", "use", "failwith", "failwithf", "sprintf", "printfn", "printf":
+		return true
+	}
+	return false
+}
+
+func (e *TreeSitterExtractor) findContainingFunction(node *sitter.Node, content []byte, ext string) string {
 	parent := node.Parent()
 	for parent != nil {
-		switch parent.Type() {
-		case "function_declaration", "method_declaration", "constructor_declaration", "function_definition", "local_function_statement":
-			nameNode := parent.ChildByFieldName("name")
-			if nameNode != nil {
-				return nameNode.Content(content)
+		switch ext {
+		case ".fs", ".fsx", ".fsi":
+			switch parent.Type() {
+			case "function_or_value_defn":
+				// Look for function_declaration_left child which has the function name
+				for i := 0; i < int(parent.ChildCount()); i++ {
+					child := parent.Child(i)
+					if child.Type() == "function_declaration_left" {
+						nameNode := findChildByType(child, "identifier")
+						if nameNode != nil {
+							return nameNode.Content(content)
+						}
+					}
+				}
+			case "method_or_prop_defn":
+				propIdent := findChildByType(parent, "property_or_ident")
+				if propIdent != nil {
+					var lastName string
+					for i := 0; i < int(propIdent.ChildCount()); i++ {
+						gc := propIdent.Child(i)
+						if gc.Type() == "identifier" {
+							lastName = gc.Content(content)
+						}
+					}
+					if lastName != "" {
+						return lastName
+					}
+				}
+			}
+		default:
+			switch parent.Type() {
+			case "function_declaration", "method_declaration", "constructor_declaration", "function_definition", "local_function_statement":
+				nameNode := parent.ChildByFieldName("name")
+				if nameNode != nil {
+					return nameNode.Content(content)
+				}
 			}
 		}
 		parent = parent.Parent()

@@ -14,6 +14,7 @@ type mockVectorStore struct {
 	deletedByFilePath     string
 	searchVector          []float32
 	searchLimit           int
+	searchPathPrefix      string
 	searchResults         []store.SearchResult
 	getDocumentPath       string
 	getDocumentResult     *store.Document
@@ -37,9 +38,10 @@ func (m *mockVectorStore) DeleteByFile(_ context.Context, filePath string) error
 	return nil
 }
 
-func (m *mockVectorStore) Search(_ context.Context, queryVector []float32, limit int) ([]store.SearchResult, error) {
+func (m *mockVectorStore) Search(_ context.Context, queryVector []float32, limit int, opts store.SearchOptions) ([]store.SearchResult, error) {
 	m.searchVector = queryVector
 	m.searchLimit = limit
+	m.searchPathPrefix = opts.PathPrefix
 	return m.searchResults, nil
 }
 
@@ -229,7 +231,7 @@ func TestProjectPrefixStore_PassThroughAndGetChunks(t *testing.T) {
 		projectPath:   projectRoot,
 	}
 
-	results, err := wrapped.Search(ctx, []float32{1, 2}, 5)
+	results, err := wrapped.Search(ctx, []float32{1, 2}, 5, store.SearchOptions{})
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}

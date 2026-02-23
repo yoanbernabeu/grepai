@@ -1020,10 +1020,8 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
-
-	// Run initial scan and build symbol index.
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
 	// Run initial scan and build symbol index.
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
@@ -2629,7 +2627,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 
 	tracedLanguages := projectCfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
 
 	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil)
@@ -2790,8 +2788,8 @@ func (p *projectPrefixStore) DeleteByFile(ctx context.Context, filePath string) 
 	return p.store.DeleteByFile(ctx, prefixedPath)
 }
 
-func (p *projectPrefixStore) Search(ctx context.Context, queryVector []float32, limit int) ([]store.SearchResult, error) {
-	return p.store.Search(ctx, queryVector, limit)
+func (p *projectPrefixStore) Search(ctx context.Context, queryVector []float32, limit int, opts store.SearchOptions) ([]store.SearchResult, error) {
+	return p.store.Search(ctx, queryVector, limit, opts)
 }
 
 func (p *projectPrefixStore) GetDocument(ctx context.Context, filePath string) (*store.Document, error) {

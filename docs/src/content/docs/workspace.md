@@ -190,6 +190,10 @@ grepai search --workspace my-fullstack "query"
 grepai search --workspace my-fullstack --project frontend "query"
 grepai search --workspace my-fullstack --project frontend --project backend "query"
 
+# Filter by path prefix (searches only files in matching paths)
+grepai search --workspace my-fullstack --path src/ "query"
+grepai search --workspace my-fullstack --project frontend --path components/ "React hooks"
+
 # JSON output for AI agents
 grepai search --workspace my-fullstack "query" --json
 grepai search --workspace my-fullstack "query" --json --compact
