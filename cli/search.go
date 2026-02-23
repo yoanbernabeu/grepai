@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
@@ -13,6 +15,7 @@ import (
 	"github.com/yoanbernabeu/grepai/embedder"
 	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/search"
+	"github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -208,57 +211,107 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// JSON output mode
 	if searchJSON {
+		var err error
+		var outputStr string
 		if searchCompact {
-			return outputSearchCompactJSON(results, enrichments)
+			outputStr, err = captureSearchCompactJSON(results, enrichments)
+		} else {
+			outputStr, err = captureSearchJSON(results, enrichments)
 		}
-		return outputSearchJSON(results, enrichments)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		return nil
 	}
 
 	// TOON output mode
 	if searchTOON {
+		var err error
+		var outputStr string
 		if searchCompact {
-			return outputSearchCompactTOON(results, enrichments)
+			outputStr, err = captureSearchCompactTOON(results, enrichments)
+		} else {
+			outputStr, err = captureSearchTOON(results, enrichments)
 		}
-		return outputSearchTOON(results, enrichments)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		return nil
 	}
 
 	if len(results) == 0 {
 		fmt.Println("No results found.")
+		recordSearchStats(projectRoot, stats.Search, stats.Full, 0, "")
 		return nil
 	}
 
-	// Display results
-	fmt.Printf("Found %d results for: %q\n\n", len(results), query)
+	// Display results (plain text — build output string for token estimation)
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "Found %d results for: %q\n\n", len(results), query)
 
 	for i, result := range results {
-		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
-		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
-		fmt.Println()
+		fmt.Fprintf(&buf, "─── Result %d (score: %.4f) ───\n", i+1, result.Score)
+		fmt.Fprintf(&buf, "File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		buf.WriteString("\n")
 
-		// Display content with line numbers
 		lines := strings.Split(result.Chunk.Content, "\n")
-		// Skip the "File: xxx" prefix line if present
 		startIdx := 0
 		if len(lines) > 0 && strings.HasPrefix(lines[0], "File: ") {
-			startIdx = 2 // Skip "File: xxx" and empty line
+			startIdx = 2
 		}
 
 		lineNum := result.Chunk.StartLine
 		for j := startIdx; j < len(lines) && j < startIdx+15; j++ {
-			fmt.Printf("%4d │ %s\n", lineNum, lines[j])
+			fmt.Fprintf(&buf, "%4d │ %s\n", lineNum, lines[j])
 			lineNum++
 		}
 		if len(lines)-startIdx > 15 {
-			fmt.Printf("     │ ... (%d more lines)\n", len(lines)-startIdx-15)
+			fmt.Fprintf(&buf, "     │ ... (%d more lines)\n", len(lines)-startIdx-15)
 		}
-		fmt.Println()
+		buf.WriteString("\n")
 	}
 
+	outputStr := buf.String()
+	fmt.Print(outputStr)
+	recordSearchStats(projectRoot, stats.Search, stats.Full, len(results), outputStr)
 	return nil
 }
 
-// outputSearchJSON outputs results in JSON format for AI agents
-func outputSearchJSON(results []store.SearchResult, enrichments []rpgEnrichment) error {
+// outputModeFromFlags determines the OutputMode from the active CLI flags.
+func outputModeFromFlags(jsonFlag, toonFlag, compactFlag bool) stats.OutputMode {
+	if compactFlag {
+		return stats.Compact
+	}
+	if toonFlag {
+		return stats.Toon
+	}
+	return stats.Full
+}
+
+// recordSearchStats fires a goroutine to record a stats entry without blocking.
+func recordSearchStats(projectRoot, commandType, outputMode string, resultCount int, outputStr string) {
+	rec := stats.NewRecorder(projectRoot)
+	entry := stats.Entry{
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		CommandType:  commandType,
+		OutputMode:   outputMode,
+		ResultCount:  resultCount,
+		OutputTokens: embedder.EstimateTokens(outputStr),
+		GrepTokens:   stats.GrepEquivalentTokens(resultCount),
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_ = rec.Record(ctx, entry)
+	}()
+}
+
+// captureSearchJSON returns JSON-encoded results as a string.
+func captureSearchJSON(results []store.SearchResult, enrichments []rpgEnrichment) (string, error) {
 	jsonResults := make([]SearchResultJSON, len(results))
 	for i, r := range results {
 		jsonResults[i] = SearchResultJSON{
@@ -271,14 +324,17 @@ func outputSearchJSON(results []store.SearchResult, enrichments []rpgEnrichment)
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(jsonResults)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(jsonResults); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
-// outputSearchCompactJSON outputs results in minimal JSON format (without content)
-func outputSearchCompactJSON(results []store.SearchResult, enrichments []rpgEnrichment) error {
+// captureSearchCompactJSON returns compact JSON-encoded results as a string.
+func captureSearchCompactJSON(results []store.SearchResult, enrichments []rpgEnrichment) (string, error) {
 	jsonResults := make([]SearchResultCompactJSON, len(results))
 	for i, r := range results {
 		jsonResults[i] = SearchResultCompactJSON{
@@ -290,22 +346,17 @@ func outputSearchCompactJSON(results []store.SearchResult, enrichments []rpgEnri
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(jsonResults)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(jsonResults); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
-// outputSearchErrorJSON outputs an error in JSON format
-func outputSearchErrorJSON(err error) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(map[string]string{"error": err.Error()})
-	return nil
-}
-
-// outputSearchTOON outputs results in TOON format for AI agents
-func outputSearchTOON(results []store.SearchResult, enrichments []rpgEnrichment) error {
+// captureSearchTOON returns TOON-encoded results as a string.
+func captureSearchTOON(results []store.SearchResult, enrichments []rpgEnrichment) (string, error) {
 	toonResults := make([]SearchResultJSON, len(results))
 	for i, r := range results {
 		toonResults[i] = SearchResultJSON{
@@ -318,17 +369,15 @@ func outputSearchTOON(results []store.SearchResult, enrichments []rpgEnrichment)
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-
 	output, err := gotoon.Encode(toonResults)
 	if err != nil {
-		return fmt.Errorf("failed to encode TOON: %w", err)
+		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
-	fmt.Println(output)
-	return nil
+	return output + "\n", nil
 }
 
-// outputSearchCompactTOON outputs results in minimal TOON format (without content)
-func outputSearchCompactTOON(results []store.SearchResult, enrichments []rpgEnrichment) error {
+// captureSearchCompactTOON returns compact TOON-encoded results as a string.
+func captureSearchCompactTOON(results []store.SearchResult, enrichments []rpgEnrichment) (string, error) {
 	toonResults := make([]SearchResultCompactJSON, len(results))
 	for i, r := range results {
 		toonResults[i] = SearchResultCompactJSON{
@@ -340,12 +389,18 @@ func outputSearchCompactTOON(results []store.SearchResult, enrichments []rpgEnri
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-
 	output, err := gotoon.Encode(toonResults)
 	if err != nil {
-		return fmt.Errorf("failed to encode TOON: %w", err)
+		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
-	fmt.Println(output)
+	return output + "\n", nil
+}
+
+// outputSearchErrorJSON outputs an error in JSON format
+func outputSearchErrorJSON(err error) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(map[string]string{"error": err.Error()})
 	return nil
 }
 
@@ -513,18 +568,34 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 
 	// JSON output mode
 	if searchJSON {
+		var outputStr string
+		var err error
 		if searchCompact {
-			return outputSearchCompactJSON(results, enrichments)
+			outputStr, err = captureSearchCompactJSON(results, enrichments)
+		} else {
+			outputStr, err = captureSearchJSON(results, enrichments)
 		}
-		return outputSearchJSON(results, enrichments)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		return nil
 	}
 
 	// TOON output mode
 	if searchTOON {
+		var outputStr string
+		var err error
 		if searchCompact {
-			return outputSearchCompactTOON(results, enrichments)
+			outputStr, err = captureSearchCompactTOON(results, enrichments)
+		} else {
+			outputStr, err = captureSearchTOON(results, enrichments)
 		}
-		return outputSearchTOON(results, enrichments)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		return nil
 	}
 
 	if len(results) == 0 {

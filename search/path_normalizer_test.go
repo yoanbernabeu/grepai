@@ -1,6 +1,7 @@
 package search
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -56,6 +57,41 @@ func TestNormalizeProjectPathPrefix(t *testing.T) {
 				t.Fatalf("NormalizeProjectPathPrefix() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeForPathMatch_RelativePath(t *testing.T) {
+	// Branche filepath.Abs : projectRoot est un chemin relatif.
+	// On obtient le workdir courant pour construire le pathPrefix absolu attendu.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	// projectRoot relatif pointant vers le répertoire courant
+	projectRoot := "."
+	// pathPrefix absolu sous le workdir courant
+	pathPrefix := filepath.Join(wd, "path_normalizer.go")
+
+	got, err := NormalizeProjectPathPrefix(pathPrefix, projectRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "path_normalizer.go" {
+		t.Fatalf("got %q, want %q", got, "path_normalizer.go")
+	}
+}
+
+func TestNormalizeForPathMatch_NonExistentRoot(t *testing.T) {
+	// Branche EvalSymlinks error : root does not exist, fallback to unresolved path.
+	projectRoot := "/nonexistent/root"
+	pathPrefix := "/nonexistent/root/src/foo.go"
+
+	got, err := NormalizeProjectPathPrefix(pathPrefix, projectRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "src/foo.go" {
+		t.Fatalf("got %q, want %q", got, "src/foo.go")
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 
+	"time"
+
 	"github.com/alpkeskin/gotoon"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -18,6 +20,7 @@ import (
 	"github.com/yoanbernabeu/grepai/embedder"
 	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/search"
+	"github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 )
@@ -27,6 +30,7 @@ type Server struct {
 	mcpServer     *server.MCPServer
 	projectRoot   string
 	workspaceName string // non-empty when started via --workspace or auto-detect
+	recorder      *stats.Recorder
 }
 
 // SearchResult is a lightweight struct for MCP output.
@@ -108,6 +112,7 @@ func encodeOutput(data any, format string) (string, error) {
 func NewServer(projectRoot string) (*Server, error) {
 	s := &Server{
 		projectRoot: projectRoot,
+		recorder:    stats.NewRecorder(projectRoot),
 	}
 
 	// Create MCP server
@@ -129,6 +134,7 @@ func NewServerWithWorkspace(projectRoot, workspaceName string) (*Server, error) 
 	s := &Server{
 		projectRoot:   projectRoot,
 		workspaceName: workspaceName,
+		recorder:      stats.NewRecorder(projectRoot),
 	}
 
 	s.mcpServer = server.NewMCPServer(
@@ -310,6 +316,18 @@ func (s *Server) registerTools() {
 		),
 	)
 	s.mcpServer.AddTool(rpgExploreTool, s.handleRPGExplore)
+
+	// grepai_stats tool
+	statsTool := mcp.NewTool("grepai_stats",
+		mcp.WithDescription("Show token savings summary achieved by using grepai instead of grep-based workflows. Returns aggregated metrics from local stats."),
+		mcp.WithBoolean("history",
+			mcp.Description("Include per-day history breakdown (default: false)"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Max days in history (default: 30, only used when history=true)"),
+		),
+	)
+	s.mcpServer.AddTool(statsTool, s.handleStats)
 }
 
 // handleSearch handles the grepai_search tool call.
@@ -442,6 +460,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
+	s.recordMCPStats(stats.Search, mcpOutputMode(compact, format), len(results), output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -878,6 +897,11 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
+	resultCount := 0
+	if tr, ok := data.(trace.TraceResult); ok {
+		resultCount = len(tr.Callers)
+	}
+	s.recordMCPStats(stats.TraceCallers, mcpOutputMode(compact, format), resultCount, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1037,6 +1061,11 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
+	resultCount := 0
+	if tr, ok := data.(trace.TraceResult); ok {
+		resultCount = len(tr.Callees)
+	}
+	s.recordMCPStats(stats.TraceCallees, mcpOutputMode(compact, format), resultCount, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1120,8 +1149,8 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 	}
 	defer symbolStore.Close()
 
-	stats, err := symbolStore.GetStats(ctx)
-	if err != nil || stats.TotalSymbols == 0 {
+	symStats, err := symbolStore.GetStats(ctx)
+	if err != nil || symStats.TotalSymbols == 0 {
 		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
 	}
 
@@ -1160,6 +1189,12 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
+	nodeCount := 0
+	if result.Graph != nil {
+		nodeCount = len(result.Graph.Nodes)
+	}
+	_ = symStats
+	s.recordMCPStats(stats.TraceGraph, mcpOutputMode(false, format), nodeCount, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1620,5 +1655,82 @@ func (s *Server) handleRPGExplore(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode result: %v", err)), nil
 	}
 
+	return mcp.NewToolResultText(output), nil
+}
+
+// mcpOutputMode maps MCP compact/format params to a stats.OutputMode string.
+func mcpOutputMode(compact bool, format string) stats.OutputMode {
+	if compact {
+		return stats.Compact
+	}
+	if format == "toon" {
+		return stats.Toon
+	}
+	return stats.Full
+}
+
+// recordMCPStats fires a goroutine to record a stats entry without blocking.
+func (s *Server) recordMCPStats(commandType, outputMode string, resultCount int, outputStr string) {
+	if s.recorder == nil {
+		return
+	}
+	entry := stats.Entry{
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		CommandType:  commandType,
+		OutputMode:   outputMode,
+		ResultCount:  resultCount,
+		OutputTokens: embedder.EstimateTokens(outputStr),
+		GrepTokens:   stats.GrepEquivalentTokens(resultCount),
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_ = s.recorder.Record(ctx, entry)
+	}()
+}
+
+// handleStats handles the grepai_stats MCP tool call.
+func (s *Server) handleStats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	includeHistory := request.GetBool("history", false)
+	limit := request.GetInt("limit", 30)
+
+	statsFilePath := stats.StatsPath(s.projectRoot)
+	entries, readErr := stats.ReadAll(statsFilePath)
+	if readErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to read stats: %v", readErr)), nil
+	}
+
+	provider := ""
+	if cfg, cfgErr := config.Load(s.projectRoot); cfgErr == nil {
+		provider = cfg.Embedder.Provider
+	}
+
+	summary := stats.Summarize(entries, provider)
+
+	if !includeHistory {
+		output, encErr := encodeOutput(summary, "json")
+		if encErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to encode stats: %v", encErr)), nil
+		}
+		return mcp.NewToolResultText(output), nil
+	}
+
+	days := stats.HistoryByDay(entries)
+	if limit > 0 && len(days) > limit {
+		days = days[:limit]
+	}
+
+	histResult := struct {
+		Summary stats.Summary      `json:"summary"`
+		History []stats.DaySummary `json:"history"`
+	}{
+		Summary: summary,
+		History: days,
+	}
+
+	output, encErr := encodeOutput(histResult, "json")
+	if encErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode stats: %v", encErr)), nil
+	}
 	return mcp.NewToolResultText(output), nil
 }
