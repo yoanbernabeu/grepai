@@ -30,6 +30,9 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".cs":   true,
 		".pas":  true,
 		".dpr":  true,
+		".fs":   true,
+		".fsx":  true,
+		".fsi":  true,
 	}
 
 	for _, lang := range langs {
@@ -822,5 +825,215 @@ func TestIsKeyword(t *testing.T) {
 				t.Errorf("IsKeyword(%q, %q) = %v, want %v", tt.name, tt.lang, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestRegexExtractor_ExtractSymbols_FSharp(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `module MyModule
+
+open System
+
+type Shape =
+  | Circle of float
+  | Rectangle of float * float
+
+type Person = { Name: string; Age: int }
+
+type Alias = int
+
+type ILogger =
+  abstract member Log: string -> unit
+  abstract member Flush: unit -> unit
+
+type Greeter(name: string) =
+  let mutable greeting = "Hello"
+
+  member this.SayHello() =
+    sprintf "%s, %s!" greeting name
+
+  static member Create(name) =
+    Greeter(name)
+
+  override this.ToString() =
+    sprintf "Greeter(%s)" name
+
+let add x y = x + y
+
+let rec factorial n =
+  if n <= 1 then 1
+  else n * factorial (n - 1)
+
+let private helper x = x + 1
+
+let inline square x = x * x
+
+module Nested =
+  let nestedFunc a b = a + b
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "test.fs", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundFunctions := make(map[string]bool)
+	foundTypes := make(map[string]bool)
+	foundClasses := make(map[string]bool)
+	foundInterfaces := make(map[string]bool)
+	foundMethods := make(map[string]bool)
+
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindFunction:
+			foundFunctions[sym.Name] = true
+		case KindType:
+			foundTypes[sym.Name] = true
+		case KindClass:
+			foundClasses[sym.Name] = true
+		case KindInterface:
+			foundInterfaces[sym.Name] = true
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		}
+	}
+
+	expectedFunctions := []string{"add", "factorial", "helper", "square", "nestedFunc"}
+	for _, name := range expectedFunctions {
+		if !foundFunctions[name] {
+			t.Errorf("missing function: %s", name)
+		}
+	}
+
+	expectedTypes := []string{"Shape", "Person", "Alias"}
+	for _, name := range expectedTypes {
+		if !foundTypes[name] {
+			t.Errorf("missing type: %s", name)
+		}
+	}
+
+	// ILogger should NOT appear as KindType — only as KindInterface
+	if foundTypes["ILogger"] {
+		t.Error("ILogger extracted as both KindType and KindInterface (duplicate)")
+	}
+
+	expectedClasses := []string{"Greeter", "Nested"}
+	for _, name := range expectedClasses {
+		if !foundClasses[name] {
+			t.Errorf("missing class: %s", name)
+		}
+	}
+
+	if !foundInterfaces["ILogger"] {
+		t.Error("missing interface: ILogger")
+	}
+
+	expectedMethods := []string{"SayHello", "Create", "ToString", "Log", "Flush"}
+	for _, name := range expectedMethods {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_FSharp(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `let processData input =
+  let result = helper(input)
+  let formatted = sprintf("%d", result)
+  Logger.log("done")
+  result
+
+let main () =
+  let data = getData()
+  processData(data)
+`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.fs", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	callers := make(map[string]map[string]bool)
+	for _, ref := range refs {
+		if callers[ref.CallerName] == nil {
+			callers[ref.CallerName] = make(map[string]bool)
+		}
+		callers[ref.CallerName][ref.SymbolName] = true
+	}
+
+	expectedRefs := map[string][]string{
+		"processData": {"helper", "log"},
+		"main":        {"getData", "processData"},
+	}
+
+	for caller, callees := range expectedRefs {
+		for _, callee := range callees {
+			if callers[caller] == nil || !callers[caller][callee] {
+				t.Errorf("missing reference: %s -> %s", caller, callee)
+			}
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_FSharp_IgnoresCommentsAndStrings(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `let realFunction x =
+  // notAFunction(x)
+  (* alsoNotAFunction(x) *)
+  let s = "fakeCall(x)"
+  actualCall(x)
+`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.fs", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRefs := make(map[string]bool)
+	for _, ref := range refs {
+		foundRefs[ref.SymbolName] = true
+	}
+
+	if !foundRefs["actualCall"] {
+		t.Error("missing reference to actualCall")
+	}
+	if foundRefs["notAFunction"] {
+		t.Error("unexpected line comment artifact: notAFunction")
+	}
+	if foundRefs["alsoNotAFunction"] {
+		t.Error("unexpected block comment artifact: alsoNotAFunction")
+	}
+	if foundRefs["fakeCall"] {
+		t.Error("unexpected string artifact: fakeCall")
+	}
+
+	// Verify nested block comments are fully masked
+	nestedContent := `let testFunc x =
+  (* outer (* nestedHidden(x) *) stillHidden(x) *)
+  realCall(x)
+`
+	nestedRefs, err := extractor.ExtractReferences(ctx, "nested.fs", nestedContent)
+	if err != nil {
+		t.Fatalf("ExtractReferences (nested comments) failed: %v", err)
+	}
+	nestedFound := make(map[string]bool)
+	for _, ref := range nestedRefs {
+		nestedFound[ref.SymbolName] = true
+	}
+	if !nestedFound["realCall"] {
+		t.Error("missing reference to realCall in nested comment test")
+	}
+	if nestedFound["nestedHidden"] {
+		t.Error("nested block comment artifact: nestedHidden")
+	}
+	if nestedFound["stillHidden"] {
+		t.Error("nested block comment not fully masked: stillHidden leaked")
 	}
 }

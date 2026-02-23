@@ -24,7 +24,7 @@ func NewSearcher(st store.VectorStore, emb embedder.Embedder, searchCfg config.S
 	}
 }
 
-func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store.SearchResult, error) {
+func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPrefix string) ([]store.SearchResult, error) {
 	// Embed the query
 	queryVector, err := s.embedder.Embed(ctx, query)
 	if err != nil {
@@ -38,10 +38,10 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store
 
 	if s.hybridCfg.Enabled {
 		// Hybrid search: combine vector + text search with RRF
-		results, err = s.hybridSearch(ctx, query, queryVector, fetchLimit)
+		results, err = s.hybridSearch(ctx, query, queryVector, fetchLimit, pathPrefix)
 	} else {
 		// Vector-only search
-		results, err = s.store.Search(ctx, queryVector, fetchLimit)
+		results, err = s.store.Search(ctx, queryVector, fetchLimit, store.SearchOptions{PathPrefix: pathPrefix})
 	}
 
 	if err != nil {
@@ -60,9 +60,9 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]store
 }
 
 // hybridSearch combines vector search and text search using RRF.
-func (s *Searcher) hybridSearch(ctx context.Context, query string, queryVector []float32, limit int) ([]store.SearchResult, error) {
+func (s *Searcher) hybridSearch(ctx context.Context, query string, queryVector []float32, limit int, pathPrefix string) ([]store.SearchResult, error) {
 	// Vector search
-	vectorResults, err := s.store.Search(ctx, queryVector, limit)
+	vectorResults, err := s.store.Search(ctx, queryVector, limit, store.SearchOptions{PathPrefix: pathPrefix})
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *Searcher) hybridSearch(ctx context.Context, query string, queryVector [
 		return nil, err
 	}
 
-	textResults := TextSearch(ctx, allChunks, query, limit)
+	textResults := TextSearch(ctx, allChunks, query, limit, pathPrefix)
 
 	// Combine with RRF
 	k := s.hybridCfg.K

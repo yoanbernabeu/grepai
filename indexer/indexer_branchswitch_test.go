@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/store"
 )
 
 func createGoFixtureFiles(tb testing.TB, root string, fileCount int) {
@@ -33,6 +35,16 @@ func TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding(t *t
 	}
 
 	mockStore := newMockStore()
+	// Seed documents with ChunkIDs so the lastIndexTime gate can skip them.
+	// The new logic requires doc != nil && len(doc.ChunkIDs) > 0 to skip.
+	for i := range 200 {
+		path := fmt.Sprintf("file_%04d.go", i)
+		mockStore.documents[path] = store.Document{
+			Path:     path,
+			Hash:     "seeded",
+			ChunkIDs: []string{"c1"},
+		}
+	}
 	mockEmbedder := newMockEmbedder()
 	scanner := NewScanner(tmpDir, ignoreMatcher)
 	chunker := NewChunker(512, 50)
@@ -54,9 +66,6 @@ func TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding(t *t
 	}
 	if stats.FilesSkipped < 200 {
 		t.Fatalf("expected at least 200 skipped files, got %d", stats.FilesSkipped)
-	}
-	if mockStore.getDocCalled {
-		t.Fatal("GetDocument should not be called for files skipped by lastIndexTime")
 	}
 	if mockEmbedder.embedCalled {
 		t.Fatal("embedder should not be called when all files are skipped")

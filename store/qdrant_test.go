@@ -303,7 +303,7 @@ func TestSearch_InvalidLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := store.Search(context.Background(), []float32{0.1, 0.2}, tt.limit)
+			_, err := store.Search(context.Background(), []float32{0.1, 0.2}, tt.limit, SearchOptions{})
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if err.Error()[:22] != tt.want {

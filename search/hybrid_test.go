@@ -18,7 +18,7 @@ func TestTextSearch(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("single word match", func(t *testing.T) {
-		results := TextSearch(ctx, chunks, "login", 10)
+		results := TextSearch(ctx, chunks, "login", 10, "")
 		if len(results) != 1 {
 			t.Errorf("expected 1 result, got %d", len(results))
 			return
@@ -29,7 +29,7 @@ func TestTextSearch(t *testing.T) {
 	})
 
 	t.Run("multiple word match - best first", func(t *testing.T) {
-		results := TextSearch(ctx, chunks, "user email", 10)
+		results := TextSearch(ctx, chunks, "user email", 10, "")
 		if len(results) != 3 {
 			t.Errorf("expected 3 results, got %d", len(results))
 			return
@@ -45,7 +45,7 @@ func TestTextSearch(t *testing.T) {
 	})
 
 	t.Run("no match", func(t *testing.T) {
-		results := TextSearch(ctx, chunks, "database connection", 10)
+		results := TextSearch(ctx, chunks, "database connection", 10, "")
 		if len(results) != 0 {
 			t.Errorf("expected 0 results, got %d", len(results))
 		}
@@ -57,7 +57,7 @@ func TestTextSearch_EmptyQuery(t *testing.T) {
 		{ID: "1", Content: "some content"},
 	}
 
-	results := TextSearch(context.Background(), chunks, "", 10)
+	results := TextSearch(context.Background(), chunks, "", 10, "")
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for empty query, got %d", len(results))
 	}

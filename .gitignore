@@ -46,3 +46,7 @@ __debug*
 # Local tooling
 .pre-commit-config.yaml
 docs/plans/
+
+# Example files
+OPENROUTER.md
+openrouter-example.sh

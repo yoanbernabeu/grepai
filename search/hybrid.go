@@ -10,7 +10,8 @@ import (
 
 // TextSearch performs a simple text-based search on chunks.
 // It scores chunks based on the number of query words they contain.
-func TextSearch(ctx context.Context, chunks []store.Chunk, query string, limit int) []store.SearchResult {
+// If pathPrefix is provided, only chunks from files starting with that prefix are included.
+func TextSearch(ctx context.Context, chunks []store.Chunk, query string, limit int, pathPrefix string) []store.SearchResult {
 	words := tokenize(query)
 	if len(words) == 0 {
 		return nil
@@ -19,6 +20,11 @@ func TextSearch(ctx context.Context, chunks []store.Chunk, query string, limit i
 	var results []store.SearchResult
 
 	for _, chunk := range chunks {
+		// Filter by path prefix if provided
+		if pathPrefix != "" && !strings.HasPrefix(chunk.FilePath, pathPrefix) {
+			continue
+		}
+
 		contentLower := strings.ToLower(chunk.Content)
 		matchCount := 0
 

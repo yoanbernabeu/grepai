@@ -14,6 +14,7 @@ import (
 
 var (
 	initProvider       string
+	initModel          string
 	initBackend        string
 	initNonInteractive bool
 	initInherit        bool
@@ -37,7 +38,8 @@ This command will:
 }
 
 func init() {
-	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, or openai)")
+	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, or openrouter)")
+	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openrouter: text-embedding-3-small, text-embedding-3-large, qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
@@ -104,6 +106,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 			fmt.Println("  1) ollama (local, privacy-first, requires Ollama running)")
 			fmt.Println("  2) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
 			fmt.Println("  3) openai (cloud, requires API key)")
+			fmt.Println("  4) synthetic (cloud, free embedding API)")
+			fmt.Println("  5) openrouter (cloud, multi-provider gateway)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
@@ -127,6 +131,35 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				// OpenAI: leave Dimensions nil to use model's native dimensions
+			case "4", "synthetic":
+				cfg.Embedder.Provider = "synthetic"
+				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
+				dim := 768
+				cfg.Embedder.Dimensions = &dim
+			case "5", "openrouter":
+				cfg.Embedder.Provider = "openrouter"
+				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
+				// OpenRouter: leave Dimensions nil to use model's native dimensions
+
+				// Model selection for OpenRouter
+				fmt.Println("\nSelect OpenRouter embedding model:")
+				fmt.Println("  1) openai/text-embedding-3-small (1536 dims, fast, recommended)")
+				fmt.Println("  2) openai/text-embedding-3-large (3072 dims, most capable)")
+				fmt.Println("  3) qwen/qwen3-embedding-8b (4096 dims, 32K context, best for code)")
+				fmt.Print("Choice [1]: ")
+
+				modelInput, _ := reader.ReadString('\n')
+				modelInput = strings.TrimSpace(modelInput)
+
+				switch modelInput {
+				case "2":
+					cfg.Embedder.Model = "openai/text-embedding-3-large"
+				case "3":
+					cfg.Embedder.Model = "qwen/qwen3-embedding-8b"
+				default:
+					cfg.Embedder.Model = "openai/text-embedding-3-small"
+				}
 			default:
 				cfg.Embedder.Provider = "ollama"
 				fmt.Print("Ollama endpoint [http://localhost:11434]: ")
@@ -149,6 +182,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				// OpenAI: leave Dimensions nil to use model's native dimensions
+			case "synthetic":
+				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
+				dim := 768
+				cfg.Embedder.Dimensions = &dim
+			case "openrouter":
+				cfg.Embedder.Model = "openai/text-embedding-3-small"
+				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
+				// OpenRouter: leave Dimensions nil to use model's native dimensions
 			}
 		}
 
@@ -215,6 +257,35 @@ func runInit(cmd *cobra.Command, args []string) error {
 		// Non-interactive with flags
 		if initProvider != "" {
 			cfg.Embedder.Provider = initProvider
+			// Apply provider-specific settings
+			switch initProvider {
+			case "lmstudio":
+				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
+				dim := lmStudioEmbeddingDimensions
+				cfg.Embedder.Dimensions = &dim
+			case "openai":
+				cfg.Embedder.Model = "text-embedding-3-small"
+				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
+				cfg.Embedder.Dimensions = nil
+			case "synthetic":
+				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
+				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
+				dim := 768
+				cfg.Embedder.Dimensions = &dim
+			case "openrouter":
+				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
+				cfg.Embedder.Dimensions = nil
+				// Use provided model flag or default
+				switch initModel {
+				case "text-embedding-3-large":
+					cfg.Embedder.Model = "openai/text-embedding-3-large"
+				case "qwen3-embedding-8b":
+					cfg.Embedder.Model = "qwen/qwen3-embedding-8b"
+				default:
+					cfg.Embedder.Model = "openai/text-embedding-3-small"
+				}
+			}
 		}
 		if initBackend != "" {
 			cfg.Store.Backend = initBackend
@@ -253,6 +324,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Endpoint: %s\n", cfg.Embedder.Endpoint)
 	case "openai":
 		fmt.Println("\nMake sure OPENAI_API_KEY is set in your environment.")
+	case "synthetic":
+		fmt.Println("\nMake sure SYNTHETIC_API_KEY or OPENAI_API_KEY is set in your environment.")
+		fmt.Println("  Get your free API key at: https://api.synthetic.new")
+	case "openrouter":
+		fmt.Println("\nMake sure OPENROUTER_API_KEY or OPENAI_API_KEY is set in your environment.")
+		fmt.Println("  Get your API key at: https://openrouter.ai/keys")
 	}
 
 	return nil

@@ -79,6 +79,7 @@ The watcher indexes files with these extensions:
 | Java | `.java` |
 | Ruby | `.rb` |
 | C# | `.cs` |
+| F# | `.fs`, `.fsx`, `.fsi` |
 | Pascal/Delphi | `.pas`, `.dpr` |
 
 ### What Gets Skipped

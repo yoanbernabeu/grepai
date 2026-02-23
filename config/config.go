@@ -73,7 +73,7 @@ type BoostRule struct {
 }
 
 type EmbedderConfig struct {
-	Provider    string `yaml:"provider"` // ollama | lmstudio | openai
+	Provider    string `yaml:"provider"` // ollama | lmstudio | openai | synthetic | openrouter
 	Model       string `yaml:"model"`
 	Endpoint    string `yaml:"endpoint,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
@@ -82,14 +82,14 @@ type EmbedderConfig struct {
 }
 
 // GetDimensions returns the configured dimensions or a default value.
-// For OpenAI, defaults to 1536 (text-embedding-3-small).
-// For Ollama/LMStudio, defaults to 768 (nomic-embed-text).
+// For OpenAI/OpenRouter, defaults to 1536 (text-embedding-3-small).
+// For Ollama/LMStudio/Synthetic, defaults to 768 (nomic-embed-text-v1.5).
 func (e *EmbedderConfig) GetDimensions() int {
 	if e.Dimensions != nil {
 		return *e.Dimensions
 	}
 	switch e.Provider {
-	case "openai":
+	case "openai", "openrouter":
 		return 1536
 	default:
 		return 768
@@ -258,6 +258,7 @@ func DefaultConfig() *Config {
 				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
+				".fs", ".fsx", ".fsi", // F#
 				".pas", ".dpr", // Pascal/Delphi
 			},
 			ExcludePatterns: []string{
@@ -369,12 +370,16 @@ func (c *Config) applyDefaults() {
 			c.Embedder.Endpoint = "http://127.0.0.1:1234"
 		case "openai":
 			c.Embedder.Endpoint = "https://api.openai.com/v1"
+		case "synthetic":
+			c.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
+		case "openrouter":
+			c.Embedder.Endpoint = "https://openrouter.ai/api/v1"
 		default:
 			c.Embedder.Endpoint = defaults.Embedder.Endpoint
 		}
 	}
 
-	// Only set default dimensions for local embedders (Ollama, LMStudio).
+	// Only set default dimensions for specific embedders (Ollama, LMStudio, Synthetic).
 	// For OpenAI, leave nil to let the API use the model's native dimensions.
 	if c.Embedder.Dimensions == nil {
 		switch c.Embedder.Provider {
@@ -383,6 +388,9 @@ func (c *Config) applyDefaults() {
 			c.Embedder.Dimensions = &dim
 		case "lmstudio":
 			dim := 768 // nomic default
+			c.Embedder.Dimensions = &dim
+		case "synthetic":
+			dim := 768 // nomic-embed-text-v1.5 default
 			c.Embedder.Dimensions = &dim
 		}
 	}

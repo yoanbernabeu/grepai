@@ -27,6 +27,10 @@ grepai search "user authentication flow"
 # Limit results
 grepai search "error handling" --limit 5
 
+# Filter by path prefix
+grepai search "authentication" --path src/handlers/
+grepai search "validation" --path src/middleware/ --limit 10
+
 # JSON output for AI agents (--compact saves ~80% tokens)
 grepai search "database queries" --json --compact
 ```
