@@ -203,28 +203,12 @@ func TestOutputJSON_should_produce_valid_json(t *testing.T) {
 		},
 	}
 
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := outputJSON(result)
-
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
-		t.Fatalf("outputJSON() failed: %v", err)
-	}
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
+	output := captureJSON(result)
 
 	// Verify it's valid JSON
 	var decoded trace.TraceResult
 	if err := json.Unmarshal([]byte(output), &decoded); err != nil {
-		t.Fatalf("outputJSON() produced invalid JSON: %v\nOutput: %s", err, output)
+		t.Fatalf("captureJSON() produced invalid JSON: %v\nOutput: %s", err, output)
 	}
 	if decoded.Query != "TestSymbol" {
 		t.Errorf("decoded query = %q, want %q", decoded.Query, "TestSymbol")

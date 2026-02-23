@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/embedder"
 	"github.com/yoanbernabeu/grepai/rpg"
+	gstats "github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
@@ -137,20 +140,36 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 
 		if result.Symbol == nil {
 			if traceJSON {
-				return outputJSON(result)
+				fmt.Print(captureJSON(result))
+				return nil
 			}
 			if traceTOON {
-				return outputTOON(result)
+				{
+					s, e := captureTOON(result)
+					if e != nil {
+						return e
+					}
+					fmt.Print(s)
+					return nil
+				}
 			}
 			fmt.Printf("No symbol found: %s\n", symbolName)
 			return nil
 		}
 
 		if traceJSON {
-			return outputJSON(result)
+			fmt.Print(captureJSON(result))
+			return nil
 		}
 		if traceTOON {
-			return outputTOON(result)
+			{
+				s, e := captureTOON(result)
+				if e != nil {
+					return e
+				}
+				fmt.Print(s)
+				return nil
+			}
 		}
 		return displayCallersResult(result)
 	}
@@ -182,10 +201,18 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	if len(symbols) == 0 {
 		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		if traceJSON {
-			return outputJSON(emptyResult)
+			fmt.Print(captureJSON(emptyResult))
+			return nil
 		}
 		if traceTOON {
-			return outputTOON(emptyResult)
+			{
+				s, e := captureTOON(emptyResult)
+				if e != nil {
+					return e
+				}
+				fmt.Print(s)
+				return nil
+			}
 		}
 		fmt.Printf("No symbol found: %s\n", symbolName)
 		return nil
@@ -229,13 +256,26 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	}
 
 	if traceJSON {
-		return outputJSON(result)
+		outputStr := captureJSON(result)
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceCallers, len(result.Callers), outputStr)
+		return nil
 	}
 	if traceTOON {
-		return outputTOON(result)
+		outputStr, err := captureTOON(result)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceCallers, len(result.Callers), outputStr)
+		return nil
 	}
 
-	return displayCallersResult(result)
+	if err := displayCallersResult(result); err != nil {
+		return err
+	}
+	recordTraceStats(projectRoot, gstats.TraceCallers, len(result.Callers), "")
+	return nil
 }
 
 func runTraceCallees(cmd *cobra.Command, args []string) error {
@@ -284,20 +324,36 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 
 		if result.Symbol == nil {
 			if traceJSON {
-				return outputJSON(result)
+				fmt.Print(captureJSON(result))
+				return nil
 			}
 			if traceTOON {
-				return outputTOON(result)
+				{
+					s, e := captureTOON(result)
+					if e != nil {
+						return e
+					}
+					fmt.Print(s)
+					return nil
+				}
 			}
 			fmt.Printf("No symbol found: %s\n", symbolName)
 			return nil
 		}
 
 		if traceJSON {
-			return outputJSON(result)
+			fmt.Print(captureJSON(result))
+			return nil
 		}
 		if traceTOON {
-			return outputTOON(result)
+			{
+				s, e := captureTOON(result)
+				if e != nil {
+					return e
+				}
+				fmt.Print(s)
+				return nil
+			}
 		}
 		return displayCalleesResult(result)
 	}
@@ -328,10 +384,18 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 	if len(symbols) == 0 {
 		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		if traceJSON {
-			return outputJSON(emptyResult)
+			fmt.Print(captureJSON(emptyResult))
+			return nil
 		}
 		if traceTOON {
-			return outputTOON(emptyResult)
+			{
+				s, e := captureTOON(emptyResult)
+				if e != nil {
+					return e
+				}
+				fmt.Print(s)
+				return nil
+			}
 		}
 		fmt.Printf("No symbol found: %s\n", symbolName)
 		return nil
@@ -374,13 +438,26 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 	}
 
 	if traceJSON {
-		return outputJSON(result)
+		outputStr := captureJSON(result)
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceCallees, len(result.Callees), outputStr)
+		return nil
 	}
 	if traceTOON {
-		return outputTOON(result)
+		outputStr, err := captureTOON(result)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceCallees, len(result.Callees), outputStr)
+		return nil
 	}
 
-	return displayCalleesResult(result)
+	if err := displayCalleesResult(result); err != nil {
+		return err
+	}
+	recordTraceStats(projectRoot, gstats.TraceCallees, len(result.Callees), "")
+	return nil
 }
 
 func runTraceGraph(cmd *cobra.Command, args []string) error {
@@ -434,10 +511,18 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		}
 
 		if traceJSON {
-			return outputJSON(result)
+			fmt.Print(captureJSON(result))
+			return nil
 		}
 		if traceTOON {
-			return outputTOON(result)
+			{
+				s, e := captureTOON(result)
+				if e != nil {
+					return e
+				}
+				fmt.Print(s)
+				return nil
+			}
 		}
 		return displayGraphResult(result)
 	}
@@ -476,14 +561,32 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		enrichTraceWithRPG(projectRoot, cfg, &result)
 	}
 
-	if traceJSON {
-		return outputJSON(result)
-	}
-	if traceTOON {
-		return outputTOON(result)
+	nodeCount := 0
+	if result.Graph != nil {
+		nodeCount = len(result.Graph.Nodes)
 	}
 
-	return displayGraphResult(result)
+	if traceJSON {
+		outputStr := captureJSON(result)
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceGraph, nodeCount, outputStr)
+		return nil
+	}
+	if traceTOON {
+		outputStr, err := captureTOON(result)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, gstats.TraceGraph, nodeCount, outputStr)
+		return nil
+	}
+
+	if err := displayGraphResult(result); err != nil {
+		return err
+	}
+	recordTraceStats(projectRoot, gstats.TraceGraph, nodeCount, "")
+	return nil
 }
 
 // enrichTraceWithRPG enriches all symbols in a TraceResult with RPG feature paths.
@@ -542,19 +645,40 @@ func enrichTraceWithRPG(projectRoot string, cfg *config.Config, result *trace.Tr
 	}
 }
 
-func outputJSON(result trace.TraceResult) error {
-	enc := json.NewEncoder(os.Stdout)
+// captureJSON serializes a TraceResult to a JSON string without writing to stdout.
+func captureJSON(result trace.TraceResult) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
 	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	_ = enc.Encode(result)
+	return buf.String()
 }
 
-func outputTOON(result trace.TraceResult) error {
+// captureTOON serializes a TraceResult to a TOON string without writing to stdout.
+func captureTOON(result trace.TraceResult) (string, error) {
 	output, err := gotoon.Encode(result)
 	if err != nil {
-		return fmt.Errorf("failed to encode TOON: %w", err)
+		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
-	fmt.Println(output)
-	return nil
+	return output + "\n", nil
+}
+
+// recordTraceStats fires a goroutine to record a trace stats entry without blocking.
+func recordTraceStats(projectRoot, commandType string, resultCount int, outputStr string) {
+	rec := gstats.NewRecorder(projectRoot)
+	entry := gstats.Entry{
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		CommandType:  commandType,
+		OutputMode:   outputModeFromFlags(traceJSON, traceTOON, false),
+		ResultCount:  resultCount,
+		OutputTokens: embedder.EstimateTokens(outputStr),
+		GrepTokens:   gstats.GrepEquivalentTokens(resultCount),
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_ = rec.Record(ctx, entry)
+	}()
 }
 
 func displayCallersResult(result trace.TraceResult) error {
