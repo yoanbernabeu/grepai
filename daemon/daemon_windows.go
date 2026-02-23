@@ -118,9 +118,9 @@ func (l *livenessCheck) cleanup() {
 }
 
 const (
-	stopFilePrefix    = "grepai-stop-"
-	stopPollInterval  = 500 * time.Millisecond
-	stopStaleAfter    = 60 * time.Second
+	stopFilePrefix   = "grepai-stop-"
+	stopPollInterval = 500 * time.Millisecond
+	stopStaleAfter   = 60 * time.Second
 )
 
 // stopFilePath returns the path to the sentinel stop file for the given PID.
