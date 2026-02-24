@@ -189,6 +189,10 @@ func (idx *RPGEncoder) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 		observer("rpg-edges", 0, 1) // Indeterminate progress for edge building
 	}
 
+	if observer != nil {
+		observer("rpg-edges", 0, 1) // Indeterminate progress for edge building
+	}
+
 	// Step 2: Rebuild derived edges (invokes/imports/semantic).
 	if err := idx.refreshDerivedEdgesFullLocked(ctx, symbolStore); err != nil {
 		return fmt.Errorf("failed to refresh derived edges: %w", err)

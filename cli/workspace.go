@@ -13,6 +13,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	workspaceCreateUI bool
+	workspaceStatusUI bool
+)
+
+var (
+	workspaceStatusUISelector = shouldUseStatusUI
+	workspaceStatusUIRunner   = runWorkspaceStatusUI
+)
+
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
 	Short: "Manage multi-project workspaces",
@@ -96,6 +106,8 @@ func init() {
 	workspaceCreateCmd.Flags().String("collection", "", "Qdrant collection name (empty = auto)")
 	workspaceCreateCmd.Flags().String("from", "", "Path to JSON/YAML file with workspace config")
 	workspaceCreateCmd.Flags().Bool("yes", false, "Use defaults for unspecified values, skip prompts")
+	workspaceCreateCmd.Flags().BoolVar(&workspaceCreateUI, "ui", false, "Run interactive Bubble Tea UI wizard")
+	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusUI, "ui", false, "Show workspace status in interactive UI")
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
@@ -188,7 +200,14 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if workspaceStatusUI && workspaceStatusUISelector(isInteractiveTerminal(), false) {
+			return workspaceStatusUIRunner(cfg, args)
+		}
 		return showWorkspaceStatus(ws)
+	}
+
+	if workspaceStatusUI && workspaceStatusUISelector(isInteractiveTerminal(), false) {
+		return workspaceStatusUIRunner(cfg, args)
 	}
 
 	// Otherwise show status for all workspaces
@@ -396,9 +415,16 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		ws, err = createWorkspaceInteractive(workspaceName)
-		if err != nil {
-			return err
+		if workspaceCreateUI {
+			ws, err = createWorkspaceTUI(workspaceName)
+			if err != nil {
+				return err
+			}
+		} else {
+			ws, err = createWorkspaceInteractive(workspaceName)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

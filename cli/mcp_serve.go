@@ -122,10 +122,23 @@ func resolveMCPTarget(explicitPath, workspaceName string) (string, string, error
 
 	wsName, ws, wsErr := config.FindWorkspaceForPath(cwd)
 	if wsErr != nil {
+		// If workspace config exists with at least one workspace, allow starting
+		// unscoped MCP server and let tools accept workspace at runtime.
+		cfg, cfgErr := config.LoadWorkspaceConfig()
+		if cfgErr == nil && cfg != nil && len(cfg.Workspaces) > 0 {
+			return "", "", nil
+		}
 		return "", "", fmt.Errorf("no grepai project or workspace found (run 'grepai init' or use --workspace)")
 	}
 	if ws != nil {
 		return "", wsName, nil
+	}
+
+	// No containing workspace for cwd, but still allow startup if global
+	// workspace config has entries (runtime workspace argument can be used).
+	cfg, cfgErr := config.LoadWorkspaceConfig()
+	if cfgErr == nil && cfg != nil && len(cfg.Workspaces) > 0 {
+		return "", "", nil
 	}
 
 	return "", "", fmt.Errorf("no grepai project or workspace found (run 'grepai init' or use --workspace)")

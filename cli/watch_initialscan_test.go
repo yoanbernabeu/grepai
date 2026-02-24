@@ -100,7 +100,7 @@ func TestRunInitialScan_SkipsSymbolExtractionWhenContentHashMatches(t *testing.T
 	}
 
 	extractor := trace.NewRegexExtractor()
-	if _, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, []string{".go"}, time.Time{}, true); err != nil {
+	if _, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, []string{".go"}, time.Time{}, true, nil, nil); err != nil {
 		t.Fatalf("runInitialScan failed: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestRunInitialScan_SkipsIndexedFileByLastIndexTime(t *testing.T) {
 
 	lastIndexTime := time.Now().Add(1 * time.Hour)
 	extractor := trace.NewRegexExtractor()
-	if _, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, []string{".go"}, lastIndexTime, true); err != nil {
+	if _, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, []string{".go"}, lastIndexTime, true, nil, nil); err != nil {
 		t.Fatalf("runInitialScan failed: %v", err)
 	}
 
@@ -258,6 +258,8 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
+		nil,
+		nil,
 	)
 
 	if emb.embedCalls != 0 || emb.embedBatchCalls != 0 {
@@ -342,7 +344,7 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 	handleFileEvent(ctx, idx, scanner, extractor, nil, nil, wrappedStore, nil, projectPath, cfg, &lastConfigWrite, nil, watcher.FileEvent{
 		Type: watcher.EventModify,
 		Path: "proj/main.go",
-	})
+	}, nil, nil)
 
 	if emb.embedCalls != 0 || emb.embedBatchCalls != 0 {
 		t.Fatalf("expected unchanged workspace file to skip embedding, got embed=%d embedBatch=%d", emb.embedCalls, emb.embedBatchCalls)
@@ -410,6 +412,8 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
+		nil,
+		nil,
 	)
 
 	if emb.embedCalls == 0 && emb.embedBatchCalls == 0 {
@@ -483,6 +487,8 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
+		nil,
+		nil,
 	)
 
 	doc, err := vecStore.GetDocument(ctx, "main.go")
@@ -494,5 +500,69 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 	}
 	if symbolStore.IsFileIndexed("main.go") {
 		t.Fatal("expected symbols to be deleted on delete event")
+	}
+}
+
+func TestEmitInitialStatsSnapshot_ReportsExistingTotals(t *testing.T) {
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+
+	vecStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
+	if err := vecStore.SaveChunks(ctx, []store.Chunk{
+		{ID: "chunk-1", FilePath: "main.go"},
+		{ID: "chunk-2", FilePath: "main.go"},
+	}); err != nil {
+		t.Fatalf("failed to seed chunks: %v", err)
+	}
+	if err := vecStore.SaveDocument(ctx, store.Document{
+		Path:     "main.go",
+		Hash:     "hash",
+		ChunkIDs: []string{"chunk-1", "chunk-2"},
+	}); err != nil {
+		t.Fatalf("failed to seed document: %v", err)
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectRoot, "symbols.gob"))
+	defer symbolStore.Close()
+	if err := symbolStore.SaveFile(ctx, "main.go", []trace.Symbol{
+		{
+			Name:     "Foo",
+			Kind:     trace.KindFunction,
+			File:     "main.go",
+			Line:     1,
+			Language: "go",
+		},
+		{
+			Name:     "Bar",
+			Kind:     trace.KindFunction,
+			File:     "main.go",
+			Line:     5,
+			Language: "go",
+		},
+	}, nil); err != nil {
+		t.Fatalf("failed to seed symbol store: %v", err)
+	}
+
+	var got watchStatsDelta
+	calls := 0
+	emitInitialStatsSnapshot(ctx, vecStore, symbolStore, projectRoot, func(_ string, delta watchStatsDelta) {
+		calls++
+		got = delta
+	})
+
+	if calls != 1 {
+		t.Fatalf("stats callback calls = %d, want 1", calls)
+	}
+	if got.ChunksCreated != 2 {
+		t.Fatalf("chunks created = %d, want 2", got.ChunksCreated)
+	}
+	if got.FilesIndexed != 1 {
+		t.Fatalf("files indexed = %d, want 1", got.FilesIndexed)
+	}
+	if got.SymbolsFound != 2 {
+		t.Fatalf("symbols found = %d, want 2", got.SymbolsFound)
+	}
+	if !got.Snapshot {
+		t.Fatal("expected snapshot delta to be marked as Snapshot")
 	}
 }

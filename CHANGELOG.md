@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP Discovery Tools**: Add `grepai_list_workspaces` and `grepai_list_projects` MCP tools to help agents discover valid workspace and project names.
+
+### Fixed
+
+- **MCP Workspace Discovery Response**: `grepai_list_workspaces` now returns workspace-level entries only (without embedded project lists).
+- **MCP Startup Fallback**: `grepai mcp-serve` now starts without `--workspace` when global workspaces exist, allowing clients to pass `workspace` per tool call at runtime.
+
 ## [0.33.0] - 2026-02-22
 
 ### Added

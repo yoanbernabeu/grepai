@@ -31,6 +31,8 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 | `grepai_trace_callees` | Find callees of a symbol | `symbol` (required), `workspace`, `project`, `compact` (default: false) |
 | `grepai_trace_graph` | Build complete call graph | `symbol` (required), `workspace`, `project`, `depth` (default: 2) |
 | `grepai_index_status` | Check index health | `verbose` (optional, default: false), `workspace` |
+| `grepai_list_workspaces` | List available workspace names | `format` (optional: `json` or `toon`) |
+| `grepai_list_projects` | List projects for a workspace | `workspace` (required), `format` (optional: `json` or `toon`) |
 
 ## Configuration
 
@@ -151,6 +153,8 @@ Without `--workspace`, the MCP server resolves its target in this order:
 3. Auto-detect workspace by checking if current directory is within a workspace project
 
 With `--workspace`, the server skips auto-detection and uses the specified workspace directly. The `grepai_search` tool will search across all workspace projects without the agent needing to pass `workspace` or `projects` parameters.
+
+If no local `.grepai/` project is found but global workspaces are configured, `grepai mcp-serve` can still start without `--workspace`. In that mode, tools can receive `workspace` dynamically in each request.
 
 ## Usage
 

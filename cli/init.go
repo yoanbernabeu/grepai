@@ -18,6 +18,7 @@ var (
 	initBackend        string
 	initNonInteractive bool
 	initInherit        bool
+	initUI             bool
 )
 
 const (
@@ -43,6 +44,7 @@ func init() {
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
+	initCmd.Flags().BoolVar(&initUI, "ui", false, "Run interactive Bubble Tea UI wizard")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -60,19 +62,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	cfg := config.DefaultConfig()
 	skipPrompts := false
+	var detectedGitInfo *git.DetectInfo
+	var detectedMainCfg *config.Config
 
 	// Detect git worktree and offer config inheritance
 	gitInfo, gitErr := git.Detect(cwd)
 	if gitErr == nil && gitInfo.IsWorktree && config.Exists(gitInfo.MainWorktree) {
 		mainCfg, loadErr := config.Load(gitInfo.MainWorktree)
 		if loadErr == nil {
+			detectedGitInfo = gitInfo
+			detectedMainCfg = mainCfg
 			fmt.Printf("\nGit worktree detected.\n")
 			fmt.Printf("  Main worktree: %s\n", gitInfo.MainWorktree)
 			fmt.Printf("  Worktree ID:   %s\n", gitInfo.WorktreeID)
 			fmt.Printf("  Backend:       %s\n", mainCfg.Store.Backend)
 
 			shouldInherit := initInherit
-			if !shouldInherit && !initNonInteractive {
+			if shouldPromptInheritChoice(shouldInherit, initNonInteractive, initUI) {
 				reader := bufio.NewReader(os.Stdin)
 				fmt.Print("\nInherit configuration from main worktree? [Y/n]: ")
 				input, _ := reader.ReadString('\n')
@@ -94,6 +100,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("Warning: could not load main worktree config: %v\n", loadErr)
 		}
+	}
+
+	if initUI && !initNonInteractive {
+		uiCfg, uiErr := runInitWizardUI(cwd, cfg, detectedGitInfo, detectedMainCfg, initInherit)
+		if uiErr != nil {
+			return uiErr
+		}
+		cfg = uiCfg
+		skipPrompts = true
 	}
 
 	// Interactive mode
@@ -333,4 +348,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func shouldPromptInheritChoice(shouldInherit, nonInteractive, uiMode bool) bool {
+	return !shouldInherit && !nonInteractive && !uiMode
 }

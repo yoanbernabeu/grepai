@@ -18,6 +18,26 @@ const (
 	SymbolIndexFileName = "symbols.gob"
 	RPGIndexFileName    = "rpg.gob"
 
+	DefaultEmbedderProvider         = "ollama"
+	DefaultOllamaEmbeddingModel     = "nomic-embed-text"
+	DefaultLMStudioEmbeddingModel   = "text-embedding-nomic-embed-text-v1.5"
+	DefaultOpenAIEmbeddingModel     = "text-embedding-3-small"
+	DefaultSyntheticEmbeddingModel  = "hf:nomic-ai/nomic-embed-text-v1.5"
+	DefaultOpenRouterEmbeddingModel = "openai/text-embedding-3-small"
+
+	DefaultOllamaEndpoint     = "http://localhost:11434"
+	DefaultLMStudioEndpoint   = "http://127.0.0.1:1234"
+	DefaultOpenAIEndpoint     = "https://api.openai.com/v1"
+	DefaultSyntheticEndpoint  = "https://api.synthetic.new/openai/v1"
+	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/v1"
+
+	DefaultLocalEmbeddingDimensions = 768
+	DefaultOpenAIDimensions         = 1536
+
+	DefaultPostgresDSN    = "postgres://localhost:5432/grepai"
+	DefaultQdrantEndpoint = "localhost"
+	DefaultQdrantPort     = 6334
+
 	// RPG default configuration values.
 	DefaultRPGDriftThreshold       = 0.35
 	DefaultRPGMaxTraversalDepth    = 3
@@ -90,9 +110,54 @@ func (e *EmbedderConfig) GetDimensions() int {
 	}
 	switch e.Provider {
 	case "openai", "openrouter":
-		return 1536
+		return DefaultOpenAIDimensions
 	default:
-		return 768
+		return DefaultLocalEmbeddingDimensions
+	}
+}
+
+func DefaultEmbedderForProvider(provider string) EmbedderConfig {
+	switch provider {
+	case "synthetic":
+		dim := DefaultLocalEmbeddingDimensions
+		return EmbedderConfig{
+			Provider:   "synthetic",
+			Model:      DefaultSyntheticEmbeddingModel,
+			Endpoint:   DefaultSyntheticEndpoint,
+			Dimensions: &dim,
+		}
+	case "openrouter":
+		return EmbedderConfig{
+			Provider:   "openrouter",
+			Model:      DefaultOpenRouterEmbeddingModel,
+			Endpoint:   DefaultOpenRouterEndpoint,
+			Dimensions: nil,
+		}
+	case "lmstudio":
+		dim := DefaultLocalEmbeddingDimensions
+		return EmbedderConfig{
+			Provider:   "lmstudio",
+			Model:      DefaultLMStudioEmbeddingModel,
+			Endpoint:   DefaultLMStudioEndpoint,
+			Dimensions: &dim,
+		}
+	case "openai":
+		return EmbedderConfig{
+			Provider:   "openai",
+			Model:      DefaultOpenAIEmbeddingModel,
+			Endpoint:   DefaultOpenAIEndpoint,
+			Dimensions: nil,
+		}
+	case "ollama":
+		fallthrough
+	default:
+		dim := DefaultLocalEmbeddingDimensions
+		return EmbedderConfig{
+			Provider:   providerOrDefault(provider),
+			Model:      DefaultOllamaEmbeddingModel,
+			Endpoint:   DefaultOllamaEndpoint,
+			Dimensions: &dim,
+		}
 	}
 }
 
@@ -117,6 +182,22 @@ type QdrantConfig struct {
 type ChunkingConfig struct {
 	Size    int `yaml:"size"`
 	Overlap int `yaml:"overlap"`
+}
+
+func DefaultStoreForBackend(backend string) StoreConfig {
+	cfg := StoreConfig{Backend: backendOrDefault(backend)}
+	switch cfg.Backend {
+	case "postgres":
+		cfg.Postgres = PostgresConfig{
+			DSN: DefaultPostgresDSN,
+		}
+	case "qdrant":
+		cfg.Qdrant = QdrantConfig{
+			Endpoint: DefaultQdrantEndpoint,
+			Port:     DefaultQdrantPort,
+		}
+	}
+	return cfg
 }
 
 type WatchConfig struct {
@@ -189,19 +270,10 @@ func ValidateWatchConfig(cfg WatchConfig) error {
 }
 
 func DefaultConfig() *Config {
-	defaultDim := 768
 	return &Config{
-		Version: 1,
-		Embedder: EmbedderConfig{
-			Provider:   "ollama",
-			Model:      "nomic-embed-text",
-			Endpoint:   "http://localhost:11434",
-			Dimensions: &defaultDim,
-			// Parallelism intentionally omitted - only applies to OpenAI
-		},
-		Store: StoreConfig{
-			Backend: "gob",
-		},
+		Version:  1,
+		Embedder: DefaultEmbedderForProvider(DefaultEmbedderProvider),
+		Store:    DefaultStoreForBackend("gob"),
 		Chunking: ChunkingConfig{
 			Size:    512,
 			Overlap: 50,
@@ -363,34 +435,15 @@ func (c *Config) applyDefaults() {
 
 	// Embedder defaults
 	if c.Embedder.Endpoint == "" {
-		switch c.Embedder.Provider {
-		case "ollama":
-			c.Embedder.Endpoint = "http://localhost:11434"
-		case "lmstudio":
-			c.Embedder.Endpoint = "http://127.0.0.1:1234"
-		case "openai":
-			c.Embedder.Endpoint = "https://api.openai.com/v1"
-		case "synthetic":
-			c.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
-		case "openrouter":
-			c.Embedder.Endpoint = "https://openrouter.ai/api/v1"
-		default:
-			c.Embedder.Endpoint = defaults.Embedder.Endpoint
-		}
+		c.Embedder.Endpoint = DefaultEmbedderForProvider(c.Embedder.Provider).Endpoint
 	}
 
-	// Only set default dimensions for specific embedders (Ollama, LMStudio, Synthetic).
-	// For OpenAI, leave nil to let the API use the model's native dimensions.
+	// Only set default dimensions for local embedders.
+	// For OpenAI/OpenRouter, leave nil to let the API use the model's native dimensions.
 	if c.Embedder.Dimensions == nil {
-		switch c.Embedder.Provider {
-		case "ollama":
-			dim := 768 // nomic-embed-text default
-			c.Embedder.Dimensions = &dim
-		case "lmstudio":
-			dim := 768 // nomic default
-			c.Embedder.Dimensions = &dim
-		case "synthetic":
-			dim := 768 // nomic-embed-text-v1.5 default
+		switch cfg := DefaultEmbedderForProvider(c.Embedder.Provider); {
+		case cfg.Dimensions != nil:
+			dim := *cfg.Dimensions
 			c.Embedder.Dimensions = &dim
 		}
 	}
@@ -427,7 +480,7 @@ func (c *Config) applyDefaults() {
 
 	// Qdrant defaults
 	if c.Store.Backend == "qdrant" && c.Store.Qdrant.Port <= 0 {
-		c.Store.Qdrant.Port = 6334
+		c.Store.Qdrant.Port = DefaultStoreForBackend("qdrant").Qdrant.Port
 	}
 
 	// RPG defaults
@@ -455,6 +508,20 @@ func (c *Config) applyDefaults() {
 	if c.RPG.FeatureGroupStrategy == "" {
 		c.RPG.FeatureGroupStrategy = DefaultRPGFeatureGroupStrategy
 	}
+}
+
+func providerOrDefault(provider string) string {
+	if provider == "" {
+		return DefaultEmbedderProvider
+	}
+	return provider
+}
+
+func backendOrDefault(backend string) string {
+	if backend == "" {
+		return "gob"
+	}
+	return backend
 }
 
 func (c *Config) Save(projectRoot string) error {

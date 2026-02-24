@@ -28,6 +28,7 @@ grepai init [flags]
   -h, --help              help for init
       --inherit           Inherit configuration from main worktree (for git worktrees)
   -p, --provider string   Embedding provider (ollama, lmstudio, or openai)
+      --ui                Run interactive Bubble Tea UI wizard
       --yes               Use defaults without prompting
 ```
 

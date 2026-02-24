@@ -221,6 +221,7 @@ func TestBuildFull_GeneratesHierarchySummaries(t *testing.T) {
 	}
 }
 
+
 func TestNormalizeEndLine(t *testing.T) {
 	tests := []struct {
 		name      string
