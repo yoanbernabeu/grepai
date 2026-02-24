@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#107)
+
 ## [0.34.0] - 2026-02-24
 
 ### Added

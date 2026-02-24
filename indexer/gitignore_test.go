@@ -555,3 +555,506 @@ func TestIgnoreMatcher_ExternalGitignore_WithTilde(t *testing.T) {
 		t.Error("ShouldIgnore(\"test.ignored\") = false, expected true")
 	}
 }
+
+func TestGrepaiIgnore_BasicExclusion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .grepaiignore adds extra exclusion patterns
+	grepaiIgnore := `secret-data/
+*.generated.go
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"secret-data", true, "directory excluded by .grepaiignore"},
+		{"secret-data/keys.go", true, "file inside excluded dir"},
+		{"models.generated.go", true, "file matching .grepaiignore wildcard"},
+		{"src/models.generated.go", true, "nested file matching .grepaiignore wildcard"},
+		{"main.go", false, "regular file not affected"},
+		{"src/app.go", false, "nested regular file not affected"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_Negation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore excludes vendor/
+	gitignore := `vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// .grepaiignore re-includes vendor/
+	grepaiIgnore := `!vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	// Create vendor directory so Walk can find .grepaiignore
+	if err := os.MkdirAll(filepath.Join(tmpDir, "vendor", "pkg"), 0755); err != nil {
+		t.Fatalf("failed to create vendor dir: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"vendor", false, "vendor dir re-included by .grepaiignore"},
+		{"vendor/pkg/main.go", false, "file in vendor re-included"},
+		{"main.go", false, "regular file not affected"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_SelectiveNegation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore excludes vendor/
+	gitignore := `vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// .grepaiignore re-includes only vendor/important/
+	grepaiIgnore := `vendor/
+!vendor/important/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	// Create directories
+	if err := os.MkdirAll(filepath.Join(tmpDir, "vendor", "important"), 0755); err != nil {
+		t.Fatalf("failed to create vendor/important dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "vendor", "other"), 0755); err != nil {
+		t.Fatalf("failed to create vendor/other dir: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"vendor/important", false, "vendor/important re-included"},
+		{"vendor/important/lib.go", false, "file in vendor/important re-included"},
+		{"vendor/other", true, "vendor/other still excluded"},
+		{"vendor/other/lib.go", true, "file in vendor/other still excluded"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_OverridesExtraPatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Extra patterns exclude vendor
+	extraPatterns := []string{"vendor"}
+
+	// .grepaiignore re-includes vendor
+	grepaiIgnore := `!vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, extraPatterns, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// .grepaiignore should override the extra pattern
+	if matcher.ShouldIgnore("vendor") {
+		t.Error("ShouldIgnore(\"vendor\") = true, expected false (.grepaiignore should override extra patterns)")
+	}
+	if matcher.ShouldIgnore("vendor/pkg/main.go") {
+		t.Error("ShouldIgnore(\"vendor/pkg/main.go\") = true, expected false")
+	}
+}
+
+func TestGrepaiIgnore_Nested(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create subdirectory with its own .grepaiignore
+	subDir := filepath.Join(tmpDir, "services")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create services dir: %v", err)
+	}
+
+	grepaiIgnore := `*.test.go
+`
+	if err := os.WriteFile(filepath.Join(subDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create services/.grepaiignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"services/handler.test.go", true, "test file in services excluded by nested .grepaiignore"},
+		{"services/handler.go", false, "regular file in services not affected"},
+		{"handler.test.go", false, "test file in root NOT affected (nested .grepaiignore doesn't apply)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_NotPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Only .gitignore, no .grepaiignore
+	gitignore := `build/
+*.log
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// Behavior should be identical to before: no .grepaiignore means no change
+	tests := []struct {
+		path     string
+		expected bool
+	}{
+		{"build", true},
+		{"build/app.go", true},
+		{"debug.log", true},
+		{"main.go", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestShouldSkipDir_WithNegation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore excludes vendor/
+	gitignore := `vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// .grepaiignore re-includes specific files in vendor
+	grepaiIgnore := `!vendor/important.go
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	// Create vendor dir
+	if err := os.MkdirAll(filepath.Join(tmpDir, "vendor"), 0755); err != nil {
+		t.Fatalf("failed to create vendor dir: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// ShouldSkipDir should return false for vendor/ because .grepaiignore has negations
+	// (files inside might be re-included)
+	if matcher.ShouldSkipDir("vendor") {
+		t.Error("ShouldSkipDir(\"vendor\") = true, expected false (negation patterns exist)")
+	}
+
+	// Without .grepaiignore negations, ShouldSkipDir should return true
+	tmpDir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir2, ".gitignore"), []byte("vendor/\n"), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	matcher2, err := NewIgnoreMatcher(tmpDir2, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	if !matcher2.ShouldSkipDir("vendor") {
+		t.Error("ShouldSkipDir(\"vendor\") = false, expected true (no .grepaiignore)")
+	}
+}
+
+func TestScanner_RespectsGrepaiIgnoreNegation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore excludes vendor/
+	gitignore := `vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// .grepaiignore re-includes vendor/
+	grepaiIgnore := `!vendor/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	// Create source files
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main"), 0644); err != nil {
+		t.Fatalf("failed to create main.go: %v", err)
+	}
+
+	// Create vendor files (normally excluded by .gitignore, but re-included by .grepaiignore)
+	vendorDir := filepath.Join(tmpDir, "vendor", "pkg")
+	if err := os.MkdirAll(vendorDir, 0755); err != nil {
+		t.Fatalf("failed to create vendor/pkg dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(vendorDir, "lib.go"), []byte("package pkg"), 0644); err != nil {
+		t.Fatalf("failed to create vendor/pkg/lib.go: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, matcher)
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	// Should find both src/main.go and vendor/pkg/lib.go
+	foundPaths := make(map[string]bool)
+	for _, f := range files {
+		foundPaths[f.Path] = true
+	}
+
+	expectedFiles := []string{
+		filepath.Join("src", "main.go"),
+		filepath.Join("vendor", "pkg", "lib.go"),
+	}
+
+	for _, expected := range expectedFiles {
+		if !foundPaths[expected] {
+			t.Errorf("expected to find %s in scan results, but it was missing", expected)
+		}
+	}
+
+	if len(files) != len(expectedFiles) {
+		t.Errorf("expected %d files, got %d", len(expectedFiles), len(files))
+		for _, f := range files {
+			t.Logf("  found: %s", f.Path)
+		}
+	}
+}
+
+func TestGrepaiIgnore_DoesNotOverrideNestedGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root .grepaiignore re-includes generated/
+	grepaiIgnore := `!generated/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	// src/.gitignore excludes generated/
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	srcGitignore := `generated/
+`
+	if err := os.WriteFile(filepath.Join(srcDir, ".gitignore"), []byte(srcGitignore), 0644); err != nil {
+		t.Fatalf("failed to create src/.gitignore: %v", err)
+	}
+
+	// Create directories
+	if err := os.MkdirAll(filepath.Join(srcDir, "generated"), 0755); err != nil {
+		t.Fatalf("failed to create src/generated dir: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		// Root .grepaiignore !generated/ should NOT override src/.gitignore generated/
+		{"src/generated", true, "src/.gitignore generated/ wins over root .grepaiignore"},
+		{"src/generated/code.go", true, "file in src/generated still ignored by nested .gitignore"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_OverridesSameLevelGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root .gitignore excludes generated/
+	gitignore := `generated/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// Root .grepaiignore re-includes generated/ (same level)
+	grepaiIgnore := `!generated/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".grepaiignore"), []byte(grepaiIgnore), 0644); err != nil {
+		t.Fatalf("failed to create .grepaiignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// Root .grepaiignore SHOULD override root .gitignore (same level)
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"generated", false, "generated re-included by same-level .grepaiignore"},
+		{"generated/code.go", false, "file in generated re-included"},
+		{"src/generated", false, "src/generated also re-included (root gitignore + root grepaiignore)"},
+		{"src/generated/code.go", false, "file in src/generated re-included"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrepaiIgnore_NestedOverridesNestedGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// src/.gitignore excludes generated/
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, ".gitignore"), []byte("generated/\n"), 0644); err != nil {
+		t.Fatalf("failed to create src/.gitignore: %v", err)
+	}
+
+	// src/.grepaiignore re-includes generated/ (same level as the .gitignore)
+	if err := os.WriteFile(filepath.Join(srcDir, ".grepaiignore"), []byte("!generated/\n"), 0644); err != nil {
+		t.Fatalf("failed to create src/.grepaiignore: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(srcDir, "generated"), 0755); err != nil {
+		t.Fatalf("failed to create src/generated dir: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// src/.grepaiignore SHOULD override src/.gitignore (same level)
+	tests := []struct {
+		path     string
+		expected bool
+		desc     string
+	}{
+		{"src/generated", false, "src/generated re-included by same-level src/.grepaiignore"},
+		{"src/generated/code.go", false, "file in src/generated re-included"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := matcher.ShouldIgnore(tt.path)
+			if result != tt.expected {
+				t.Errorf("ShouldIgnore(%q) = %v, expected %v", tt.path, result, tt.expected)
+			}
+		})
+	}
+}
