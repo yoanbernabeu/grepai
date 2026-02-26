@@ -50,7 +50,7 @@ curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh 
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
-Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI.
+Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), OpenAI, or [Voyage AI](https://voyageai.com).
 
 **Ollama (recommended):**
 ```bash

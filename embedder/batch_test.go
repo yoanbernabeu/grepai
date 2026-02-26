@@ -96,8 +96,8 @@ func TestFormBatches_SingleFileFewChunks(t *testing.T) {
 }
 
 func TestFormBatches_SingleFileManyChunks(t *testing.T) {
-	// Create file with more than MaxBatchSize chunks
-	chunks := make([]string, MaxBatchSize+500)
+	// Create file with more than DefaultMaxBatchSize chunks
+	chunks := make([]string, DefaultMaxBatchSize+500)
 	for i := range chunks {
 		chunks[i] = "chunk"
 	}
@@ -113,8 +113,8 @@ func TestFormBatches_SingleFileManyChunks(t *testing.T) {
 	}
 
 	// First batch should be full
-	if len(batches[0].Entries) != MaxBatchSize {
-		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	if len(batches[0].Entries) != DefaultMaxBatchSize {
+		t.Errorf("first batch should have %d entries, got %d", DefaultMaxBatchSize, len(batches[0].Entries))
 	}
 	if batches[0].Index != 0 {
 		t.Errorf("first batch.Index = %d, expected 0", batches[0].Index)
@@ -135,7 +135,7 @@ func TestFormBatches_SingleFileManyChunks(t *testing.T) {
 		}
 	}
 	for i, entry := range batches[1].Entries {
-		expectedIdx := MaxBatchSize + i
+		expectedIdx := DefaultMaxBatchSize + i
 		if entry.ChunkIndex != expectedIdx {
 			t.Errorf("batch[1].entry[%d].ChunkIndex = %d, expected %d", i, entry.ChunkIndex, expectedIdx)
 		}
@@ -190,7 +190,7 @@ func TestFormBatches_MultipleFilesCombined(t *testing.T) {
 
 func TestFormBatches_MultipleFilesBatchBoundary(t *testing.T) {
 	// Create files that will span batch boundaries
-	file1Chunks := make([]string, MaxBatchSize-100)
+	file1Chunks := make([]string, DefaultMaxBatchSize-100)
 	for i := range file1Chunks {
 		file1Chunks[i] = "file1"
 	}
@@ -211,8 +211,8 @@ func TestFormBatches_MultipleFilesBatchBoundary(t *testing.T) {
 	}
 
 	// First batch: all of file1 (1900) + first 100 of file2
-	if len(batches[0].Entries) != MaxBatchSize {
-		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	if len(batches[0].Entries) != DefaultMaxBatchSize {
+		t.Errorf("first batch should have %d entries, got %d", DefaultMaxBatchSize, len(batches[0].Entries))
 	}
 
 	// Second batch: remaining 100 of file2
@@ -246,8 +246,8 @@ func TestFormBatches_MultipleFilesBatchBoundary(t *testing.T) {
 	}
 }
 
-func TestFormBatches_ExactlyMaxBatchSize(t *testing.T) {
-	chunks := make([]string, MaxBatchSize)
+func TestFormBatches_ExactlyDefaultMaxBatchSize(t *testing.T) {
+	chunks := make([]string, DefaultMaxBatchSize)
 	for i := range chunks {
 		chunks[i] = "chunk"
 	}
@@ -259,15 +259,15 @@ func TestFormBatches_ExactlyMaxBatchSize(t *testing.T) {
 	batches := FormBatches(files)
 
 	if len(batches) != 1 {
-		t.Errorf("expected 1 batch for exactly %d chunks, got %d", MaxBatchSize, len(batches))
+		t.Errorf("expected 1 batch for exactly %d chunks, got %d", DefaultMaxBatchSize, len(batches))
 	}
-	if len(batches[0].Entries) != MaxBatchSize {
-		t.Errorf("batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	if len(batches[0].Entries) != DefaultMaxBatchSize {
+		t.Errorf("batch should have %d entries, got %d", DefaultMaxBatchSize, len(batches[0].Entries))
 	}
 }
 
-func TestFormBatches_ExactlyMaxBatchSizePlusOne(t *testing.T) {
-	chunks := make([]string, MaxBatchSize+1)
+func TestFormBatches_ExactlyDefaultMaxBatchSizePlusOne(t *testing.T) {
+	chunks := make([]string, DefaultMaxBatchSize+1)
 	for i := range chunks {
 		chunks[i] = "chunk"
 	}
@@ -279,10 +279,10 @@ func TestFormBatches_ExactlyMaxBatchSizePlusOne(t *testing.T) {
 	batches := FormBatches(files)
 
 	if len(batches) != 2 {
-		t.Errorf("expected 2 batches for %d chunks, got %d", MaxBatchSize+1, len(batches))
+		t.Errorf("expected 2 batches for %d chunks, got %d", DefaultMaxBatchSize+1, len(batches))
 	}
-	if len(batches[0].Entries) != MaxBatchSize {
-		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	if len(batches[0].Entries) != DefaultMaxBatchSize {
+		t.Errorf("first batch should have %d entries, got %d", DefaultMaxBatchSize, len(batches[0].Entries))
 	}
 	if len(batches[1].Entries) != 1 {
 		t.Errorf("second batch should have 1 entry, got %d", len(batches[1].Entries))
@@ -409,7 +409,7 @@ func TestEstimateTokens(t *testing.T) {
 func TestFormBatches_TokenLimit(t *testing.T) {
 	// Create chunks that are large enough to trigger token limit
 	// Each chunk will be ~10000 chars -> ~2500 tokens
-	// With MaxBatchTokens = 280000, we can fit ~112 such chunks per batch
+	// With DefaultMaxBatchTokens = 280000, we can fit ~112 such chunks per batch
 	largeChunk := string(make([]byte, 10000))
 
 	// Create 200 large chunks - should be split into multiple batches by token limit
@@ -424,7 +424,7 @@ func TestFormBatches_TokenLimit(t *testing.T) {
 
 	batches := FormBatches(files)
 
-	// Should have more than 1 batch due to token limit (even though count is below MaxBatchSize)
+	// Should have more than 1 batch due to token limit (even though count is below DefaultMaxBatchSize)
 	if len(batches) < 2 {
 		t.Errorf("expected multiple batches due to token limit, got %d", len(batches))
 	}
@@ -444,17 +444,17 @@ func TestFormBatches_TokenLimit(t *testing.T) {
 		for _, entry := range batch.Entries {
 			batchTokens += EstimateTokens(entry.Content)
 		}
-		if batchTokens > MaxBatchTokens {
-			t.Errorf("batch %d has %d tokens, exceeds MaxBatchTokens %d", i, batchTokens, MaxBatchTokens)
+		if batchTokens > DefaultMaxBatchTokens {
+			t.Errorf("batch %d has %d tokens, exceeds DefaultMaxBatchTokens %d", i, batchTokens, DefaultMaxBatchTokens)
 		}
 	}
 }
 
 func TestFormBatches_SmallChunksIgnoreTokenLimit(t *testing.T) {
-	// With small chunks, we should hit the count limit (MaxBatchSize) before token limit
+	// With small chunks, we should hit the count limit (DefaultMaxBatchSize) before token limit
 	smallChunk := "hello"
 
-	chunks := make([]string, MaxBatchSize+100)
+	chunks := make([]string, DefaultMaxBatchSize+100)
 	for i := range chunks {
 		chunks[i] = smallChunk
 	}
@@ -470,8 +470,8 @@ func TestFormBatches_SmallChunksIgnoreTokenLimit(t *testing.T) {
 		t.Errorf("expected 2 batches (split by count), got %d", len(batches))
 	}
 
-	// First batch should be exactly MaxBatchSize
-	if len(batches[0].Entries) != MaxBatchSize {
-		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
+	// First batch should be exactly DefaultMaxBatchSize
+	if len(batches[0].Entries) != DefaultMaxBatchSize {
+		t.Errorf("first batch should have %d entries, got %d", DefaultMaxBatchSize, len(batches[0].Entries))
 	}
 }

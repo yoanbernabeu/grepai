@@ -1,6 +1,8 @@
 package embedder
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -294,6 +296,210 @@ func TestEmbedder_Close(t *testing.T) {
 			t.Errorf("Close() returned error: %v", err)
 		}
 	})
+
+	t.Run("VoyageAIEmbedder", func(t *testing.T) {
+		t.Setenv("VOYAGE_API_KEY", "test-key")
+		e, err := NewVoyageAIEmbedder()
+		if err != nil {
+			t.Fatalf("failed to create embedder: %v", err)
+		}
+		if err := e.Close(); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	})
+}
+
+// Test VoyageAIEmbedder options
+func TestNewVoyageAIEmbedder_Defaults(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "test-key")
+
+	e, err := NewVoyageAIEmbedder()
+	if err != nil {
+		t.Fatalf("failed to create VoyageAIEmbedder: %v", err)
+	}
+
+	if e.endpoint != defaultVoyageAIEndpoint {
+		t.Errorf("expected endpoint %s, got %s", defaultVoyageAIEndpoint, e.endpoint)
+	}
+
+	if e.model != defaultVoyageAIModel {
+		t.Errorf("expected model %s, got %s", defaultVoyageAIModel, e.model)
+	}
+
+	// dimensions should be nil by default (no output_dimension param sent to API)
+	if e.dimensions != nil {
+		t.Errorf("expected nil dimensions, got %v", e.dimensions)
+	}
+}
+
+func TestNewVoyageAIEmbedder_WithOptions(t *testing.T) {
+	customEndpoint := "https://custom-voyage.example.com/v1"
+	customModel := "voyage-3"
+	customKey := "va-custom-key"
+	customDimensions := 512
+
+	e, err := NewVoyageAIEmbedder(
+		WithVoyageAIEndpoint(customEndpoint),
+		WithVoyageAIModel(customModel),
+		WithVoyageAIKey(customKey),
+		WithVoyageAIDimensions(customDimensions),
+		WithVoyageAIInputType("document"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create VoyageAIEmbedder: %v", err)
+	}
+
+	if e.endpoint != customEndpoint {
+		t.Errorf("expected endpoint %s, got %s", customEndpoint, e.endpoint)
+	}
+
+	if e.model != customModel {
+		t.Errorf("expected model %s, got %s", customModel, e.model)
+	}
+
+	if e.apiKey != customKey {
+		t.Errorf("expected apiKey %s, got %s", customKey, e.apiKey)
+	}
+
+	if e.dimensions == nil || *e.dimensions != customDimensions {
+		t.Errorf("expected dimensions %d, got %v", customDimensions, e.dimensions)
+	}
+
+	if e.inputType != "document" {
+		t.Errorf("expected inputType 'document', got %s", e.inputType)
+	}
+}
+
+func TestNewVoyageAIEmbedder_RequiresAPIKey(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "")
+
+	_, err := NewVoyageAIEmbedder()
+	if err == nil {
+		t.Fatal("expected error when API key is not set")
+	}
+}
+
+func TestNewVoyageAIEmbedder_UsesEnvAPIKey(t *testing.T) {
+	envKey := "va-env-test-key"
+	t.Setenv("VOYAGE_API_KEY", envKey)
+
+	e, err := NewVoyageAIEmbedder()
+	if err != nil {
+		t.Fatalf("failed to create VoyageAIEmbedder: %v", err)
+	}
+
+	if e.apiKey != envKey {
+		t.Errorf("expected apiKey from env %s, got %s", envKey, e.apiKey)
+	}
+}
+
+func TestNewVoyageAIEmbedder_ExplicitKeyOverridesEnv(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "env-key")
+	explicitKey := "va-explicit-key"
+
+	e, err := NewVoyageAIEmbedder(WithVoyageAIKey(explicitKey))
+	if err != nil {
+		t.Fatalf("failed to create VoyageAIEmbedder: %v", err)
+	}
+
+	if e.apiKey != explicitKey {
+		t.Errorf("expected explicit apiKey %s, got %s", explicitKey, e.apiKey)
+	}
+}
+
+func TestVoyageAIEmbedder_Dimensions(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "test-key")
+
+	tests := []struct {
+		name       string
+		dimensions int
+	}{
+		{"default", defaultVoyageAIDimensions},
+		{"custom 256", 256},
+		{"custom 512", 512},
+		{"custom 2048", 2048},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var e *VoyageAIEmbedder
+			var err error
+			if tt.dimensions == defaultVoyageAIDimensions {
+				e, err = NewVoyageAIEmbedder()
+			} else {
+				e, err = NewVoyageAIEmbedder(WithVoyageAIDimensions(tt.dimensions))
+			}
+			if err != nil {
+				t.Fatalf("failed to create embedder: %v", err)
+			}
+
+			if e.Dimensions() != tt.dimensions {
+				t.Errorf("expected Dimensions() to return %d, got %d", tt.dimensions, e.Dimensions())
+			}
+		})
+	}
+}
+
+func TestVoyageAIEmbedder_RequestUsesOutputDimension(t *testing.T) {
+	// Verify the JSON request body uses "output_dimension" not "dimensions"
+	dimensions := 512
+	req := voyageAIEmbedRequest{
+		Model:           "voyage-code-3",
+		Input:           []string{"test"},
+		OutputDimension: &dimensions,
+		InputType:       "document",
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	jsonStr := string(data)
+
+	// Must contain "output_dimension", not "dimensions"
+	if !strings.Contains(jsonStr, `"output_dimension"`) {
+		t.Errorf("expected JSON to contain 'output_dimension', got: %s", jsonStr)
+	}
+
+	// Must NOT contain bare "dimensions" key (only "output_dimension")
+	// Parse as generic map to check exact keys
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if _, ok := parsed["dimensions"]; ok {
+		t.Errorf("JSON should not contain 'dimensions' key, got: %s", jsonStr)
+	}
+
+	if val, ok := parsed["output_dimension"]; !ok {
+		t.Errorf("JSON should contain 'output_dimension' key, got: %s", jsonStr)
+	} else if int(val.(float64)) != dimensions {
+		t.Errorf("expected output_dimension=%d, got %v", dimensions, val)
+	}
+}
+
+func TestVoyageAIEmbedder_RequestOmitsNilDimension(t *testing.T) {
+	// When dimensions is nil, output_dimension should be omitted (omitempty)
+	req := voyageAIEmbedRequest{
+		Model: "voyage-code-3",
+		Input: []string{"test"},
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if _, ok := parsed["output_dimension"]; ok {
+		t.Errorf("output_dimension should be omitted when nil, got: %s", string(data))
+	}
 }
 
 // Test endpoint option combinations
@@ -356,6 +562,31 @@ func TestOpenAIEmbedder_EndpointVariants(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, err := NewOpenAIEmbedder(WithOpenAIEndpoint(tt.endpoint))
+			if err != nil {
+				t.Fatalf("failed to create embedder: %v", err)
+			}
+			if e.endpoint != tt.endpoint {
+				t.Errorf("expected endpoint %s, got %s", tt.endpoint, e.endpoint)
+			}
+		})
+	}
+}
+
+func TestVoyageAIEmbedder_EndpointVariants(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "test-key")
+
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{"default", "https://api.voyageai.com/v1"},
+		{"custom", "https://custom-voyage-proxy.example.com/v1"},
+		{"local proxy", "http://localhost:8080/v1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, err := NewVoyageAIEmbedder(WithVoyageAIEndpoint(tt.endpoint))
 			if err != nil {
 				t.Fatalf("failed to create embedder: %v", err)
 			}

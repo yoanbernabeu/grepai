@@ -13,7 +13,7 @@ Initialize grepai by creating a .grepai directory with configuration.
 
 This command will:
 - Create .grepai/config.yaml with default settings
-- Prompt for embedding provider (Ollama or OpenAI)
+- Prompt for embedding provider (Ollama, OpenAI, Voyage AI, etc.)
 - Prompt for storage backend (GOB file or PostgreSQL)
 - Add .grepai/ to .gitignore if present
 
@@ -27,7 +27,7 @@ grepai init [flags]
   -b, --backend string    Storage backend (gob, postgres, or qdrant)
   -h, --help              help for init
       --inherit           Inherit configuration from main worktree (for git worktrees)
-  -p, --provider string   Embedding provider (ollama, lmstudio, or openai)
+  -p, --provider string   Embedding provider (ollama, lmstudio, openai, voyageai, synthetic, or openrouter)
       --ui                Run interactive Bubble Tea UI wizard
       --yes               Use defaults without prompting
 ```
