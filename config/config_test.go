@@ -83,6 +83,14 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 	if openai.Dimensions != nil {
 		t.Fatalf("openai dimensions should be nil, got %v", openai.Dimensions)
 	}
+
+	voyageai := DefaultEmbedderForProvider("voyageai")
+	if voyageai.Endpoint != DefaultVoyageAIEndpoint || voyageai.Model != DefaultVoyageAIEmbeddingModel {
+		t.Fatalf("unexpected voyageai defaults: %+v", voyageai)
+	}
+	if voyageai.Dimensions != nil {
+		t.Fatalf("voyageai dimensions should be nil, got %v", voyageai.Dimensions)
+	}
 }
 
 func TestDefaultStoreForBackend(t *testing.T) {

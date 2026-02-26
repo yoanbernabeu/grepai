@@ -17,7 +17,7 @@ version: 1
 
 # Embedder configuration
 embedder:
-  # Provider: "ollama" (local), "lmstudio" (local), or "openai" (cloud)
+  # Provider: "ollama" (local), "lmstudio" (local), "openai" (cloud), or "voyageai" (cloud)
   provider: ollama
   # Model name (depends on provider)
   model: nomic-embed-text

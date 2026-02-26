@@ -42,8 +42,7 @@ type voyageAIEmbedRequest struct {
 	InputType       string   `json:"input_type,omitempty"`
 }
 
-// voyageAIEmbedResponse and voyageAIErrorResponse share the same structure as OpenAI.
-type voyageAIEmbedResponse = openAIEmbedResponse
+// voyageAIErrorResponse shares the same structure as OpenAI.
 type voyageAIErrorResponse = openAIErrorResponse
 
 type VoyageAIOption func(*VoyageAIEmbedder)

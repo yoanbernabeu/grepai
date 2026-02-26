@@ -5,7 +5,7 @@ description: How to install grepai
 
 ## Prerequisites
 
-- **Ollama** (for local embeddings) or an **OpenAI API key** (for cloud embeddings)
+- **Ollama** (for local embeddings) or a cloud API key (**OpenAI**, **Voyage AI**, etc.)
 
 ## Homebrew (macOS)
 

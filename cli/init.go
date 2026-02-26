@@ -121,9 +121,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			fmt.Println("  1) ollama (local, privacy-first, requires Ollama running)")
 			fmt.Println("  2) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
 			fmt.Println("  3) openai (cloud, requires API key)")
-			fmt.Println("  4) voyageai (cloud, optimized for code, requires API key)")
-			fmt.Println("  5) synthetic (cloud, free embedding API)")
-			fmt.Println("  6) openrouter (cloud, multi-provider gateway)")
+			fmt.Println("  4) synthetic (cloud, free embedding API)")
+			fmt.Println("  5) openrouter (cloud, multi-provider gateway)")
+			fmt.Println("  6) voyageai (cloud, optimized for code, requires API key)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
@@ -147,18 +147,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				// OpenAI: leave Dimensions nil to use model's native dimensions
-			case "4", "voyageai":
-				cfg.Embedder.Provider = "voyageai"
-				cfg.Embedder.Model = "voyage-code-3"
-				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
-				// Voyage AI: leave Dimensions nil to use model's native dimensions (1024)
-			case "5", "synthetic":
+			case "4", "synthetic":
 				cfg.Embedder.Provider = "synthetic"
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
 				dim := 768
 				cfg.Embedder.Dimensions = &dim
-			case "6", "openrouter":
+			case "5", "openrouter":
 				cfg.Embedder.Provider = "openrouter"
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
 				// OpenRouter: leave Dimensions nil to use model's native dimensions
@@ -181,6 +176,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 				default:
 					cfg.Embedder.Model = "openai/text-embedding-3-small"
 				}
+			case "6", "voyageai":
+				cfg.Embedder.Provider = "voyageai"
+				cfg.Embedder.Model = "voyage-code-3"
+				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
+				// Voyage AI: leave Dimensions nil to use model's native dimensions (1024)
 			default:
 				cfg.Embedder.Provider = "ollama"
 				fmt.Print("Ollama endpoint [http://localhost:11434]: ")

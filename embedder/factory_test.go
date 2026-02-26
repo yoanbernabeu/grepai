@@ -122,6 +122,30 @@ func TestNewFromConfig_OpenRouter(t *testing.T) {
 	}
 }
 
+func TestNewFromConfig_VoyageAI(t *testing.T) {
+	t.Setenv("VOYAGE_API_KEY", "test-key")
+
+	cfg := &config.Config{
+		Embedder: config.EmbedderConfig{
+			Provider:    "voyageai",
+			Model:       "voyage-code-3",
+			Endpoint:    "https://api.voyageai.com/v1",
+			Parallelism: 4,
+		},
+	}
+
+	emb, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	defer emb.Close()
+
+	_, ok := emb.(*VoyageAIEmbedder)
+	if !ok {
+		t.Errorf("expected *VoyageAIEmbedder, got %T", emb)
+	}
+}
+
 func TestNewFromConfig_UnknownProvider(t *testing.T) {
 	cfg := &config.Config{
 		Embedder: config.EmbedderConfig{

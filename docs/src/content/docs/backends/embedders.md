@@ -12,6 +12,7 @@ Embedders convert text (code chunks) into vector representations that enable sem
 | Ollama | Local | Privacy, free, no internet | Requires local resources |
 | LM Studio | Local | Privacy, OpenAI-compatible API, GUI | Requires local resources |
 | OpenAI | Cloud | High quality, fast | Costs money, sends code to cloud |
+| Voyage AI | Cloud | Optimized for code, high quality | Costs money, sends code to cloud |
 
 ## Ollama (Local)
 
@@ -232,6 +233,59 @@ For a typical codebase:
 - 10,000 lines of code ≈ 50,000 tokens
 - Initial index: ~$0.001 with `text-embedding-3-small`
 - Ongoing updates: negligible
+
+## Voyage AI (Cloud)
+
+[Voyage AI](https://voyageai.com) provides embedding models specifically optimized for code search and retrieval.
+
+### Setup
+
+1. Get an API key from [Voyage AI Dashboard](https://dash.voyageai.com/api-keys)
+
+2. Set the environment variable:
+
+```bash
+export VOYAGE_API_KEY=pa-...
+```
+
+### Configuration
+
+```yaml
+embedder:
+  provider: voyageai
+  model: voyage-code-3
+  endpoint: https://api.voyageai.com/v1
+  api_key: ${VOYAGE_API_KEY}
+```
+
+### Available Models
+
+| Model | Dimensions | Context | Notes |
+|-------|------------|---------|-------|
+| `voyage-code-3` | 1024 | 32K | Optimized for code retrieval (recommended) |
+| `voyage-4-large` | 1024 | 32K | Best general-purpose retrieval quality |
+| `voyage-4` | 1024 | 32K | Balanced quality and performance |
+| `voyage-4-lite` | 1024 | 32K | Optimized for latency and cost |
+
+All Voyage 4 series models support flexible dimensions (256, 512, 1024, 2048) and share a compatible embedding space.
+
+### Parallelism & Rate Limiting
+
+Voyage AI embeddings support parallel batch processing with adaptive rate limiting:
+
+```yaml
+embedder:
+  provider: voyageai
+  model: voyage-code-3
+  api_key: ${VOYAGE_API_KEY}
+  parallelism: 4  # Concurrent API requests (default: 4)
+```
+
+Rate limiting works the same as OpenAI: on 429 responses, parallelism auto-reduces and retries with exponential backoff.
+
+### Cost Estimation
+
+See [Voyage AI Pricing](https://docs.voyageai.com/docs/pricing) for current rates.
 
 ## Changing Embedding Models
 
