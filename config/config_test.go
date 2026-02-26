@@ -59,6 +59,47 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultEmbedderForProvider(t *testing.T) {
+	ollama := DefaultEmbedderForProvider("ollama")
+	if ollama.Endpoint != DefaultOllamaEndpoint || ollama.Model != DefaultOllamaEmbeddingModel {
+		t.Fatalf("unexpected ollama defaults: %+v", ollama)
+	}
+	if ollama.Dimensions == nil || *ollama.Dimensions != DefaultLocalEmbeddingDimensions {
+		t.Fatalf("unexpected ollama dimensions: %v", ollama.Dimensions)
+	}
+
+	lmstudio := DefaultEmbedderForProvider("lmstudio")
+	if lmstudio.Endpoint != DefaultLMStudioEndpoint || lmstudio.Model != DefaultLMStudioEmbeddingModel {
+		t.Fatalf("unexpected lmstudio defaults: %+v", lmstudio)
+	}
+	if lmstudio.Dimensions == nil || *lmstudio.Dimensions != DefaultLocalEmbeddingDimensions {
+		t.Fatalf("unexpected lmstudio dimensions: %v", lmstudio.Dimensions)
+	}
+
+	openai := DefaultEmbedderForProvider("openai")
+	if openai.Endpoint != DefaultOpenAIEndpoint || openai.Model != DefaultOpenAIEmbeddingModel {
+		t.Fatalf("unexpected openai defaults: %+v", openai)
+	}
+	if openai.Dimensions != nil {
+		t.Fatalf("openai dimensions should be nil, got %v", openai.Dimensions)
+	}
+}
+
+func TestDefaultStoreForBackend(t *testing.T) {
+	postgres := DefaultStoreForBackend("postgres")
+	if postgres.Backend != "postgres" || postgres.Postgres.DSN != DefaultPostgresDSN {
+		t.Fatalf("unexpected postgres defaults: %+v", postgres)
+	}
+
+	qdrant := DefaultStoreForBackend("qdrant")
+	if qdrant.Backend != "qdrant" {
+		t.Fatalf("unexpected qdrant backend: %q", qdrant.Backend)
+	}
+	if qdrant.Qdrant.Endpoint != DefaultQdrantEndpoint || qdrant.Qdrant.Port != DefaultQdrantPort {
+		t.Fatalf("unexpected qdrant defaults: %+v", qdrant.Qdrant)
+	}
+}
+
 func TestConfigSaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 

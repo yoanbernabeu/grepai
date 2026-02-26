@@ -1,6 +1,8 @@
 package rpg
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -9,7 +11,15 @@ import (
 type FeatureExtractor interface {
 	// ExtractFeature generates a feature label for a symbol.
 	// Returns a verb-object string like "handle-request", "validate-token", "parse-config".
-	ExtractFeature(symbolName, signature, receiver, comment string) string
+	ExtractFeature(ctx context.Context, symbolName, signature, receiver, comment string) string
+
+	// ExtractAtomicFeatures generates one or more atomic semantic features.
+	// Returns normalized verb-object phrases like "handle request".
+	ExtractAtomicFeatures(ctx context.Context, symbolName, signature, receiver, comment string) []string
+
+	// GenerateSummary generates a high-level summary for a node.
+	// Returns the summary string or error.
+	GenerateSummary(ctx context.Context, name, contextStr string) (string, error)
 
 	// Mode returns the extractor mode name.
 	Mode() string
@@ -71,14 +81,23 @@ var knownVerbs = map[string]bool{
 // ExtractFeature generates a feature label for a symbol using heuristic rules.
 // It splits the symbol name into words, identifies a verb-object pattern,
 // and returns a lowercase kebab-case string like "handle-request".
-func (e *LocalExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
-	if symbolName == "" {
+func (e *LocalExtractor) ExtractFeature(_ context.Context, symbolName, signature, receiver, comment string) string {
+	features := e.ExtractAtomicFeatures(context.Background(), symbolName, signature, receiver, comment)
+	if len(features) == 0 {
 		return "unknown"
+	}
+	return primaryFromAtomicFeature(features[0])
+}
+
+// ExtractAtomicFeatures generates normalized atomic semantic features.
+func (e *LocalExtractor) ExtractAtomicFeatures(_ context.Context, symbolName, signature, receiver, comment string) []string {
+	if symbolName == "" {
+		return []string{"unknown"}
 	}
 
 	words := splitName(symbolName)
 	if len(words) == 0 {
-		return "unknown"
+		return []string{"unknown"}
 	}
 
 	// Lowercase all words for uniform processing.
@@ -89,13 +108,13 @@ func (e *LocalExtractor) ExtractFeature(symbolName, signature, receiver, comment
 
 	// If the first word is a recognized verb, use verb + remaining as object.
 	if isVerb(lower[0]) {
-		return buildLabel(lower, receiver)
+		return []string{atomicFromPrimaryFeature(buildLabel(lower))}
 	}
 
 	// If the name is a single word that is not a verb, it might be a noun
 	// (e.g., a type name like "Server", "Config"). Use "operate" as default verb.
 	if len(lower) == 1 {
-		return buildLabel(append([]string{"operate"}, lower...), receiver)
+		return []string{atomicFromPrimaryFeature(buildLabel(append([]string{"operate"}, lower...)))}
 	}
 
 	// Multi-word but first word is not a recognized verb.
@@ -106,35 +125,54 @@ func (e *LocalExtractor) ExtractFeature(symbolName, signature, receiver, comment
 			reordered := []string{w}
 			reordered = append(reordered, lower[:i]...)
 			reordered = append(reordered, lower[i+1:]...)
-			return buildLabel(reordered, receiver)
+			return []string{atomicFromPrimaryFeature(buildLabel(reordered))}
 		}
 	}
 
 	// No recognized verb found at all. Use "operate" as default.
-	return buildLabel(append([]string{"operate"}, lower...), receiver)
+	return []string{atomicFromPrimaryFeature(buildLabel(append([]string{"operate"}, lower...)))}
+}
+
+// GenerateSummary builds a deterministic local summary from child feature hints.
+func (e *LocalExtractor) GenerateSummary(_ context.Context, name, contextStr string) (string, error) {
+	featureHints := make([]string, 0)
+	for _, line := range strings.Split(contextStr, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		item := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if item == "" {
+			continue
+		}
+		if idx := strings.Index(item, ":"); idx >= 0 {
+			item = strings.TrimSpace(item[:idx])
+		}
+		if normalized := normalizeAtomicFeature(item); normalized != "" {
+			featureHints = append(featureHints, normalized)
+		}
+	}
+
+	top := aggregateAtomicFeatures(featureHints, 3)
+	target := strings.TrimSpace(name)
+	if target == "" {
+		target = "this module"
+	}
+
+	if len(top) == 0 {
+		return fmt.Sprintf("Provides %s responsibilities.", target), nil
+	}
+	return fmt.Sprintf("Provides %s responsibilities for %s.", target, strings.Join(top, ", ")), nil
 }
 
 // buildLabel constructs a kebab-case feature label from words, capped at 4 words.
-// If a receiver is present, the receiver type is appended as context.
-func buildLabel(words []string, receiver string) string {
+func buildLabel(words []string) string {
 	// Cap at 4 words for conciseness.
 	if len(words) > 4 {
 		words = words[:4]
 	}
 
-	label := strings.Join(words, "-")
-
-	// If receiver is present, append it as context suffix.
-	if receiver != "" {
-		recWords := splitName(receiver)
-		if len(recWords) > 0 {
-			// Use just the type name (last word if pointer prefix stripped).
-			typeName := strings.ToLower(recWords[len(recWords)-1])
-			label = label + "@" + typeName
-		}
-	}
-
-	return label
+	return strings.Join(words, "-")
 }
 
 // splitName splits a symbol name into words, handling camelCase, PascalCase,

@@ -58,7 +58,7 @@ func TestRefreshDerivedEdgesIncremental_RebuildsChangedFileEdges(t *testing.T) {
 	graph.AddEdge(&Edge{From: symCaller.ID, To: symPeer.ID, Type: EdgeSemanticSim, Weight: 0.8})
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: graph}
-	indexer := NewRPGIndexer(rpgStore, NewLocalExtractor(), t.TempDir(), RPGIndexerConfig{
+	indexer := NewRPGEncoder(rpgStore, NewLocalExtractor(), t.TempDir(), RPGEncoderConfig{
 		DriftThreshold:       0.35,
 		FeatureGroupStrategy: "sample",
 	})
@@ -127,7 +127,7 @@ func TestRefreshDerivedEdgesFull_RebuildsAllDerivedEdges(t *testing.T) {
 	graph.AddEdge(&Edge{From: symCaller.ID, To: symCallee.ID, Type: EdgeSemanticSim, Weight: 0.7})
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: graph}
-	indexer := NewRPGIndexer(rpgStore, NewLocalExtractor(), t.TempDir(), RPGIndexerConfig{
+	indexer := NewRPGEncoder(rpgStore, NewLocalExtractor(), t.TempDir(), RPGEncoderConfig{
 		DriftThreshold:       0.35,
 		FeatureGroupStrategy: "sample",
 	})
@@ -171,11 +171,11 @@ func hasEdge(graph *Graph, fromID, toID string, edgeType EdgeType) bool {
 	return false
 }
 
-func TestRPGIndexer_ConcurrentHandleAndDerivedRefresh(t *testing.T) {
+func TestRPGEncoder_ConcurrentHandleAndDerivedRefresh(t *testing.T) {
 	ctx := context.Background()
 	graph := NewGraph()
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: graph}
-	indexer := NewRPGIndexer(rpgStore, NewLocalExtractor(), t.TempDir(), RPGIndexerConfig{
+	indexer := NewRPGEncoder(rpgStore, NewLocalExtractor(), t.TempDir(), RPGEncoderConfig{
 		DriftThreshold:       0.35,
 		FeatureGroupStrategy: "sample",
 	})

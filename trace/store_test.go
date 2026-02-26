@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -574,5 +575,31 @@ func TestGOBSymbolStore_PersistCreatesMissingParentDir(t *testing.T) {
 
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Fatalf("expected persisted symbol index file at %s: %v", indexPath, err)
+	}
+}
+
+func TestGOBSymbolStore_PersistCreatesLockFileAndNoTempFiles(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "symbols.gob")
+
+	store := NewGOBSymbolStore(indexPath)
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+
+	lockPath := indexPath + ".lock"
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lock file at %s: %v", lockPath, err)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "symbols.gob.tmp-") {
+			t.Fatalf("unexpected temporary file left behind: %s", entry.Name())
+		}
 	}
 }

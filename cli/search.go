@@ -23,6 +23,7 @@ var (
 	searchCompact   bool
 	searchWorkspace string
 	searchProjects  []string
+	searchPath      string
 )
 
 // SearchResultJSON is a lightweight struct for JSON output (excludes vector, hash, updated_at)
@@ -66,6 +67,7 @@ func init() {
 	searchCmd.Flags().BoolVarP(&searchCompact, "compact", "c", false, "Output minimal format without content (requires --json or --toon)")
 	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "Workspace name for cross-project search")
 	searchCmd.Flags().StringArrayVar(&searchProjects, "project", nil, "Project name(s) to search (requires --workspace, can be repeated)")
+	searchCmd.Flags().StringVar(&searchPath, "path", "", "Path prefix to filter search results")
 	searchCmd.MarkFlagsMutuallyExclusive("json", "toon")
 }
 
@@ -92,24 +94,99 @@ func enrichWithRPG(projectRoot string, cfg *config.Config, results []store.Searc
 
 	graph := rpgStore.GetGraph()
 	qe := rpg.NewQueryEngine(graph)
+	getFeaturePath := func(nodeID string) string {
+		fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: nodeID})
+		if err == nil && fetchResult != nil {
+			return fetchResult.FeaturePath
+		}
+		return ""
+	}
 
 	for i, r := range results {
 		nodes := graph.GetNodesByFile(r.Chunk.FilePath)
-		for _, n := range nodes {
-			// Find symbol node that overlaps with the chunk's line range
-			if n.Kind == rpg.KindSymbol && n.StartLine <= r.Chunk.EndLine && r.Chunk.StartLine <= n.EndLine {
-				// Found overlapping symbol node
-				fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: n.ID})
-				if err == nil && fetchResult != nil {
-					enrichments[i].FeaturePath = fetchResult.FeaturePath
-					enrichments[i].SymbolName = n.SymbolName
-				}
-				break
+		if symbolNode := findBestOverlappingSymbolNode(nodes, r.Chunk.StartLine, r.Chunk.EndLine); symbolNode != nil {
+			enrichments[i].FeaturePath = getFeaturePath(symbolNode.ID)
+			enrichments[i].SymbolName = symbolNode.SymbolName
+		}
+
+		// Fallback to file-level hierarchy when no symbol could be mapped.
+		if enrichments[i].FeaturePath == "" {
+			fileNode := findFileNode(nodes, r.Chunk.FilePath)
+			if fileNode == nil {
+				fileNode = graph.GetNode(rpg.MakeNodeID(rpg.KindFile, r.Chunk.FilePath))
+			}
+			if fileNode != nil {
+				enrichments[i].FeaturePath = getFeaturePath(fileNode.ID)
 			}
 		}
 	}
 
 	return enrichments
+}
+
+func findBestOverlappingSymbolNode(nodes []*rpg.Node, chunkStart, chunkEnd int) *rpg.Node {
+	chunkStart, chunkEnd = normalizeLineRange(chunkStart, chunkEnd)
+
+	var best *rpg.Node
+	bestOverlap := 0
+	bestStart := 0
+
+	for _, n := range nodes {
+		if n == nil || n.Kind != rpg.KindSymbol {
+			continue
+		}
+		nodeStart, nodeEnd := normalizeLineRange(n.StartLine, n.EndLine)
+		overlap := lineOverlap(chunkStart, chunkEnd, nodeStart, nodeEnd)
+		if overlap <= 0 {
+			continue
+		}
+		if overlap > bestOverlap || (overlap == bestOverlap && (best == nil || nodeStart < bestStart)) {
+			best = n
+			bestOverlap = overlap
+			bestStart = nodeStart
+		}
+	}
+
+	return best
+}
+
+func findFileNode(nodes []*rpg.Node, filePath string) *rpg.Node {
+	for _, n := range nodes {
+		if n != nil && n.Kind == rpg.KindFile && n.Path == filePath {
+			return n
+		}
+	}
+	for _, n := range nodes {
+		if n != nil && n.Kind == rpg.KindFile {
+			return n
+		}
+	}
+	return nil
+}
+
+func normalizeLineRange(start, end int) (int, int) {
+	if start <= 0 {
+		start = 1
+	}
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
+func lineOverlap(aStart, aEnd, bStart, bEnd int) int {
+	if aEnd < bStart || bEnd < aStart {
+		return 0
+	}
+	overlapStart := aStart
+	if bStart > overlapStart {
+		overlapStart = bStart
+	}
+	overlapEnd := aEnd
+	if bEnd < overlapEnd {
+		overlapEnd = bEnd
+	}
+	return overlapEnd - overlapStart + 1
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -128,7 +205,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Workspace mode
 	if searchWorkspace != "" {
-		return runWorkspaceSearch(ctx, query)
+		return runWorkspaceSearch(ctx, query, searchProjects, searchPath)
 	}
 
 	// Find project root
@@ -144,56 +221,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize embedder
-	var emb embedder.Embedder
-	switch cfg.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*cfg.Embedder.Dimensions))
-		}
-		emb = embedder.NewOllamaEmbedder(opts...)
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-			embedder.WithOpenAIKey(cfg.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*cfg.Embedder.Dimensions))
-		}
-		var err error
-		emb, err = embedder.NewOpenAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
-		}
-	case "voyageai":
-		opts := []embedder.VoyageAIOption{
-			embedder.WithVoyageAIModel(cfg.Embedder.Model),
-			embedder.WithVoyageAIKey(cfg.Embedder.APIKey),
-			embedder.WithVoyageAIEndpoint(cfg.Embedder.Endpoint),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithVoyageAIDimensions(*cfg.Embedder.Dimensions))
-		}
-		var err error
-		emb, err = embedder.NewVoyageAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize Voyage AI embedder: %w", err)
-		}
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
-		}
-		if cfg.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*cfg.Embedder.Dimensions))
-		}
-		emb = embedder.NewLMStudioEmbedder(opts...)
-	default:
-		return fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
+	emb, err := embedder.NewFromConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 	defer emb.Close()
 
@@ -231,8 +261,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Create searcher with boost config
 	searcher := search.NewSearcher(st, emb, cfg.Search)
 
+	normalizedPath, err := search.NormalizeProjectPathPrefix(searchPath, projectRoot)
+	if err != nil {
+		return fmt.Errorf("invalid --path value: %w", err)
+	}
+
 	// Search with boosting
-	results, err := searcher.Search(ctx, query, searchLimit)
+	results, err := searcher.Search(ctx, query, searchLimit, normalizedPath)
 	if err != nil {
 		if searchJSON {
 			return outputSearchErrorJSON(err)
@@ -273,6 +308,12 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	for i, result := range results {
 		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
 		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		if enrichments[i].FeaturePath != "" {
+			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+		}
+		if enrichments[i].SymbolName != "" {
+			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+		}
 		fmt.Println()
 
 		// Display content with line numbers
@@ -408,28 +449,9 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		return nil, err
 	}
 
-	var emb embedder.Embedder
-	switch cfg.Embedder.Provider {
-	case "ollama":
-		emb = embedder.NewOllamaEmbedder(
-			embedder.WithOllamaEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithOllamaModel(cfg.Embedder.Model),
-		)
-	case "openai":
-		var err error
-		emb, err = embedder.NewOpenAIEmbedder(
-			embedder.WithOpenAIModel(cfg.Embedder.Model),
-		)
-		if err != nil {
-			return nil, err
-		}
-	case "lmstudio":
-		emb = embedder.NewLMStudioEmbedder(
-			embedder.WithLMStudioEndpoint(cfg.Embedder.Endpoint),
-			embedder.WithLMStudioModel(cfg.Embedder.Model),
-		)
-	default:
-		return nil, fmt.Errorf("unknown provider: %s", cfg.Embedder.Provider)
+	emb, err := embedder.NewFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	defer emb.Close()
 
@@ -453,7 +475,7 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 	// Create searcher with boost config
 	searcher := search.NewSearcher(st, emb, cfg.Search)
 
-	return searcher.Search(ctx, query, limit)
+	return searcher.Search(ctx, query, limit, "")
 }
 
 func init() {
@@ -462,7 +484,7 @@ func init() {
 }
 
 // runWorkspaceSearch handles workspace-level search operations
-func runWorkspaceSearch(ctx context.Context, query string) error {
+func runWorkspaceSearch(ctx context.Context, query string, projects []string, pathOpt string) error {
 	// Load workspace config
 	wsCfg, err := config.LoadWorkspaceConfig()
 	if err != nil {
@@ -477,60 +499,20 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 		return err
 	}
 
+	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathOpt, ws, projects)
+	if err != nil {
+		return fmt.Errorf("invalid --path value: %w", err)
+	}
+
 	// Validate backend
 	if err := config.ValidateWorkspaceBackend(ws); err != nil {
 		return err
 	}
 
 	// Initialize embedder
-	var emb embedder.Embedder
-	switch ws.Embedder.Provider {
-	case "ollama":
-		opts := []embedder.OllamaOption{
-			embedder.WithOllamaEndpoint(ws.Embedder.Endpoint),
-			embedder.WithOllamaModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOllamaDimensions(*ws.Embedder.Dimensions))
-		}
-		emb = embedder.NewOllamaEmbedder(opts...)
-	case "openai":
-		opts := []embedder.OpenAIOption{
-			embedder.WithOpenAIModel(ws.Embedder.Model),
-			embedder.WithOpenAIKey(ws.Embedder.APIKey),
-			embedder.WithOpenAIEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithOpenAIDimensions(*ws.Embedder.Dimensions))
-		}
-		emb, err = embedder.NewOpenAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize OpenAI embedder: %w", err)
-		}
-	case "voyageai":
-		opts := []embedder.VoyageAIOption{
-			embedder.WithVoyageAIModel(ws.Embedder.Model),
-			embedder.WithVoyageAIKey(ws.Embedder.APIKey),
-			embedder.WithVoyageAIEndpoint(ws.Embedder.Endpoint),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithVoyageAIDimensions(*ws.Embedder.Dimensions))
-		}
-		emb, err = embedder.NewVoyageAIEmbedder(opts...)
-		if err != nil {
-			return fmt.Errorf("failed to initialize Voyage AI embedder: %w", err)
-		}
-	case "lmstudio":
-		opts := []embedder.LMStudioOption{
-			embedder.WithLMStudioEndpoint(ws.Embedder.Endpoint),
-			embedder.WithLMStudioModel(ws.Embedder.Model),
-		}
-		if ws.Embedder.Dimensions != nil {
-			opts = append(opts, embedder.WithLMStudioDimensions(*ws.Embedder.Dimensions))
-		}
-		emb = embedder.NewLMStudioEmbedder(opts...)
-	default:
-		return fmt.Errorf("unknown embedding provider: %s", ws.Embedder.Provider)
+	emb, err := embedder.NewFromWorkspaceConfig(ws)
+	if err != nil {
+		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 	defer emb.Close()
 
@@ -565,8 +547,21 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	}
 	searcher := search.NewSearcher(st, emb, searchCfg)
 
+	// Construct full path prefix for database query
+	// Database stores paths as: workspaceName/projectName/relativePath
+	// When a single project is specified, include it in the path prefix to push filtering to database level
+	fullPathPrefix := ws.Name + "/"
+	if len(resolvedProjects) == 1 {
+		// If exactly one project specified, include it in the path prefix for database-level filtering
+		// This ensures file_path LIKE 'workspace/project/%' filter is applied
+		fullPathPrefix += resolvedProjects[0] + "/"
+	}
+	if normalizedPath != "" {
+		fullPathPrefix += normalizedPath
+	}
+
 	// Search
-	results, err := searcher.Search(ctx, query, searchLimit)
+	results, err := searcher.Search(ctx, query, searchLimit, fullPathPrefix)
 	if err != nil {
 		if searchJSON {
 			return outputSearchErrorJSON(err)
@@ -577,12 +572,12 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Filter by projects if specified
+	// Filter by projects if specified (additional client-side filtering for multiple projects)
 	// File paths are stored as: workspaceName/projectName/relativePath
-	if len(searchProjects) > 0 {
+	if len(resolvedProjects) > 0 {
 		filteredResults := make([]store.SearchResult, 0)
 		for _, r := range results {
-			for _, projectName := range searchProjects {
+			for _, projectName := range resolvedProjects {
 				// Match workspace/project/ prefix
 				expectedPrefix := ws.Name + "/" + projectName + "/"
 				if strings.HasPrefix(r.Chunk.FilePath, expectedPrefix) {
@@ -624,6 +619,12 @@ func runWorkspaceSearch(ctx context.Context, query string) error {
 	for i, result := range results {
 		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
 		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		if enrichments[i].FeaturePath != "" {
+			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+		}
+		if enrichments[i].SymbolName != "" {
+			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+		}
 		fmt.Println()
 
 		// Display content with line numbers

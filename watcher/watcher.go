@@ -90,18 +90,23 @@ func (w *Watcher) addRecursive(root string) error {
 			return nil
 		}
 
-		// Check if path should be ignored
-		if w.ignore.ShouldIgnore(relPath) {
-			if info.IsDir() {
+		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
+		if info.IsDir() {
+			if w.ignore.ShouldSkipDir(relPath) {
 				return filepath.SkipDir
+			}
+			// Directory is not skipped; watch it if not individually ignored
+			if !w.ignore.ShouldIgnore(relPath) {
+				if err := w.watcher.Add(path); err != nil {
+					log.Printf("Failed to watch %s: %v", path, err)
+				}
 			}
 			return nil
 		}
 
-		if info.IsDir() {
-			if err := w.watcher.Add(path); err != nil {
-				log.Printf("Failed to watch %s: %v", path, err)
-			}
+		// Skip ignored files
+		if w.ignore.ShouldIgnore(relPath) {
+			return nil
 		}
 
 		return nil

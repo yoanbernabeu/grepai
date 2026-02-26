@@ -31,6 +31,7 @@ type Symbol struct {
 	Package     string     `json:"package,omitempty"`
 	Exported    bool       `json:"exported,omitempty"`
 	Language    string     `json:"language"`
+	Docstring   string     `json:"docstring,omitempty"`    // Documentation/comment for the symbol
 	FeaturePath string     `json:"feature_path,omitempty"` // RPG semantic hierarchy path (populated when RPG enabled)
 }
 

@@ -190,15 +190,15 @@ func TestEnsureCategory(t *testing.T) {
 	}
 
 	// Verify edge from category to area
-	outgoing := g.GetOutgoing(catID1)
+	outgoing := g.GetOutgoing(areaID)
 	if len(outgoing) != 1 {
-		t.Fatalf("Expected 1 outgoing edge from category, got %d", len(outgoing))
+		t.Fatalf("Expected 1 outgoing edge from area, got %d", len(outgoing))
 	}
-	if outgoing[0].To != areaID {
-		t.Errorf("Category should have edge to area")
+	if outgoing[0].To != catID1 {
+		t.Errorf("Area should have edge to category")
 	}
-	if outgoing[0].Type != EdgeContains {
-		t.Errorf("Edge should be of type %s, got %s", EdgeContains, outgoing[0].Type)
+	if outgoing[0].Type != EdgeFeatureParent {
+		t.Errorf("Edge should be of type %s, got %s", EdgeFeatureParent, outgoing[0].Type)
 	}
 
 	// Second call should be idempotent
@@ -208,7 +208,7 @@ func TestEnsureCategory(t *testing.T) {
 	}
 
 	// Should still have only one edge
-	outgoing = g.GetOutgoing(catID1)
+	outgoing = g.GetOutgoing(areaID)
 	if len(outgoing) != 1 {
 		t.Errorf("Expected 1 outgoing edge after idempotent call, got %d", len(outgoing))
 	}
@@ -240,15 +240,15 @@ func TestEnsureSubcategory(t *testing.T) {
 	}
 
 	// Verify edge from subcategory to category
-	outgoing := g.GetOutgoing(subcatID1)
+	outgoing := g.GetOutgoing(catID)
 	if len(outgoing) != 1 {
-		t.Fatalf("Expected 1 outgoing edge from subcategory, got %d", len(outgoing))
+		t.Fatalf("Expected 1 outgoing edge from category, got %d", len(outgoing))
 	}
-	if outgoing[0].To != catID {
-		t.Errorf("Subcategory should have edge to category")
+	if outgoing[0].To != subcatID1 {
+		t.Errorf("Category should have edge to subcategory")
 	}
-	if outgoing[0].Type != EdgeContains {
-		t.Errorf("Edge should be of type %s, got %s", EdgeContains, outgoing[0].Type)
+	if outgoing[0].Type != EdgeFeatureParent {
+		t.Errorf("Edge should be of type %s, got %s", EdgeFeatureParent, outgoing[0].Type)
 	}
 
 	// Second call should be idempotent
@@ -258,7 +258,7 @@ func TestEnsureSubcategory(t *testing.T) {
 	}
 
 	// Should still have only one edge
-	outgoing = g.GetOutgoing(subcatID1)
+	outgoing = g.GetOutgoing(catID)
 	if len(outgoing) != 1 {
 		t.Errorf("Expected 1 outgoing edge after idempotent call, got %d", len(outgoing))
 	}
@@ -302,6 +302,9 @@ func TestBuildHierarchy(t *testing.T) {
 	g.AddNode(sym1)
 	g.AddNode(sym2)
 	g.AddNode(sym3)
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym1.ID, Type: EdgeContains})
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym2.ID, Type: EdgeContains})
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym3.ID, Type: EdgeContains})
 
 	// Build hierarchy
 	h.BuildHierarchy()
@@ -329,61 +332,48 @@ func TestBuildHierarchy(t *testing.T) {
 		t.Fatal("Subcategory 'stop' should be created")
 	}
 
-	subcatHandle := g.GetNode("subcat:cli/watch/handle")
-	if subcatHandle == nil {
-		t.Fatal("Subcategory 'handle' should be created")
+	subcatEvent := g.GetNode("subcat:cli/watch/event")
+	if subcatEvent == nil {
+		t.Fatal("Subcategory 'event' should be created (handle is generic)")
 	}
 
-	// Verify file -> category edge
-	fileEdges := g.GetOutgoing(fileNode.ID)
+	// Verify subcategory -> file edge (single best subcategory placement)
+	fileEdges := g.GetIncoming(fileNode.ID)
 	found := false
 	for _, e := range fileEdges {
+		if e.Type == EdgeFeatureParent && e.From == subcatEvent.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("File should have incoming EdgeFeatureParent edge from event subcategory")
+	}
+
+	// Verify area -> category edge
+	areaEdges := g.GetOutgoing(areaNode.ID)
+	found = false
+	for _, e := range areaEdges {
 		if e.Type == EdgeFeatureParent && e.To == catNode.ID {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("File should have EdgeFeatureParent edge to category")
+		t.Error("Area should have EdgeFeatureParent edge to category")
 	}
 
-	// Verify symbol -> subcategory edges
-	sym1Edges := g.GetOutgoing(sym1.ID)
+	// Verify category -> subcategory edge
+	catEdges := g.GetOutgoing(catNode.ID)
 	found = false
-	for _, e := range sym1Edges {
+	for _, e := range catEdges {
 		if e.Type == EdgeFeatureParent && e.To == subcatStart.ID {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("Symbol 'StartWatch' should have EdgeFeatureParent edge to 'start' subcategory")
-	}
-
-	// Verify category -> area edge
-	catEdges := g.GetOutgoing(catNode.ID)
-	found = false
-	for _, e := range catEdges {
-		if e.Type == EdgeContains && e.To == areaNode.ID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("Category should have EdgeContains edge to area")
-	}
-
-	// Verify subcategory -> category edge
-	subcatEdges := g.GetOutgoing(subcatStart.ID)
-	found = false
-	for _, e := range subcatEdges {
-		if e.Type == EdgeContains && e.To == catNode.ID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("Subcategory should have EdgeContains edge to category")
+		t.Error("Category should have EdgeFeatureParent edge to subcategory")
 	}
 }
 
@@ -397,7 +387,12 @@ func TestEnrichLabels(t *testing.T) {
 	catID := h.EnsureCategory(areaID, "search")
 	subcatID := h.EnsureSubcategory(catID, "handle")
 
-	// Create symbol nodes pointing to subcategory
+	// Create file/symbol nodes under subcategory
+	fileNode := &Node{ID: "file:cli/search.go", Kind: KindFile, Path: "cli/search.go", Feature: "search"}
+	g.AddNode(fileNode)
+	g.AddEdge(&Edge{From: subcatID, To: fileNode.ID, Type: EdgeFeatureParent, Weight: 1.0})
+
+	// Create symbol nodes contained in file
 	sym1 := &Node{ID: "sym:cli/search.go:HandleSearch", Kind: KindSymbol, Feature: "handle-search", Path: "cli/search.go", SymbolName: "HandleSearch"}
 	sym2 := &Node{ID: "sym:cli/search.go:HandleQuery", Kind: KindSymbol, Feature: "handle-query", Path: "cli/search.go", SymbolName: "HandleQuery"}
 	sym3 := &Node{ID: "sym:cli/search.go:RunSearch", Kind: KindSymbol, Feature: "run-search", Path: "cli/search.go", SymbolName: "RunSearch"}
@@ -405,10 +400,10 @@ func TestEnrichLabels(t *testing.T) {
 	g.AddNode(sym2)
 	g.AddNode(sym3)
 
-	// Link symbols to subcategory via EdgeFeatureParent
-	g.AddEdge(&Edge{From: sym1.ID, To: subcatID, Type: EdgeFeatureParent, Weight: 1.0})
-	g.AddEdge(&Edge{From: sym2.ID, To: subcatID, Type: EdgeFeatureParent, Weight: 1.0})
-	g.AddEdge(&Edge{From: sym3.ID, To: subcatID, Type: EdgeFeatureParent, Weight: 1.0})
+	// Link file -> symbols via EdgeContains
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym1.ID, Type: EdgeContains, Weight: 1.0})
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym2.ID, Type: EdgeContains, Weight: 1.0})
+	g.AddEdge(&Edge{From: fileNode.ID, To: sym3.ID, Type: EdgeContains, Weight: 1.0})
 
 	h.EnrichLabels()
 
@@ -417,13 +412,13 @@ func TestEnrichLabels(t *testing.T) {
 	if areaNode.SemanticLabel == "" {
 		t.Error("Expected area to have SemanticLabel after enrichment")
 	}
-	// Should contain "handle" as the most common verb (appears 2x)
-	if !strings.Contains(areaNode.SemanticLabel, "handle") {
-		t.Errorf("Expected SemanticLabel to contain 'handle', got %q", areaNode.SemanticLabel)
+	// Should contain "search" as the most common verb/object (appears 2x)
+	if !strings.Contains(areaNode.SemanticLabel, "search") {
+		t.Errorf("Expected SemanticLabel to contain 'search', got %q", areaNode.SemanticLabel)
 	}
-	// Should also contain "run" (appears 1x)
-	if !strings.Contains(areaNode.SemanticLabel, "run") {
-		t.Errorf("Expected SemanticLabel to contain 'run', got %q", areaNode.SemanticLabel)
+	// Should also contain "query" (appears 1x)
+	if !strings.Contains(areaNode.SemanticLabel, "query") {
+		t.Errorf("Expected SemanticLabel to contain 'query', got %q", areaNode.SemanticLabel)
 	}
 	// Feature field should NOT be modified
 	if areaNode.Feature != "cli" {
@@ -435,8 +430,8 @@ func TestEnrichLabels(t *testing.T) {
 	if catNode.SemanticLabel == "" {
 		t.Error("Expected category to have SemanticLabel after enrichment")
 	}
-	if !strings.Contains(catNode.SemanticLabel, "handle") {
-		t.Errorf("Expected category SemanticLabel to contain 'handle', got %q", catNode.SemanticLabel)
+	if !strings.Contains(catNode.SemanticLabel, "search") {
+		t.Errorf("Expected category SemanticLabel to contain 'search', got %q", catNode.SemanticLabel)
 	}
 }
 

@@ -3,6 +3,7 @@ package rpg
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"path/filepath"
 	"strings"
@@ -19,45 +20,62 @@ const (
 	maxFeatureGroupSize     = 100 // cap verb groups to avoid O(n²) for common verbs
 	minCoCallerCoOccurrence = 2
 	coCallerWeightNorm      = 5.0 // normalization factor for co-caller edge weight
+	// maxCoCallerCallees caps the number of callees per caller for co-caller
+	// affinity edges. Callers above this threshold are hub functions (e.g., main,
+	// init) that generate uninformative O(k^2) edge pairs.
+	maxCoCallerCallees = 50
 )
 
-// RPGIndexer orchestrates building and maintaining the RPG graph.
+// RPGEncoder orchestrates building and maintaining the RPG graph.
 // It connects the trace symbol store, vector store, and RPG graph.
-type RPGIndexer struct {
+// Formerly RPGIndexer.
+type RPGEncoder struct {
 	store       RPGStore
 	extractor   FeatureExtractor
 	hierarchy   *HierarchyBuilder
 	evolver     *Evolver
 	projectRoot string
-	cfg         RPGIndexerConfig
-	mu          sync.Mutex
+	cfg         RPGEncoderConfig
+	rng         *rand.Rand
+	mu          sync.RWMutex
 }
 
-// RPGIndexerConfig configures the RPG indexer behavior.
-type RPGIndexerConfig struct {
+// RPGEncoderConfig configures the RPG encoder behavior.
+type RPGEncoderConfig struct {
 	DriftThreshold       float64
 	MaxTraversalDepth    int
 	FeatureGroupStrategy string
+	Seed                 int64 // RNG seed for reproducible builds (0 = use current time)
 }
 
-// NewRPGIndexer creates a new RPG indexer instance.
-func NewRPGIndexer(rpgStore RPGStore, extractor FeatureExtractor, projectRoot string, cfg RPGIndexerConfig) *RPGIndexer {
+// ProgressObserver is a callback for reporting indexing progress.
+type ProgressObserver func(step string, current, total int)
+
+// NewRPGEncoder creates a new RPG encoder instance.
+func NewRPGEncoder(rpgStore RPGStore, extractor FeatureExtractor, projectRoot string, cfg RPGEncoderConfig) *RPGEncoder {
 	graph := rpgStore.GetGraph()
 	hierarchy := NewHierarchyBuilder(graph, extractor)
 	evolver := NewEvolver(graph, extractor, hierarchy, cfg.DriftThreshold)
 
-	return &RPGIndexer{
+	seed := cfg.Seed
+	if seed == 0 {
+		seed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // deterministic shuffle, not security
+
+	return &RPGEncoder{
 		store:       rpgStore,
 		extractor:   extractor,
 		hierarchy:   hierarchy,
 		evolver:     evolver,
 		projectRoot: projectRoot,
 		cfg:         cfg,
+		rng:         rng,
 	}
 }
 
 // BuildFull performs a complete rebuild of the RPG graph from scratch.
-func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolStore, vectorStore store.VectorStore) error {
+func (idx *RPGEncoder) BuildFull(ctx context.Context, symbolStore trace.SymbolStore, vectorStore store.VectorStore, observer ProgressObserver) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -73,17 +91,33 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 	if err != nil {
 		return fmt.Errorf("failed to list documents: %w", err)
 	}
+	totalDocs := len(docs)
 
 	// Track which files we've seen
 	filesProcessed := make(map[string]bool)
 
 	// Step 1: Create file and symbol nodes from trace store
 	// First, we need to get all symbols - we'll iterate through all files
-	for _, filePath := range docs {
+	for i, filePath := range docs {
+		if observer != nil {
+			observer("rpg-nodes", i+1, totalDocs)
+		}
 		if filesProcessed[filePath] {
 			continue
 		}
 		filesProcessed[filePath] = true
+
+		now := time.Now()
+		baseName := filepath.Base(filePath)
+		nameWithoutExt := fileNameStem(baseName)
+		fileFallbackAtomic := idx.extractor.ExtractAtomicFeatures(ctx, nameWithoutExt, "", "", "")
+		fileFallbackPrimary := "unknown"
+		if len(fileFallbackAtomic) > 0 {
+			fileFallbackPrimary = primaryFromAtomicFeature(fileFallbackAtomic[0])
+		}
+		if fileFallbackPrimary == "" || fileFallbackPrimary == "unknown" {
+			fileFallbackPrimary = idx.extractor.ExtractFeature(ctx, nameWithoutExt, "", "", "")
+		}
 
 		// Create file node
 		fileNodeID := MakeNodeID(KindFile, filePath)
@@ -91,23 +125,31 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 			ID:        fileNodeID,
 			Kind:      KindFile,
 			Path:      filePath,
-			UpdatedAt: time.Now(),
+			UpdatedAt: now,
 		}
+		setNodeFeatures(fileNode, fileFallbackAtomic, fileFallbackPrimary)
 		graph.AddNode(fileNode)
 
 		// Get symbols for this file from the symbol store
 		symbols, symErr := symbolStore.GetSymbolsForFile(ctx, filePath)
 		if symErr != nil {
-			continue
+			symbols = nil
 		}
 
+		fileAtomicCandidates := make([]string, 0, len(symbols))
 		for _, sym := range symbols {
-			feature := idx.extractor.ExtractFeature(sym.Name, sym.Signature, sym.Receiver, "")
+			atomicFeatures := idx.extractor.ExtractAtomicFeatures(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+			primaryFeature := "unknown"
+			if len(atomicFeatures) > 0 {
+				primaryFeature = primaryFromAtomicFeature(atomicFeatures[0])
+			}
+			if primaryFeature == "" || primaryFeature == "unknown" {
+				primaryFeature = idx.extractor.ExtractFeature(ctx, sym.Name, sym.Signature, sym.Receiver, sym.Docstring)
+			}
 			nodeID := makeSymbolNodeID(filePath, sym)
 			symNode := &Node{
 				ID:         nodeID,
 				Kind:       KindSymbol,
-				Feature:    feature,
 				Path:       filePath,
 				SymbolName: sym.Name,
 				Receiver:   sym.Receiver,
@@ -115,9 +157,11 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 				StartLine:  sym.Line,
 				EndLine:    normalizeEndLine(sym.Line, sym.EndLine),
 				Signature:  sym.Signature,
-				UpdatedAt:  time.Now(),
+				UpdatedAt:  now,
 			}
+			setNodeFeatures(symNode, atomicFeatures, primaryFeature)
 			graph.AddNode(symNode)
+			fileAtomicCandidates = append(fileAtomicCandidates, getNodeAtomicFeatures(symNode)...)
 
 			// Link file -> symbol via EdgeContains
 			graph.AddEdge(&Edge{
@@ -125,18 +169,43 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 				To:        nodeID,
 				Type:      EdgeContains,
 				Weight:    1.0,
-				UpdatedAt: time.Now(),
+				UpdatedAt: now,
 			})
 		}
+
+		aggregated := aggregateAtomicFeatures(fileAtomicCandidates, 5)
+		if len(aggregated) > 0 {
+			setNodeFeatures(fileNode, aggregated, fileNode.Feature)
+		}
+
+		summary, sumErr := idx.extractor.GenerateSummary(ctx, filePath, buildSummaryContext(filePath, getNodeAtomicFeatures(fileNode)))
+		if sumErr == nil {
+			fileNode.Summary = strings.TrimSpace(summary)
+		}
+		fileNode.UpdatedAt = time.Now()
+	}
+
+	if observer != nil {
+		observer("rpg-edges", 0, 1) // Indeterminate progress for edge building
+	}
+
+	if observer != nil {
+		observer("rpg-edges", 0, 1) // Indeterminate progress for edge building
 	}
 
 	// Step 2: Rebuild derived edges (invokes/imports/semantic).
 	if err := idx.refreshDerivedEdgesFullLocked(ctx, symbolStore); err != nil {
 		return fmt.Errorf("failed to refresh derived edges: %w", err)
 	}
+	if observer != nil {
+		observer("rpg-edges", 1, 1)
+	}
 
 	// Step 4: Link vector chunks to symbols
-	for _, filePath := range docs {
+	for i, filePath := range docs {
+		if observer != nil {
+			observer("rpg-chunks", i+1, totalDocs)
+		}
 		chunks, err := vectorStore.GetChunksForFile(ctx, filePath)
 		if err != nil {
 			continue
@@ -153,6 +222,15 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 	// Step 5b: Enrich hierarchy with semantic labels
 	idx.hierarchy.EnrichLabels()
 
+	// Step 5c: Generate semantic summaries for hierarchy nodes.
+	summarizer := NewSummarizer(graph, idx.extractor)
+	if err := summarizer.SummarizeHierarchy(ctx, false); err != nil {
+		log.Printf("Warning: RPG hierarchy summarization failed: %v\n", err)
+	}
+
+	// Step 5d: Wire semantic edges (new in Phase 2)
+	idx.wireSemanticEdges(graph)
+
 	// Step 6: Persist
 	if err := idx.store.Persist(ctx); err != nil {
 		return fmt.Errorf("failed to persist RPG store: %w", err)
@@ -163,17 +241,17 @@ func (idx *RPGIndexer) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 
 // HandleFileEvent handles incremental updates for file events.
 // The caller is responsible for persisting the store after updates.
-func (idx *RPGIndexer) HandleFileEvent(ctx context.Context, eventType string, filePath string, symbols []trace.Symbol) error {
+func (idx *RPGEncoder) HandleFileEvent(ctx context.Context, eventType string, filePath string, symbols []trace.Symbol) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	switch strings.ToLower(eventType) {
 	case "create":
-		idx.evolver.HandleAdd(filePath, symbols)
+		idx.evolver.HandleAdd(ctx, filePath, symbols)
 	case "modify":
-		idx.evolver.HandleModify(filePath, symbols)
+		idx.evolver.HandleModify(ctx, filePath, symbols)
 	case "delete":
-		idx.evolver.HandleDelete(filePath)
+		idx.evolver.HandleDelete(ctx, filePath)
 	default:
 		return fmt.Errorf("unknown event type: %s", eventType)
 	}
@@ -182,7 +260,7 @@ func (idx *RPGIndexer) HandleFileEvent(ctx context.Context, eventType string, fi
 }
 
 // RefreshDerivedEdgesFull rebuilds all derived edges from current graph nodes.
-func (idx *RPGIndexer) RefreshDerivedEdgesFull(ctx context.Context, symbolStore trace.SymbolStore) error {
+func (idx *RPGEncoder) RefreshDerivedEdgesFull(ctx context.Context, symbolStore trace.SymbolStore) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -190,14 +268,14 @@ func (idx *RPGIndexer) RefreshDerivedEdgesFull(ctx context.Context, symbolStore 
 }
 
 // RefreshDerivedEdgesIncremental updates derived edges for changed files.
-func (idx *RPGIndexer) RefreshDerivedEdgesIncremental(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
+func (idx *RPGEncoder) RefreshDerivedEdgesIncremental(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	return idx.refreshDerivedEdgesIncrementalLocked(ctx, symbolStore, changedFiles)
 }
 
-func (idx *RPGIndexer) refreshDerivedEdgesFullLocked(ctx context.Context, symbolStore trace.SymbolStore) error {
+func (idx *RPGEncoder) refreshDerivedEdgesFullLocked(ctx context.Context, symbolStore trace.SymbolStore) error {
 	graph := idx.store.GetGraph()
 	graph.RemoveEdgesIf(func(e *Edge) bool {
 		return isDerivedEdgeType(e.Type)
@@ -210,12 +288,18 @@ func (idx *RPGIndexer) refreshDerivedEdgesFullLocked(ctx context.Context, symbol
 
 	idx.wireInvocationEdges(graph, callEdges, nil)
 	idx.wireImportEdges(graph, nil)
-	idx.wireFeatureSimilarity(graph)
+	idx.wireSemanticEdges(graph)
 	idx.wireCoCallerAffinity(graph)
+
+	// Generate semantic summaries (Phase 3)
+	summarizer := NewSummarizer(graph, idx.extractor)
+	if err := summarizer.SummarizeHierarchy(ctx, false); err != nil {
+		log.Printf("Warning: RPG hierarchy summarization failed: %v\n", err)
+	}
 	return nil
 }
 
-func (idx *RPGIndexer) refreshDerivedEdgesIncrementalLocked(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
+func (idx *RPGEncoder) refreshDerivedEdgesIncrementalLocked(ctx context.Context, symbolStore trace.SymbolStore, changedFiles []string) error {
 	if len(changedFiles) == 0 {
 		return nil
 	}
@@ -265,7 +349,7 @@ func (idx *RPGIndexer) refreshDerivedEdgesIncrementalLocked(ctx context.Context,
 
 // LinkChunksForFile links vector chunks to overlapping symbols in the graph.
 // The caller is responsible for persisting the store after updates.
-func (idx *RPGIndexer) LinkChunksForFile(ctx context.Context, filePath string, chunks []store.Chunk) error {
+func (idx *RPGEncoder) LinkChunksForFile(ctx context.Context, filePath string, chunks []store.Chunk) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -278,19 +362,29 @@ func (idx *RPGIndexer) LinkChunksForFile(ctx context.Context, filePath string, c
 	return nil
 }
 
-// GetGraph returns the underlying graph.
-func (idx *RPGIndexer) GetGraph() *Graph {
+// GetGraph returns the underlying graph pointer. The pointer is NOT
+// concurrency-safe on its own. Use RPGEncoder.Stats() for safe
+// concurrent stats access. Direct graph access is safe when each
+// caller owns a separate store instance (e.g., MCP per-request pattern).
+func (idx *RPGEncoder) GetGraph() *Graph {
 	return idx.store.GetGraph()
 }
 
+// Stats returns graph statistics in a concurrency-safe manner.
+func (idx *RPGEncoder) Stats() GraphStats {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return idx.store.GetGraph().Stats()
+}
+
 // GetEvolver returns the evolver for direct use.
-func (idx *RPGIndexer) GetEvolver() *Evolver {
+func (idx *RPGEncoder) GetEvolver() *Evolver {
 	return idx.evolver
 }
 
 // linkChunksToSymbols creates EdgeMapsToChunk edges for overlapping chunks and symbols.
 // It first removes existing chunk nodes for the file to prevent edge accumulation.
-func (idx *RPGIndexer) linkChunksToSymbols(graph *Graph, filePath string, chunks []store.Chunk) error {
+func (idx *RPGEncoder) linkChunksToSymbols(graph *Graph, filePath string, chunks []store.Chunk) error {
 	// Clean up existing chunk nodes for this file to prevent edge accumulation
 	// RemoveNode handles all edge and index cleanup
 	fileNodes := graph.GetNodesByFile(filePath)
@@ -397,6 +491,32 @@ func semanticEdgeExistsBetween(graph *Graph, aID, bID string) bool {
 	return edgeExists(graph, aID, bID, EdgeSemanticSim) || edgeExists(graph, bID, aID, EdgeSemanticSim)
 }
 
+// CalculateSemanticSimilarity computes a heuristic similarity score between two nodes
+// based on their feature labels. It uses a token-based Jaccard similarity.
+func CalculateSemanticSimilarity(nodeA, nodeB *Node) float64 {
+	featuresA := getNodeAtomicFeatures(nodeA)
+	featuresB := getNodeAtomicFeatures(nodeB)
+	if len(featuresA) == 0 || len(featuresB) == 0 {
+		return 0.0
+	}
+
+	wordsA := atomicWordSet(featuresA)
+	wordsB := atomicWordSet(featuresB)
+	if len(wordsA) == 0 || len(wordsB) == 0 {
+		return 0.0
+	}
+
+	intersection := 0
+	for token := range wordsA {
+		if wordsB[token] {
+			intersection++
+		}
+	}
+
+	union := len(wordsA) + len(wordsB) - intersection
+	return float64(intersection) / float64(union)
+}
+
 func canonicalPair(a, b string) (string, string) {
 	if a <= b {
 		return a, b
@@ -404,8 +524,14 @@ func canonicalPair(a, b string) (string, string) {
 	return b, a
 }
 
-func (idx *RPGIndexer) wireInvocationEdges(graph *Graph, callEdges []trace.CallEdge, changedFiles map[string]struct{}) {
+func (idx *RPGEncoder) wireInvocationEdges(graph *Graph, callEdges []trace.CallEdge, changedFiles map[string]struct{}) {
 	seen := make(map[string]struct{})
+
+	// Build symbol name lookup for O(1) callee resolution (reduces O(C*S) to O(C+S))
+	symbolsByName := make(map[string][]*Node)
+	for _, sym := range graph.GetNodesByKind(KindSymbol) {
+		symbolsByName[sym.SymbolName] = append(symbolsByName[sym.SymbolName], sym)
+	}
 
 	for _, ce := range callEdges {
 		callerID := findSymbolNodeID(graph, ce.Caller, ce.File, ce.Line)
@@ -413,7 +539,7 @@ func (idx *RPGIndexer) wireInvocationEdges(graph *Graph, callEdges []trace.CallE
 			continue
 		}
 
-		bestMatch := findBestCalleeNode(graph, ce.Callee, ce.File)
+		bestMatch := findBestCalleeNode(ce.Callee, ce.File, symbolsByName)
 		if bestMatch == nil {
 			continue
 		}
@@ -445,15 +571,15 @@ func (idx *RPGIndexer) wireInvocationEdges(graph *Graph, callEdges []trace.CallE
 	}
 }
 
-func findBestCalleeNode(graph *Graph, calleeName, callerFile string) *Node {
-	calleeNodes := graph.GetNodesByKind(KindSymbol)
+func findBestCalleeNode(calleeName, callerFile string, symbolsByName map[string][]*Node) *Node {
+	candidates := symbolsByName[calleeName]
+	if len(candidates) == 0 {
+		return nil
+	}
 	var bestMatch *Node
 	var samePackageMatch *Node
 
-	for _, cn := range calleeNodes {
-		if cn.SymbolName != calleeName {
-			continue
-		}
+	for _, cn := range candidates {
 		if cn.Path == callerFile {
 			return cn
 		}
@@ -471,7 +597,7 @@ func findBestCalleeNode(graph *Graph, calleeName, callerFile string) *Node {
 	return bestMatch
 }
 
-func (idx *RPGIndexer) wireImportEdges(graph *Graph, changedFiles map[string]struct{}) {
+func (idx *RPGEncoder) wireImportEdges(graph *Graph, changedFiles map[string]struct{}) {
 	importsSeen := make(map[string]bool)
 	for _, e := range graph.Edges {
 		if e.Type != EdgeInvokes {
@@ -532,13 +658,14 @@ func collectChangedSymbolIDs(graph *Graph, changedFiles map[string]struct{}) map
 // capGroup splits or samples a verb group that exceeds maxFeatureGroupSize.
 // Strategy "split" partitions by directory, preserving locality; "sample" (default)
 // randomly samples down to cap size.
-func capGroup(group []*Node, strategy string) [][]*Node {
+func capGroup(group []*Node, strategy string, rng *rand.Rand) [][]*Node {
 	if len(group) <= maxFeatureGroupSize {
 		return [][]*Node{group}
 	}
-	switch strategy {
-	case "split":
-		byDir := map[string][]*Node{}
+
+	if strategy == "split" {
+		// Group by directory
+		byDir := make(map[string][]*Node)
 		for _, n := range group {
 			dir := filepath.Dir(n.Path)
 			byDir[dir] = append(byDir[dir], n)
@@ -549,22 +676,28 @@ func capGroup(group []*Node, strategy string) [][]*Node {
 				continue
 			}
 			if len(sub) > maxFeatureGroupSize {
-				rand.Shuffle(len(sub), func(i, j int) { sub[i], sub[j] = sub[j], sub[i] })
+				rng.Shuffle(len(sub), func(i, j int) { sub[i], sub[j] = sub[j], sub[i] })
 				sub = sub[:maxFeatureGroupSize]
 			}
 			result = append(result, sub)
 		}
 		return result
-	default: // "sample"
-		rand.Shuffle(len(group), func(i, j int) { group[i], group[j] = group[j], group[i] })
-		return [][]*Node{group[:maxFeatureGroupSize]}
 	}
+
+	// Default: sample
+	// Shuffle and take maxFeatureGroupSize
+	shuffled := make([]*Node, len(group))
+	copy(shuffled, group)
+	rng.Shuffle(len(shuffled), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+	return [][]*Node{shuffled[:maxFeatureGroupSize]}
 }
 
 // wireFeatureSimilarity creates EdgeSemanticSim edges between symbols in different
 // files whose feature labels have high Jaccard similarity. To avoid O(n^2),
 // symbols are grouped by their feature verb (first word) and only compared within groups.
-func (idx *RPGIndexer) wireFeatureSimilarity(graph *Graph) {
+func (idx *RPGEncoder) wireSemanticEdges(graph *Graph) {
 	symbolNodes := graph.GetNodesByKind(KindSymbol)
 
 	// Group symbols by feature verb for efficiency
@@ -585,7 +718,7 @@ func (idx *RPGIndexer) wireFeatureSimilarity(graph *Graph) {
 		if len(group) < 2 {
 			continue
 		}
-		subgroups := capGroup(group, idx.cfg.FeatureGroupStrategy)
+		subgroups := capGroup(group, idx.cfg.FeatureGroupStrategy, idx.rng)
 		for _, sg := range subgroups {
 			for i := range len(sg) {
 				for j := i + 1; j < len(sg); j++ {
@@ -603,7 +736,7 @@ func (idx *RPGIndexer) wireFeatureSimilarity(graph *Graph) {
 						continue
 					}
 
-					sim := featureSimilarity(a.Feature, b.Feature)
+					sim := CalculateSemanticSimilarity(a, b)
 					if sim >= minFeatureSimilarity {
 						seen[key] = true
 						if semanticEdgeExistsBetween(graph, a.ID, b.ID) {
@@ -623,7 +756,7 @@ func (idx *RPGIndexer) wireFeatureSimilarity(graph *Graph) {
 	}
 }
 
-func (idx *RPGIndexer) wireFeatureSimilarityIncremental(graph *Graph, changedFiles map[string]struct{}) {
+func (idx *RPGEncoder) wireFeatureSimilarityIncremental(graph *Graph, changedFiles map[string]struct{}) {
 	changedSymbols := collectChangedSymbolIDs(graph, changedFiles)
 	if len(changedSymbols) == 0 {
 		return
@@ -656,7 +789,7 @@ func (idx *RPGIndexer) wireFeatureSimilarityIncremental(graph *Graph, changedFil
 				continue
 			}
 
-			sim := featureSimilarity(anchor.Feature, candidate.Feature)
+			sim := CalculateSemanticSimilarity(anchor, candidate)
 			if sim < minFeatureSimilarity {
 				continue
 			}
@@ -684,7 +817,7 @@ func (idx *RPGIndexer) wireFeatureSimilarityIncremental(graph *Graph, changedFil
 
 // wireCoCallerAffinity creates EdgeSemanticSim edges between symbols that are
 // frequently called by the same callers (co-callees pattern).
-func (idx *RPGIndexer) wireCoCallerAffinity(graph *Graph) {
+func (idx *RPGEncoder) wireCoCallerAffinity(graph *Graph) {
 	// Build caller -> callees map from EdgeInvokes
 	callerToCallees := make(map[string][]string)
 	for _, e := range graph.Edges {
@@ -698,6 +831,9 @@ func (idx *RPGIndexer) wireCoCallerAffinity(graph *Graph) {
 	for _, callees := range callerToCallees {
 		if len(callees) < 2 {
 			continue
+		}
+		if len(callees) > maxCoCallerCallees {
+			continue // skip hub callers to avoid quadratic blowup
 		}
 		for i := 0; i < len(callees); i++ {
 			for j := i + 1; j < len(callees); j++ {
@@ -748,7 +884,7 @@ func (idx *RPGIndexer) wireCoCallerAffinity(graph *Graph) {
 	}
 }
 
-func (idx *RPGIndexer) wireCoCallerAffinityIncremental(graph *Graph, changedFiles map[string]struct{}) {
+func (idx *RPGEncoder) wireCoCallerAffinityIncremental(graph *Graph, changedFiles map[string]struct{}) {
 	changedSymbols := collectChangedSymbolIDs(graph, changedFiles)
 
 	callerToCallees := make(map[string][]string)
@@ -781,6 +917,9 @@ func (idx *RPGIndexer) wireCoCallerAffinityIncremental(graph *Graph, changedFile
 		callees := callerToCallees[callerID]
 		if len(callees) < 2 {
 			continue
+		}
+		if len(callees) > maxCoCallerCallees {
+			continue // skip hub callers to avoid quadratic blowup
 		}
 		for i := 0; i < len(callees); i++ {
 			for j := i + 1; j < len(callees); j++ {
@@ -842,44 +981,4 @@ func (idx *RPGIndexer) wireCoCallerAffinityIncremental(graph *Graph, changedFile
 			UpdatedAt: time.Now(),
 		})
 	}
-}
-
-// featureSimilarity computes Jaccard similarity between two feature label word sets.
-func featureSimilarity(a, b string) float64 {
-	if a == b {
-		return 1.0
-	}
-	wordsA := splitFeatureWords(a)
-	wordsB := splitFeatureWords(b)
-	if len(wordsA) == 0 || len(wordsB) == 0 {
-		return 0
-	}
-
-	union := make(map[string]bool)
-	for w := range wordsA {
-		union[w] = true
-	}
-	for w := range wordsB {
-		union[w] = true
-	}
-
-	intersection := 0
-	for w := range wordsA {
-		if wordsB[w] {
-			intersection++
-		}
-	}
-
-	if len(union) == 0 {
-		return 0
-	}
-	return float64(intersection) / float64(len(union))
-}
-
-// firstWord returns the first word of a feature label (the verb).
-func firstWord(feature string) string {
-	if idx := strings.IndexAny(feature, "-_/ @"); idx >= 0 {
-		return feature[:idx]
-	}
-	return feature
 }

@@ -32,6 +32,11 @@ type SearchResult struct {
 	Score float32 `json:"score"`
 }
 
+// SearchOptions contains optional filters for vector search queries.
+type SearchOptions struct {
+	PathPrefix string
+}
+
 // IndexStats contains statistics about the index
 type IndexStats struct {
 	TotalFiles  int       `json:"total_files"`
@@ -56,7 +61,7 @@ type VectorStore interface {
 	DeleteByFile(ctx context.Context, filePath string) error
 
 	// Search finds the most similar chunks to a query vector
-	Search(ctx context.Context, queryVector []float32, limit int) ([]SearchResult, error)
+	Search(ctx context.Context, queryVector []float32, limit int, opts SearchOptions) ([]SearchResult, error)
 
 	// GetDocument retrieves document metadata by path
 	GetDocument(ctx context.Context, filePath string) (*Document, error)

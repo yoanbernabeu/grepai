@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alpkeskin/gotoon"
+	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -399,5 +400,47 @@ func TestTOONSmallerThanJSON(t *testing.T) {
 	// TOON should be smaller than JSON
 	if toonSize >= jsonSize {
 		t.Errorf("expected TOON (%d bytes) to be smaller than JSON (%d bytes)", toonSize, jsonSize)
+	}
+}
+
+func TestFindBestOverlappingSymbolNode(t *testing.T) {
+	nodes := []*rpg.Node{
+		{ID: "sym:one", Kind: rpg.KindSymbol, SymbolName: "One", StartLine: 10, EndLine: 20},
+		{ID: "sym:two", Kind: rpg.KindSymbol, SymbolName: "Two", StartLine: 15, EndLine: 30},
+	}
+
+	best := findBestOverlappingSymbolNode(nodes, 18, 22)
+	if best == nil {
+		t.Fatal("expected overlapping symbol node, got nil")
+	}
+	if best.ID != "sym:two" {
+		t.Fatalf("expected best overlap to pick sym:two, got %s", best.ID)
+	}
+}
+
+func TestFindBestOverlappingSymbolNode_NoOverlap(t *testing.T) {
+	nodes := []*rpg.Node{
+		{ID: "sym:one", Kind: rpg.KindSymbol, StartLine: 1, EndLine: 5},
+		{ID: "sym:two", Kind: rpg.KindSymbol, StartLine: 10, EndLine: 12},
+	}
+
+	best := findBestOverlappingSymbolNode(nodes, 20, 25)
+	if best != nil {
+		t.Fatalf("expected nil when no symbol overlaps chunk, got %s", best.ID)
+	}
+}
+
+func TestFindFileNode_PrefersExactPath(t *testing.T) {
+	nodes := []*rpg.Node{
+		{ID: "file:a", Kind: rpg.KindFile, Path: "a.go"},
+		{ID: "file:b", Kind: rpg.KindFile, Path: "b.go"},
+	}
+
+	fileNode := findFileNode(nodes, "b.go")
+	if fileNode == nil {
+		t.Fatal("expected file node, got nil")
+	}
+	if fileNode.Path != "b.go" {
+		t.Fatalf("expected exact path b.go, got %s", fileNode.Path)
 	}
 }

@@ -2,8 +2,11 @@ package rpg
 
 import (
 	"context"
+	"encoding/gob"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,6 +60,21 @@ func TestGOBRPGStore_PersistLoad(t *testing.T) {
 	// Verify file was created
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 		t.Fatal("Index file was not created")
+	}
+	file, err := os.Open(indexPath)
+	if err != nil {
+		t.Fatalf("failed to open persisted file: %v", err)
+	}
+	var persisted gobRPGData
+	if err := gob.NewDecoder(file).Decode(&persisted); err != nil {
+		file.Close()
+		t.Fatalf("failed to decode persisted payload: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close persisted file: %v", err)
+	}
+	if persisted.Version != CurrentRPGIndexVersion {
+		t.Fatalf("expected persisted version %d, got %d", CurrentRPGIndexVersion, persisted.Version)
 	}
 
 	// Create new store and load
@@ -364,5 +382,113 @@ func TestGOBRPGStore_PersistCreatesMissingParentDir(t *testing.T) {
 
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Fatalf("expected persisted rpg index file at %s: %v", indexPath, err)
+	}
+}
+
+func TestGOBRPGStore_PersistCreatesLockFileAndNoTempFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "rpg.gob")
+
+	store := NewGOBRPGStore(indexPath)
+	if err := store.Persist(context.Background()); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+
+	lockPath := indexPath + ".lock"
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lock file at %s: %v", lockPath, err)
+	}
+
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "rpg.gob.tmp-") {
+			t.Fatalf("unexpected temporary file left behind: %s", entry.Name())
+		}
+	}
+}
+
+func TestGOBRPGStore_LoadOutdatedVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "rpg.gob")
+
+	file, err := os.Create(indexPath)
+	if err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	oldData := gobRPGData{
+		Version: 1,
+		Nodes: map[string]*Node{
+			"node1": {
+				ID:        "node1",
+				Kind:      KindFile,
+				Path:      "server.go",
+				UpdatedAt: time.Now(),
+			},
+		},
+		Edges: []*Edge{
+			{
+				From:      "node1",
+				To:        "node2",
+				Type:      EdgeContains,
+				UpdatedAt: time.Now(),
+			},
+		},
+	}
+	if err := gob.NewEncoder(file).Encode(oldData); err != nil {
+		file.Close()
+		t.Fatalf("failed to encode old payload: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close test file: %v", err)
+	}
+
+	store := NewGOBRPGStore(indexPath)
+	err = store.Load(context.Background())
+	if !errors.Is(err, ErrRPGIndexOutdated) {
+		t.Fatalf("expected ErrRPGIndexOutdated, got %v", err)
+	}
+
+	graph := store.GetGraph()
+	if len(graph.Nodes) != 0 {
+		t.Fatalf("expected cleared graph nodes on outdated index, got %d", len(graph.Nodes))
+	}
+	if len(graph.Edges) != 0 {
+		t.Fatalf("expected cleared graph edges on outdated index, got %d", len(graph.Edges))
+	}
+}
+
+func TestGOBRPGStore_LoadLegacyEmptyVersionlessFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "rpg.gob")
+
+	file, err := os.Create(indexPath)
+	if err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	legacyEmpty := gobRPGData{
+		Version: 0,
+		Nodes:   map[string]*Node{},
+		Edges:   []*Edge{},
+	}
+	if err := gob.NewEncoder(file).Encode(legacyEmpty); err != nil {
+		file.Close()
+		t.Fatalf("failed to encode legacy payload: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close test file: %v", err)
+	}
+
+	store := NewGOBRPGStore(indexPath)
+	if err := store.Load(context.Background()); err != nil {
+		t.Fatalf("expected nil error for empty legacy index, got %v", err)
+	}
+	if len(store.GetGraph().Nodes) != 0 {
+		t.Fatalf("expected empty graph nodes, got %d", len(store.GetGraph().Nodes))
+	}
+	if len(store.GetGraph().Edges) != 0 {
+		t.Fatalf("expected empty graph edges, got %d", len(store.GetGraph().Edges))
 	}
 }

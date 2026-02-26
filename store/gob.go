@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/internal/fileutil"
 )
 
 type GOBStore struct {
@@ -61,13 +63,17 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 	return nil
 }
 
-func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int) ([]SearchResult, error) {
+func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int, opts SearchOptions) ([]SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	results := make([]SearchResult, 0, len(s.chunks))
 
 	for _, chunk := range s.chunks {
+		// Filter by path prefix if provided
+		if opts.PathPrefix != "" && !strings.HasPrefix(chunk.FilePath, opts.PathPrefix) {
+			continue
+		}
 		score := cosineSimilarity(queryVector, chunk.Vector)
 		results = append(results, SearchResult{
 			Chunk: chunk,
@@ -139,12 +145,12 @@ func (s *GOBStore) Load(ctx context.Context) error {
 	}
 	defer lockFile.Close()
 
-	if err := flockShared(lockFile); err != nil {
+	if err := fileutil.FlockShared(lockFile, false); err != nil {
 		// If locking fails, proceed without locking (backward compat)
 		return s.loadUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
 
 	return s.loadUnlocked()
@@ -184,7 +190,7 @@ func (s *GOBStore) Persist(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := ensureParentDir(s.indexPath); err != nil {
+	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare index directory: %w", err)
 	}
 
@@ -196,12 +202,12 @@ func (s *GOBStore) Persist(ctx context.Context) error {
 	}
 	defer lockFile.Close()
 
-	if err := flockExclusive(lockFile); err != nil {
+	if err := fileutil.FlockExclusive(lockFile, false); err != nil {
 		// If locking fails, proceed without locking (backward compat)
 		return s.persistUnlocked()
 	}
 	defer func() {
-		_ = funlock(lockFile)
+		_ = fileutil.Funlock(lockFile)
 	}()
 
 	return s.persistUnlocked()
@@ -226,11 +232,6 @@ func (s *GOBStore) persistUnlocked() error {
 	}
 
 	return nil
-}
-
-func ensureParentDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0755)
 }
 
 func (s *GOBStore) Close() error {
