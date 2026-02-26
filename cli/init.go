@@ -146,7 +146,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Provider = "openai"
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				// OpenAI: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 			case "4", "synthetic":
 				cfg.Embedder.Provider = "synthetic"
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
@@ -156,7 +156,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "5", "openrouter":
 				cfg.Embedder.Provider = "openrouter"
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
-				// OpenRouter: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 
 				// Model selection for OpenRouter
 				fmt.Println("\nSelect OpenRouter embedding model:")
@@ -180,7 +180,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Provider = "voyageai"
 				cfg.Embedder.Model = "voyage-code-3"
 				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
-				// Voyage AI: leave Dimensions nil to use model's native dimensions (1024)
+				cfg.Embedder.Dimensions = nil // use model's native dimensions (1024)
 			default:
 				cfg.Embedder.Provider = "ollama"
 				fmt.Print("Ollama endpoint [http://localhost:11434]: ")
@@ -202,11 +202,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "openai":
 				cfg.Embedder.Model = "text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				// OpenAI: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 			case "voyageai":
 				cfg.Embedder.Model = "voyage-code-3"
 				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
-				// Voyage AI: leave Dimensions nil to use model's native dimensions (1024)
+				cfg.Embedder.Dimensions = nil // use model's native dimensions (1024)
 			case "synthetic":
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
@@ -215,7 +215,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "openrouter":
 				cfg.Embedder.Model = "openai/text-embedding-3-small"
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
-				// OpenRouter: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 			}
 		}
 
