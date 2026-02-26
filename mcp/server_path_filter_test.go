@@ -81,7 +81,19 @@ func (m *MockMCPStore) DeleteDocument(ctx context.Context, filePath string) erro
 }
 
 func (m *MockMCPStore) ListDocuments(ctx context.Context) ([]string, error) {
-	return nil, nil
+	seen := make(map[string]struct{})
+	docs := make([]string, 0, len(m.chunks))
+	for _, chunk := range m.chunks {
+		if chunk.FilePath == "" {
+			continue
+		}
+		if _, ok := seen[chunk.FilePath]; ok {
+			continue
+		}
+		seen[chunk.FilePath] = struct{}{}
+		docs = append(docs, chunk.FilePath)
+	}
+	return docs, nil
 }
 
 func (m *MockMCPStore) Load(ctx context.Context) error {

@@ -3,11 +3,81 @@ package rpg
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yoanbernabeu/grepai/store"
+	"github.com/yoanbernabeu/grepai/trace"
 )
+
+type countingFeatureExtractor struct {
+	atomicCalls  int
+	featureCalls int
+}
+
+func (e *countingFeatureExtractor) ExtractFeature(_ context.Context, symbolName, signature, receiver, comment string) string {
+	e.featureCalls++
+	return "handle-request"
+}
+
+func (e *countingFeatureExtractor) ExtractAtomicFeatures(_ context.Context, symbolName, signature, receiver, comment string) []string {
+	e.atomicCalls++
+	return []string{"handle request"}
+}
+
+func (e *countingFeatureExtractor) GenerateSummary(ctx context.Context, name, contextStr string) (string, error) {
+	return "summary", nil
+}
+
+func (e *countingFeatureExtractor) Mode() string { return "counting" }
+
+func TestBuildFull_DoesNotDuplicateFeatureExtractionCalls(t *testing.T) {
+	ctx := context.Background()
+	rpgStore := NewGOBRPGStore(filepath.Join(t.TempDir(), "rpg.gob"))
+	extractor := &countingFeatureExtractor{}
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
+
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	filePath := "cli/server.go"
+	if err := vectorStore.SaveDocument(ctx, store.Document{
+		Path:    filePath,
+		ModTime: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+
+	if err := symbolStore.SaveFile(ctx, filePath, []trace.Symbol{
+		{
+			Name:      "HandleRequest",
+			Kind:      trace.KindFunction,
+			File:      filePath,
+			Line:      10,
+			EndLine:   20,
+			Signature: "func HandleRequest()",
+			Language:  "go",
+		},
+	}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	if err := indexer.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+
+	if extractor.featureCalls != 0 {
+		t.Fatalf("expected no direct ExtractFeature calls during BuildFull when atomic features are available, got %d", extractor.featureCalls)
+	}
+	if extractor.atomicCalls != 2 {
+		t.Fatalf("expected exactly 2 ExtractAtomicFeatures calls (file + symbol), got %d", extractor.atomicCalls)
+	}
+}
 
 func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
 	// Setup: create a graph with a file node and symbol node
@@ -28,7 +98,7 @@ func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
 	chunks := []store.Chunk{
 		{ID: "chunk-1", FilePath: "main.go", StartLine: 1, EndLine: 10},
@@ -65,6 +135,89 @@ func TestLinkChunksForFile_NoAccumulation(t *testing.T) {
 	}
 	if edgeCount1 != 2 {
 		t.Errorf("Expected 2 EdgeMapsToChunk edges, got %d", edgeCount1)
+	}
+}
+
+func TestBuildFull_EmptyDocsReportsCompletedEdgeProgress(t *testing.T) {
+	ctx := context.Background()
+	rpgStore := NewGOBRPGStore(filepath.Join(t.TempDir(), "rpg.gob"))
+	extractor := NewLocalExtractor()
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
+
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	type progressEvent struct {
+		step    string
+		current int
+		total   int
+	}
+	events := make([]progressEvent, 0, 2)
+	err := indexer.BuildFull(ctx, symbolStore, vectorStore, func(step string, current, total int) {
+		events = append(events, progressEvent{step: step, current: current, total: total})
+	})
+	if err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+
+	if len(events) == 0 {
+		t.Fatal("expected progress events, got none")
+	}
+	last := events[len(events)-1]
+	if last.step != "rpg-edges" || last.current != 1 || last.total != 1 {
+		t.Fatalf("last progress = %s %d/%d, want rpg-edges 1/1", last.step, last.current, last.total)
+	}
+}
+
+func TestBuildFull_GeneratesHierarchySummaries(t *testing.T) {
+	ctx := context.Background()
+	rpgStore := NewGOBRPGStore(filepath.Join(t.TempDir(), "rpg.gob"))
+	extractor := NewLocalExtractor()
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
+
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	defer symbolStore.Close()
+
+	filePath := "cli/server.go"
+	if err := vectorStore.SaveDocument(ctx, store.Document{
+		Path:     filePath,
+		ModTime:  time.Now(),
+		ChunkIDs: []string{},
+	}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+
+	if err := symbolStore.SaveFile(ctx, filePath, []trace.Symbol{
+		{
+			Name:      "HandleRequest",
+			Kind:      trace.KindFunction,
+			File:      filePath,
+			Line:      10,
+			EndLine:   20,
+			Signature: "func HandleRequest()",
+			Language:  "go",
+		},
+	}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	if err := indexer.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+
+	graph := rpgStore.GetGraph()
+	for _, kind := range []NodeKind{KindArea, KindCategory, KindSubcategory} {
+		nodes := graph.GetNodesByKind(kind)
+		if len(nodes) == 0 {
+			t.Fatalf("expected at least one %s node", kind)
+		}
+		for _, node := range nodes {
+			if strings.TrimSpace(node.Summary) == "" {
+				t.Fatalf("expected non-empty summary for %s node %s", kind, node.ID)
+			}
+		}
 	}
 }
 
@@ -111,7 +264,7 @@ func TestLinkChunksForFile_SymbolEndLineZero(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
 	// Chunk that spans lines 1-20 (covers the symbol at line 10)
 	chunks := []store.Chunk{
@@ -168,9 +321,11 @@ func TestFeatureSimilarity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := featureSimilarity(tt.a, tt.b)
+			nodeA := &Node{Feature: tt.a}
+			nodeB := &Node{Feature: tt.b}
+			got := CalculateSemanticSimilarity(nodeA, nodeB)
 			if got < tt.want-0.01 || got > tt.want+0.01 {
-				t.Errorf("featureSimilarity(%q, %q) = %f, want ~%f", tt.a, tt.b, got, tt.want)
+				t.Errorf("CalculateSemanticSimilarity(%q, %q) = %f, want ~%f", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}
@@ -213,9 +368,9 @@ func TestWireFeatureSimilarity(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
-	indexer.wireFeatureSimilarity(g)
+	indexer.wireSemanticEdges(g)
 
 	simCount := countEdgesByType(g, EdgeSemanticSim)
 	if simCount != 1 {
@@ -235,9 +390,9 @@ func TestWireFeatureSimilarity_SameFileSkipped(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
-	indexer.wireFeatureSimilarity(g)
+	indexer.wireSemanticEdges(g)
 
 	simCount := countEdgesByType(g, EdgeSemanticSim)
 	if simCount != 0 {
@@ -264,9 +419,9 @@ func TestWireFeatureSimilarity_LargeGroupSampled(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
-	indexer.wireFeatureSimilarity(g)
+	indexer.wireSemanticEdges(g)
 
 	simCount := countEdgesByType(g, EdgeSemanticSim)
 	if simCount == 0 {
@@ -296,7 +451,7 @@ func TestWireCoCallerAffinity(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{DriftThreshold: 0.35})
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{DriftThreshold: 0.35})
 
 	indexer.wireCoCallerAffinity(g)
 
@@ -400,7 +555,7 @@ func TestCapGroup_SmallGroup(t *testing.T) {
 	for i := range group {
 		group[i] = &Node{ID: fmt.Sprintf("sym:%d", i), Path: fmt.Sprintf("pkg%d/file.go", i)}
 	}
-	result := capGroup(group, "sample")
+	result := capGroup(group, "sample", rand.New(rand.NewSource(42)))
 	if len(result) != 1 {
 		t.Fatalf("expected 1 subgroup, got %d", len(result))
 	}
@@ -415,7 +570,7 @@ func TestCapGroup_SampleStrategy(t *testing.T) {
 	for i := range group {
 		group[i] = &Node{ID: fmt.Sprintf("sym:%d", i), Path: fmt.Sprintf("pkg%d/file.go", i)}
 	}
-	result := capGroup(group, "sample")
+	result := capGroup(group, "sample", rand.New(rand.NewSource(42)))
 	if len(result) != 1 {
 		t.Fatalf("expected 1 subgroup for sample strategy, got %d", len(result))
 	}
@@ -439,7 +594,7 @@ func TestCapGroup_SplitStrategy(t *testing.T) {
 	// Also add a singleton directory (should be skipped)
 	group = append(group, &Node{ID: "sym:dirD/0", Path: "dirD/file.go"})
 
-	result := capGroup(group, "split")
+	result := capGroup(group, "split", rand.New(rand.NewSource(42)))
 	// Should return 3 subgroups (dirA, dirB, dirC) - dirD has only 1 node so skipped
 	if len(result) != 3 {
 		t.Fatalf("expected 3 subgroups for split strategy, got %d", len(result))
@@ -462,7 +617,7 @@ func TestCapGroup_SplitStrategy_FallbackSampling(t *testing.T) {
 		group = append(group, &Node{ID: fmt.Sprintf("sym:smalldir/%d", i), Path: "smalldir/file.go"})
 	}
 
-	result := capGroup(group, "split")
+	result := capGroup(group, "split", rand.New(rand.NewSource(42)))
 	// Should return 2 subgroups: bigdir (sampled to cap) and smalldir (5 nodes)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 subgroups, got %d", len(result))
@@ -482,6 +637,41 @@ func TestCapGroup_SplitStrategy_FallbackSampling(t *testing.T) {
 	if smallCount != 1 {
 		t.Errorf("expected 1 subgroup of size 5, found %d", smallCount)
 	}
+}
+
+func TestRPGEncoderConcurrentStatsAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	rpgStore := NewGOBRPGStore(filepath.Join(tmpDir, "test.gob"))
+	if err := rpgStore.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer rpgStore.Close()
+
+	encoder := NewRPGEncoder(rpgStore, NewLocalExtractor(), "/tmp", RPGEncoderConfig{})
+
+	var wg sync.WaitGroup
+	const iterations = 100
+
+	// Goroutine 1: Simulate watch loop mutations via Stats()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = encoder.Stats()
+		}
+	}()
+
+	// Goroutine 2: Simulate graph access
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = encoder.Stats()
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestWireFeatureSimilarity_LargeGroupSplit(t *testing.T) {
@@ -512,12 +702,12 @@ func TestWireFeatureSimilarity_LargeGroupSplit(t *testing.T) {
 
 	rpgStore := &GOBRPGStore{indexPath: filepath.Join(t.TempDir(), "rpg.gob"), graph: g}
 	extractor := NewLocalExtractor()
-	indexer := NewRPGIndexer(rpgStore, extractor, "/tmp", RPGIndexerConfig{
+	indexer := NewRPGEncoder(rpgStore, extractor, "/tmp", RPGEncoderConfig{
 		DriftThreshold:       0.35,
 		FeatureGroupStrategy: "split",
 	})
 
-	indexer.wireFeatureSimilarity(g)
+	indexer.wireSemanticEdges(g)
 
 	// With split strategy, dirA symbols are in one subgroup (same file, skipped)
 	// and dirB symbols are in another (same file, skipped).

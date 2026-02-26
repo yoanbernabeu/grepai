@@ -1,6 +1,7 @@
 package rpg
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,60 +26,225 @@ func NewHierarchyBuilder(graph *Graph, extractor FeatureExtractor) *HierarchyBui
 // It examines all KindFile and KindSymbol nodes and organizes them into
 // area/category/subcategory based on directory structure and feature labels.
 //
+// NOTE: This implements a heuristic approximation of the RPG-Encoder "Structure Reorganization" (Phase 2).
+// While the paper describes an LLM-driven clustering approach to induce functional centroids,
+// this implementation utilizes the explicit directory structure as a proxy for high-level
+// functional areas ($V_H$), combined with symbol-level verb extraction for finer granularity.
+// This trade-off significantly reduces indexing cost while maintaining structural coherence.
+//
 // Strategy:
 //  1. Group files by top-level directory -> these become "areas"
 //  2. Within each area, group by subdirectory or file stem -> "categories"
 //  3. Within each category, group symbols by feature verb -> "subcategories"
-//  4. Connect file/symbol nodes to their subcategory via EdgeFeatureParent
-//  5. Connect subcategories to categories, categories to areas via EdgeContains
+//  4. Connect hierarchy as area -> category -> subcategory -> file via EdgeFeatureParent
+//  5. Keep implementation containment as file -> symbol via EdgeContains
 func (h *HierarchyBuilder) BuildHierarchy() {
 	now := time.Now()
 
-	// Process all file nodes: create area and category hierarchy, link files.
+	// Process all file nodes: create area/category hierarchy and group files.
 	fileNodes := h.graph.GetNodesByKind(KindFile)
+	sort.Slice(fileNodes, func(i, j int) bool {
+		return fileNodes[i].Path < fileNodes[j].Path
+	})
+
+	type categoryKey struct {
+		areaName string
+		catName  string
+	}
+	byCategoryFiles := make(map[categoryKey][]*Node)
+
 	for _, fn := range fileNodes {
 		areaName, catName := h.ClassifyFile(fn.Path)
-		areaID := h.EnsureArea(areaName)
-		catID := h.EnsureCategory(areaID, catName)
+		key := categoryKey{areaName, catName}
+		byCategoryFiles[key] = append(byCategoryFiles[key], fn)
 
-		// Link file -> category via EdgeFeatureParent.
-		h.graph.AddEdge(&Edge{
-			From:      fn.ID,
-			To:        catID,
-			Type:      EdgeFeatureParent,
-			Weight:    1.0,
-			UpdatedAt: now,
-		})
+		areaID := h.EnsureArea(areaName)
+		h.EnsureCategory(areaID, catName)
 	}
 
-	// Process all symbol nodes: extract features, create subcategories, link symbols.
+	// Process all symbol nodes: group by category for subcategory clustering.
 	symbolNodes := h.graph.GetNodesByKind(KindSymbol)
-	for _, sn := range symbolNodes {
-		// Determine the file's area/category.
-		areaName, catName := h.ClassifyFile(sn.Path)
-		areaID := h.EnsureArea(areaName)
-		catID := h.EnsureCategory(areaID, catName)
+	sort.Slice(symbolNodes, func(i, j int) bool {
+		return symbolNodes[i].ID < symbolNodes[j].ID
+	})
 
-		// Extract or use existing feature label.
-		feature := sn.Feature
-		if feature == "" {
-			feature = h.extractor.ExtractFeature(sn.SymbolName, sn.Signature, sn.Receiver, "")
-			sn.Feature = feature
+	byCategory := make(map[categoryKey][]*Node)
+	for _, sn := range symbolNodes {
+		areaName, catName := h.ClassifyFile(sn.Path)
+		key := categoryKey{areaName, catName}
+		byCategory[key] = append(byCategory[key], sn)
+	}
+
+	// Union keys (files/symbols) for deterministic processing.
+	seenKeys := make(map[categoryKey]struct{})
+	keys := make([]categoryKey, 0, len(byCategory)+len(byCategoryFiles))
+	for k := range byCategory {
+		seenKeys[k] = struct{}{}
+		keys = append(keys, k)
+	}
+	for k := range byCategoryFiles {
+		if _, ok := seenKeys[k]; ok {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].areaName != keys[j].areaName {
+			return keys[i].areaName < keys[j].areaName
+		}
+		return keys[i].catName < keys[j].catName
+	})
+
+	for _, key := range keys {
+		symbols := byCategory[key]
+		areaID := h.EnsureArea(key.areaName)
+		catID := h.EnsureCategory(areaID, key.catName)
+
+		// Cluster symbols within this category.
+		clusters := h.ClusterSymbols(symbols)
+		if len(clusters) == 0 {
+			clusters = map[string][]*Node{
+				"general": {},
+			}
 		}
 
-		// Determine subcategory from the feature label.
-		subcatName := h.ClassifySymbol(feature)
-		subcatID := h.EnsureSubcategory(catID, subcatName)
+		// Create subcategories and remember IDs.
+		var clusterNames []string
+		for name := range clusters {
+			clusterNames = append(clusterNames, name)
+		}
+		sort.Strings(clusterNames)
+		clusterIDs := make(map[string]string, len(clusterNames))
 
-		// Link symbol -> subcategory via EdgeFeatureParent.
-		h.graph.AddEdge(&Edge{
-			From:      sn.ID,
-			To:        subcatID,
-			Type:      EdgeFeatureParent,
-			Weight:    1.0,
-			UpdatedAt: now,
+		for _, name := range clusterNames {
+			clusterIDs[name] = h.EnsureSubcategory(catID, name)
+		}
+
+		files := byCategoryFiles[key]
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].Path < files[j].Path
 		})
+
+		for _, fileNode := range files {
+			subcatName := h.selectFileSubcategory(fileNode.Path, symbols)
+			if subcatName == "" {
+				subcatName = "general"
+			}
+
+			subcatID, ok := clusterIDs[subcatName]
+			if !ok {
+				subcatID = h.EnsureSubcategory(catID, subcatName)
+				clusterIDs[subcatName] = subcatID
+			}
+
+			if edgeExists(h.graph, subcatID, fileNode.ID, EdgeFeatureParent) {
+				continue
+			}
+			h.graph.AddEdge(&Edge{
+				From:      subcatID,
+				To:        fileNode.ID,
+				Type:      EdgeFeatureParent,
+				Weight:    1.0,
+				UpdatedAt: now,
+			})
+		}
 	}
+}
+
+// extractClusterKey determines the best clustering key for a feature string.
+// It prioritizes specific verbs, but falls back to the object if the verb is generic.
+func (h *HierarchyBuilder) extractClusterKey(feature string) string {
+	genericVerbs := map[string]bool{
+		"get": true, "set": true, "do": true, "handle": true, "process": true, "run": true, "create": true, "new": true,
+	}
+
+	// Default: cluster by verb (first word)
+	clusterName := firstWord(feature)
+
+	// Refinement: if verb is generic, try to use object (second word)
+	// We need to split by separators to get the second part
+	f := func(c rune) bool {
+		return c == '-' || c == '_' || c == '/' || c == ' ' || c == '@'
+	}
+	parts := strings.FieldsFunc(feature, f)
+
+	if len(parts) >= 2 && genericVerbs[clusterName] {
+		// e.g. "handle-request" -> "request"
+		clusterName = parts[1]
+	}
+
+	if clusterName == "" {
+		clusterName = "misc"
+	}
+	return clusterName
+}
+
+// ClusterSymbols groups symbols based on their feature labels.
+// It uses a heuristic to determine the best clustering strategy (e.g. by verb, or by object if verb is generic).
+func (h *HierarchyBuilder) ClusterSymbols(symbols []*Node) map[string][]*Node {
+	clusters := make(map[string][]*Node)
+	for _, sn := range symbols {
+		feature := ""
+		atomics := getNodeAtomicFeatures(sn)
+		if len(atomics) > 0 {
+			feature = atomics[0]
+		}
+		if feature == "" {
+			feature = h.extractor.ExtractFeature(context.Background(), sn.SymbolName, sn.Signature, sn.Receiver, "")
+			setNodeFeatures(sn, []string{atomicFromPrimaryFeature(feature)}, feature)
+		}
+
+		clusterName := h.extractClusterKey(feature)
+		clusters[clusterName] = append(clusters[clusterName], sn)
+	}
+	return clusters
+}
+
+// selectSubcategoryByFrequency determines the most frequent cluster key among
+// symbol atomic features for a given file path. When filePath is non-empty,
+// only symbols whose Path matches are considered. Symbols without atomic
+// features are skipped.
+func selectSubcategoryByFrequency(symbols []*Node, filePath string, hb *HierarchyBuilder) string {
+	counts := make(map[string]int)
+	for _, sym := range symbols {
+		if sym.Kind != KindSymbol {
+			continue
+		}
+		if filePath != "" && sym.Path != filePath {
+			continue
+		}
+		features := getNodeAtomicFeatures(sym)
+		if len(features) == 0 {
+			continue
+		}
+		cluster := hb.extractClusterKey(features[0])
+		if cluster != "" {
+			counts[cluster]++
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+
+	type entry struct {
+		name  string
+		count int
+	}
+	entries := make([]entry, 0, len(counts))
+	for name, count := range counts {
+		entries = append(entries, entry{name: name, count: count})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].count != entries[j].count {
+			return entries[i].count > entries[j].count
+		}
+		return entries[i].name < entries[j].name
+	})
+	return entries[0].name
+}
+
+func (h *HierarchyBuilder) selectFileSubcategory(filePath string, symbols []*Node) string {
+	return selectSubcategoryByFrequency(symbols, filePath, h)
 }
 
 // EnsureArea ensures an area node exists and returns its ID.
@@ -100,7 +266,7 @@ func (h *HierarchyBuilder) EnsureArea(name string) string {
 
 // EnsureCategory ensures a category node exists under an area and returns its ID.
 // The areaID is used to extract the area name for building the category's node ID
-// and feature path. A EdgeContains edge from category to area is created if the
+// and feature path. A EdgeFeatureParent edge from area to category is created if the
 // category is new.
 func (h *HierarchyBuilder) EnsureCategory(areaID, name string) string {
 	// Extract the area name from the areaID for building the category ID.
@@ -120,11 +286,11 @@ func (h *HierarchyBuilder) EnsureCategory(areaID, name string) string {
 		UpdatedAt: time.Now(),
 	})
 
-	// Link category -> area via EdgeContains (child points to parent).
+	// Link area -> category via EdgeFeatureParent (parent points to child).
 	h.graph.AddEdge(&Edge{
-		From:      id,
-		To:        areaID,
-		Type:      EdgeContains,
+		From:      areaID,
+		To:        id,
+		Type:      EdgeFeatureParent,
 		Weight:    1.0,
 		UpdatedAt: time.Now(),
 	})
@@ -134,7 +300,7 @@ func (h *HierarchyBuilder) EnsureCategory(areaID, name string) string {
 
 // EnsureSubcategory ensures a subcategory node exists under a category and returns its ID.
 // The catID is used to extract the category feature path for building the subcategory's
-// node ID and feature path. A EdgeContains edge from subcategory to category is created
+// node ID and feature path. A EdgeFeatureParent edge from category to subcategory is created
 // if the subcategory is new.
 func (h *HierarchyBuilder) EnsureSubcategory(catID, name string) string {
 	// Extract the category path from the catID for building the subcategory ID.
@@ -154,11 +320,11 @@ func (h *HierarchyBuilder) EnsureSubcategory(catID, name string) string {
 		UpdatedAt: time.Now(),
 	})
 
-	// Link subcategory -> category via EdgeContains (child points to parent).
+	// Link category -> subcategory via EdgeFeatureParent (parent points to child).
 	h.graph.AddEdge(&Edge{
-		From:      id,
-		To:        catID,
-		Type:      EdgeContains,
+		From:      catID,
+		To:        id,
+		Type:      EdgeFeatureParent,
 		Weight:    1.0,
 		UpdatedAt: time.Now(),
 	})
@@ -257,13 +423,22 @@ func fileNameStem(name string) string {
 // Example: area "cli" with descendants [handle-search, handle-trace, run-watch]
 // becomes "cli [handle, run]" providing semantic context about what the area does.
 func (h *HierarchyBuilder) EnrichLabels() {
-	for _, area := range h.graph.GetNodesByKind(KindArea) {
+	areas := h.graph.GetNodesByKind(KindArea)
+	sort.Slice(areas, func(i, j int) bool {
+		return areas[i].ID < areas[j].ID
+	})
+	for _, area := range areas {
 		verbs := h.collectDescendantVerbs(area.ID)
 		if len(verbs) > 0 {
 			area.SemanticLabel = area.Feature + " [" + strings.Join(topN(verbs, 3), ", ") + "]"
 		}
 	}
-	for _, cat := range h.graph.GetNodesByKind(KindCategory) {
+
+	cats := h.graph.GetNodesByKind(KindCategory)
+	sort.Slice(cats, func(i, j int) bool {
+		return cats[i].ID < cats[j].ID
+	})
+	for _, cat := range cats {
 		verbs := h.collectDescendantVerbs(cat.ID)
 		if len(verbs) > 0 {
 			cat.SemanticLabel = cat.Feature + " [" + strings.Join(topN(verbs, 3), ", ") + "]"
@@ -286,26 +461,32 @@ func (h *HierarchyBuilder) walkDescendants(nodeID string, visited map[string]boo
 	}
 	visited[nodeID] = true
 
-	// Check incoming edges (children point TO parents via EdgeFeatureParent/EdgeContains)
-	for _, e := range h.graph.GetIncoming(nodeID) {
-		if e.Type == EdgeFeatureParent || e.Type == EdgeContains {
-			child := h.graph.GetNode(e.From)
-			if child == nil {
-				continue
-			}
-			if child.Kind == KindSymbol {
-				// Extract verb from feature
-				if child.Feature != "" {
-					verb := firstWord(child.Feature)
-					if verb != "" {
-						verbCounts[verb]++
-					}
-				}
-			} else {
-				// Recurse into hierarchy children
-				h.walkDescendants(child.ID, visited, verbCounts)
-			}
+	// Traverse outgoing edges (parent points to children).
+	outgoing := h.graph.GetOutgoing(nodeID)
+	sort.Slice(outgoing, func(i, j int) bool {
+		return outgoing[i].To < outgoing[j].To
+	})
+
+	for _, e := range outgoing {
+		if e.Type != EdgeFeatureParent && e.Type != EdgeContains {
+			continue
 		}
+
+		child := h.graph.GetNode(e.To)
+		if child == nil {
+			continue
+		}
+
+		if child.Kind == KindSymbol {
+			for _, feature := range getNodeAtomicFeatures(child) {
+				key := h.extractClusterKey(feature)
+				if key != "" && key != "misc" {
+					verbCounts[key]++
+				}
+			}
+			continue
+		}
+		h.walkDescendants(child.ID, visited, verbCounts)
 	}
 }
 
@@ -330,4 +511,16 @@ func topN(counts map[string]int, n int) []string {
 		result = append(result, entries[i].key)
 	}
 	return result
+}
+
+// Helper to extract the first word of a feature string
+func firstWord(s string) string {
+	f := func(c rune) bool {
+		return c == '-' || c == '_' || c == '/' || c == ' ' || c == '@'
+	}
+	parts := strings.FieldsFunc(s, f)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
 }

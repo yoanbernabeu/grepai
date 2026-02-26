@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 	"github.com/yoanbernabeu/grepai/watcher"
 )
@@ -100,7 +102,7 @@ func TestStopWatchDaemon_NotRunning(t *testing.T) {
 	logDir := t.TempDir()
 
 	// Stop with no PID file
-	err := stopWatchDaemon(logDir, "")
+	_, err := stopWatchDaemon(logDir, "")
 	if err != nil {
 		t.Fatalf("stopWatchDaemon() failed: %v", err)
 	}
@@ -116,7 +118,7 @@ func TestStopWatchDaemon_StalePID(t *testing.T) {
 	}
 
 	// Stop should clean stale PID
-	err := stopWatchDaemon(logDir, "")
+	_, err := stopWatchDaemon(logDir, "")
 	if err != nil {
 		t.Fatalf("stopWatchDaemon() failed: %v", err)
 	}
@@ -131,7 +133,7 @@ func TestStopWatchDaemon_StalePID(t *testing.T) {
 
 func TestStopWatchDaemon_WorktreeNotRunning(t *testing.T) {
 	logDir := t.TempDir()
-	err := stopWatchDaemon(logDir, "wt-3")
+	_, err := stopWatchDaemon(logDir, "wt-3")
 	if err != nil {
 		t.Fatalf("stopWatchDaemon() failed: %v", err)
 	}
@@ -227,6 +229,222 @@ func TestRunWatch_CheckAlreadyRunning(t *testing.T) {
 
 	// Reset for other tests
 	watchLogDir = ""
+}
+
+func TestRunWatchStatus_OutsideProjectRoot(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+
+	outside := t.TempDir()
+	if err := os.Chdir(outside); err != nil {
+		t.Fatalf("Chdir() failed: %v", err)
+	}
+
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	watchBackground = false
+	watchStatus = true
+	watchStop = false
+	watchWorkspace = ""
+	watchNoUI = false
+	watchLogDir = t.TempDir()
+
+	if err := runWatch(nil, nil); err != nil {
+		t.Fatalf("runWatch(--status) outside project should not fail: %v", err)
+	}
+}
+
+func TestRunWatchStop_UsesHintedLogDirAndClearsHint(t *testing.T) {
+	tmpHome := t.TempDir()
+	cleanupHome := setTestHomeDirCLI(t, tmpHome)
+	defer cleanupHome()
+
+	projectRoot := t.TempDir()
+	if err := config.DefaultConfig().Save(projectRoot); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+	hintedLogDir := filepath.Join(projectRoot, "custom-logs")
+	if err := saveWatchLogDirHint(projectRoot, hintedLogDir); err != nil {
+		t.Fatalf("saveWatchLogDirHint() failed: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("Chdir() failed: %v", err)
+	}
+
+	oldStopRunner := watchStopDaemonRunner
+	defer func() { watchStopDaemonRunner = oldStopRunner }()
+	var called []string
+	watchStopDaemonRunner = func(logDir, worktreeID string) (bool, error) {
+		called = append(called, filepath.Clean(logDir))
+		return filepath.Clean(logDir) == filepath.Clean(hintedLogDir), nil
+	}
+
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+	watchBackground = false
+	watchStatus = false
+	watchStop = true
+	watchWorkspace = ""
+	watchLogDir = ""
+	watchNoUI = false
+
+	if err := runWatch(nil, nil); err != nil {
+		t.Fatalf("runWatch(--stop) failed: %v", err)
+	}
+	if len(called) == 0 || filepath.Clean(called[0]) != filepath.Clean(hintedLogDir) {
+		t.Fatalf("expected hinted log dir to be tried first, got %v", called)
+	}
+	hinted, err := readWatchLogDirHint(projectRoot)
+	if err != nil {
+		t.Fatalf("readWatchLogDirHint() failed: %v", err)
+	}
+	if hinted != "" {
+		t.Fatalf("expected hint to be cleared after successful stop, got %q", hinted)
+	}
+}
+
+func TestRunWatchStop_DoesNotClearHintWhenNothingStopped(t *testing.T) {
+	tmpHome := t.TempDir()
+	cleanupHome := setTestHomeDirCLI(t, tmpHome)
+	defer cleanupHome()
+
+	projectRoot := t.TempDir()
+	if err := config.DefaultConfig().Save(projectRoot); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+	hintedLogDir := filepath.Join(projectRoot, "custom-logs")
+	if err := saveWatchLogDirHint(projectRoot, hintedLogDir); err != nil {
+		t.Fatalf("saveWatchLogDirHint() failed: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("Chdir() failed: %v", err)
+	}
+
+	oldStopRunner := watchStopDaemonRunner
+	defer func() { watchStopDaemonRunner = oldStopRunner }()
+	watchStopDaemonRunner = func(logDir, worktreeID string) (bool, error) {
+		return false, nil
+	}
+
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+	watchBackground = false
+	watchStatus = false
+	watchStop = true
+	watchWorkspace = ""
+	watchLogDir = ""
+	watchNoUI = false
+
+	if err := runWatch(nil, nil); err != nil {
+		t.Fatalf("runWatch(--stop) failed: %v", err)
+	}
+	hinted, err := readWatchLogDirHint(projectRoot)
+	if err != nil {
+		t.Fatalf("readWatchLogDirHint() failed: %v", err)
+	}
+	if filepath.Clean(hinted) != filepath.Clean(hintedLogDir) {
+		t.Fatalf("expected hint to remain when no watcher stopped, got %q", hinted)
+	}
+}
+
+func TestRunWatch_MultiWorktreeUsesUIForeground(t *testing.T) {
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	oldInteractive := watchIsInteractiveTerminal
+	oldSelector := watchUseUISelector
+	oldForeground := watchForegroundRunner
+	oldForegroundUI := watchForegroundUIRunner
+	defer func() {
+		watchIsInteractiveTerminal = oldInteractive
+		watchUseUISelector = oldSelector
+		watchForegroundRunner = oldForeground
+		watchForegroundUIRunner = oldForegroundUI
+	}()
+
+	watchBackground = false
+	watchStatus = false
+	watchStop = false
+	watchWorkspace = ""
+	watchNoUI = false
+	watchLogDir = t.TempDir()
+
+	watchIsInteractiveTerminal = func() bool { return true }
+	watchUseUISelector = func(isTTY, noUI, background, status, stop bool, workspace string) bool { return true }
+
+	foregroundErr := errors.New("foreground-called")
+	watchForegroundRunner = func() error { return foregroundErr }
+	uiErr := errors.New("ui-called")
+	watchForegroundUIRunner = func() error { return uiErr }
+
+	err := runWatch(nil, nil)
+	if !errors.Is(err, uiErr) {
+		t.Fatalf("expected UI path for interactive watch, got: %v", err)
+	}
 }
 
 func TestLogDirectoryDefaults(t *testing.T) {
@@ -328,7 +546,7 @@ func TestStopWatchDaemon_WaitForShutdown(t *testing.T) {
 
 	// Measure time taken
 	start := time.Now()
-	err := stopWatchDaemon(logDir, "")
+	_, err := stopWatchDaemon(logDir, "")
 	elapsed := time.Since(start)
 
 	if err != nil {

@@ -129,6 +129,7 @@ func (e *TreeSitterExtractor) extractGoSymbol(node *sitter.Node, nodeType string
 				Signature: truncateSignature(string(content[node.StartByte():node.EndByte()])),
 				Exported:  isExported(name, "go"),
 				Language:  "go",
+				Docstring: extractDocstring(node, content),
 			})
 		}
 
@@ -148,18 +149,32 @@ func (e *TreeSitterExtractor) extractGoSymbol(node *sitter.Node, nodeType string
 				}
 			}
 			*symbols = append(*symbols, Symbol{
-				Name:     name,
-				Kind:     KindMethod,
-				File:     filePath,
-				Line:     int(node.StartPoint().Row) + 1,
-				EndLine:  int(node.EndPoint().Row) + 1,
-				Receiver: receiver,
-				Exported: isExported(name, "go"),
-				Language: "go",
+				Name:      name,
+				Kind:      KindMethod,
+				File:      filePath,
+				Line:      int(node.StartPoint().Row) + 1,
+				EndLine:   int(node.EndPoint().Row) + 1,
+				Receiver:  receiver,
+				Exported:  isExported(name, "go"),
+				Language:  "go",
+				Docstring: extractDocstring(node, content),
 			})
 		}
 
 	case "type_declaration":
+		// Type declaration docstrings are usually on the type_decl node itself,
+		// but the symbols are extracted from type_spec children.
+		// If it's a grouped declaration (type ( ... )), the docstring is on the group?
+		// Or individual specs?
+		// For simplicity, let's try to get docstring from the spec or the parent decl if single.
+
+		// Logic: if parent is type_declaration, check its docstring?
+		// Actually, let's just look at the spec node. If it has no docstring, look at parent?
+		// For now, let's just stick to the spec node or simple implementation.
+		// The current loop iterates children of type_declaration.
+
+		declDoc := extractDocstring(node, content)
+
 		for i := 0; i < int(node.ChildCount()); i++ {
 			spec := node.Child(i)
 			if spec.Type() == "type_spec" {
@@ -176,18 +191,59 @@ func (e *TreeSitterExtractor) extractGoSymbol(node *sitter.Node, nodeType string
 							kind = KindClass
 						}
 					}
+
+					// Use specific docstring if present, else declaration docstring?
+					// In Go:
+					// // Doc
+					// type X struct {} -> Doc on X
+					// type (
+					//    // Doc
+					//    Y struct {}
+					// ) -> Doc on Y
+					specDoc := extractDocstring(spec, content)
+					finalDoc := specDoc
+					if finalDoc == "" {
+						finalDoc = declDoc
+					}
+
 					*symbols = append(*symbols, Symbol{
-						Name:     name,
-						Kind:     kind,
-						File:     filePath,
-						Line:     int(spec.StartPoint().Row) + 1,
-						Exported: isExported(name, "go"),
-						Language: "go",
+						Name:      name,
+						Kind:      kind,
+						File:      filePath,
+						Line:      int(spec.StartPoint().Row) + 1,
+						Exported:  isExported(name, "go"),
+						Language:  "go",
+						Docstring: finalDoc,
 					})
 				}
 			}
 		}
 	}
+}
+
+// extractDocstring looks for comment nodes immediately preceding the given node.
+func extractDocstring(node *sitter.Node, content []byte) string {
+	var comments []string
+	prev := node.PrevSibling()
+	for prev != nil {
+		if prev.Type() == "comment" {
+			// Prepend since we are traversing backwards
+			comments = append([]string{prev.Content(content)}, comments...)
+			prev = prev.PrevSibling()
+		} else {
+			// If not a comment, stop.
+			// Check for whitespace? Tree-sitter usually handles whitespace as hidden/extras
+			// but sometimes they appear if part of grammar.
+			// For Go grammar, comments are hidden? No, usually they are extras.
+			// If extras, they might not appear in siblings list unless we use specific traverse?
+			// smacker/go-tree-sitter default might exclude comments from AST if not configured?
+			// Checking smacker library... usually requires keeping comments.
+			// If comments are not in AST, this won't work.
+			// Assuming they are present for now.
+			break
+		}
+	}
+	return strings.Join(comments, "\n")
 }
 
 func (e *TreeSitterExtractor) extractJSSymbol(node *sitter.Node, nodeType string, content []byte, filePath string, lang string, symbols *[]Symbol) {

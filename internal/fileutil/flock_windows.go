@@ -1,7 +1,7 @@
 //go:build windows
 // +build windows
 
-package store
+package fileutil
 
 import (
 	"fmt"
@@ -17,15 +17,21 @@ var (
 )
 
 const (
-	winLockfileExclusiveLock = 0x00000002
+	winLockfileExclusiveLock   = 0x00000002
+	winLockfileFailImmediately = 0x00000001
 )
 
-// flockExclusive acquires an exclusive (write) lock on the file.
-func flockExclusive(f *os.File) error {
+// FlockExclusive acquires an exclusive (write) lock on the file.
+// If nonBlocking is true, returns immediately with an error if the lock cannot be acquired.
+func FlockExclusive(f *os.File, nonBlocking bool) error {
+	flags := uintptr(winLockfileExclusiveLock)
+	if nonBlocking {
+		flags |= winLockfileFailImmediately
+	}
 	var overlapped syscall.Overlapped
 	ret, _, err := procLockFileEx.Call(
 		f.Fd(),
-		uintptr(winLockfileExclusiveLock),
+		flags,
 		0,
 		1,
 		0,
@@ -37,13 +43,17 @@ func flockExclusive(f *os.File) error {
 	return nil
 }
 
-// flockShared acquires a shared (read) lock on the file.
-func flockShared(f *os.File) error {
+// FlockShared acquires a shared (read) lock on the file.
+// If nonBlocking is true, returns immediately with an error if the lock cannot be acquired.
+func FlockShared(f *os.File, nonBlocking bool) error {
+	flags := uintptr(0) // No exclusive flag = shared lock
+	if nonBlocking {
+		flags |= winLockfileFailImmediately
+	}
 	var overlapped syscall.Overlapped
-	// No exclusive flag = shared lock
 	ret, _, err := procLockFileEx.Call(
 		f.Fd(),
-		0,
+		flags,
 		0,
 		1,
 		0,
@@ -55,8 +65,8 @@ func flockShared(f *os.File) error {
 	return nil
 }
 
-// funlock releases the lock on the file.
-func funlock(f *os.File) error {
+// Funlock releases the lock on the file.
+func Funlock(f *os.File) error {
 	var overlapped syscall.Overlapped
 	ret, _, err := procUnlockFile.Call(
 		f.Fd(),

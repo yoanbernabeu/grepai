@@ -97,24 +97,99 @@ func enrichWithRPG(projectRoot string, cfg *config.Config, results []store.Searc
 
 	graph := rpgStore.GetGraph()
 	qe := rpg.NewQueryEngine(graph)
+	getFeaturePath := func(nodeID string) string {
+		fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: nodeID})
+		if err == nil && fetchResult != nil {
+			return fetchResult.FeaturePath
+		}
+		return ""
+	}
 
 	for i, r := range results {
 		nodes := graph.GetNodesByFile(r.Chunk.FilePath)
-		for _, n := range nodes {
-			// Find symbol node that overlaps with the chunk's line range
-			if n.Kind == rpg.KindSymbol && n.StartLine <= r.Chunk.EndLine && r.Chunk.StartLine <= n.EndLine {
-				// Found overlapping symbol node
-				fetchResult, err := qe.FetchNode(ctx, rpg.FetchNodeRequest{NodeID: n.ID})
-				if err == nil && fetchResult != nil {
-					enrichments[i].FeaturePath = fetchResult.FeaturePath
-					enrichments[i].SymbolName = n.SymbolName
-				}
-				break
+		if symbolNode := findBestOverlappingSymbolNode(nodes, r.Chunk.StartLine, r.Chunk.EndLine); symbolNode != nil {
+			enrichments[i].FeaturePath = getFeaturePath(symbolNode.ID)
+			enrichments[i].SymbolName = symbolNode.SymbolName
+		}
+
+		// Fallback to file-level hierarchy when no symbol could be mapped.
+		if enrichments[i].FeaturePath == "" {
+			fileNode := findFileNode(nodes, r.Chunk.FilePath)
+			if fileNode == nil {
+				fileNode = graph.GetNode(rpg.MakeNodeID(rpg.KindFile, r.Chunk.FilePath))
+			}
+			if fileNode != nil {
+				enrichments[i].FeaturePath = getFeaturePath(fileNode.ID)
 			}
 		}
 	}
 
 	return enrichments
+}
+
+func findBestOverlappingSymbolNode(nodes []*rpg.Node, chunkStart, chunkEnd int) *rpg.Node {
+	chunkStart, chunkEnd = normalizeLineRange(chunkStart, chunkEnd)
+
+	var best *rpg.Node
+	bestOverlap := 0
+	bestStart := 0
+
+	for _, n := range nodes {
+		if n == nil || n.Kind != rpg.KindSymbol {
+			continue
+		}
+		nodeStart, nodeEnd := normalizeLineRange(n.StartLine, n.EndLine)
+		overlap := lineOverlap(chunkStart, chunkEnd, nodeStart, nodeEnd)
+		if overlap <= 0 {
+			continue
+		}
+		if overlap > bestOverlap || (overlap == bestOverlap && (best == nil || nodeStart < bestStart)) {
+			best = n
+			bestOverlap = overlap
+			bestStart = nodeStart
+		}
+	}
+
+	return best
+}
+
+func findFileNode(nodes []*rpg.Node, filePath string) *rpg.Node {
+	for _, n := range nodes {
+		if n != nil && n.Kind == rpg.KindFile && n.Path == filePath {
+			return n
+		}
+	}
+	for _, n := range nodes {
+		if n != nil && n.Kind == rpg.KindFile {
+			return n
+		}
+	}
+	return nil
+}
+
+func normalizeLineRange(start, end int) (int, int) {
+	if start <= 0 {
+		start = 1
+	}
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
+func lineOverlap(aStart, aEnd, bStart, bEnd int) int {
+	if aEnd < bStart || bEnd < aStart {
+		return 0
+	}
+	overlapStart := aStart
+	if bStart > overlapStart {
+		overlapStart = bStart
+	}
+	overlapEnd := aEnd
+	if bEnd < overlapEnd {
+		overlapEnd = bEnd
+	}
+	return overlapEnd - overlapStart + 1
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -254,9 +329,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(&buf, "Found %d results for: %q\n\n", len(results), query)
 
 	for i, result := range results {
-		fmt.Fprintf(&buf, "─── Result %d (score: %.4f) ───\n", i+1, result.Score)
-		fmt.Fprintf(&buf, "File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
-		buf.WriteString("\n")
+		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
+		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		if enrichments[i].FeaturePath != "" {
+			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+		}
+		if enrichments[i].SymbolName != "" {
+			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+		}
+		fmt.Println()
 
 		lines := strings.Split(result.Chunk.Content, "\n")
 		startIdx := 0
@@ -609,6 +690,12 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 	for i, result := range results {
 		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
 		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		if enrichments[i].FeaturePath != "" {
+			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+		}
+		if enrichments[i].SymbolName != "" {
+			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+		}
 		fmt.Println()
 
 		// Display content with line numbers

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#107)
+
+## [0.34.0] - 2026-02-24
+
+### Added
+
+- **MCP Discovery Commands**: Add `grepai_list_workspaces` and `grepai_list_projects` MCP tools to expose relative paths for searching (#144) - @jeremyakers
+- **Bubble Tea TUI**: Add interactive TUI for watch, status, trace, init, and workspace commands (#143) - @tinker495
+
+### Fixed
+
+- **MCP Workspace Discovery Response**: `grepai_list_workspaces` now returns workspace-level entries only (without embedded project lists) (#144) - @jeremyakers
+- **MCP Startup Fallback**: `grepai mcp-serve` now starts without `--workspace` when global workspaces exist, allowing clients to pass `workspace` per tool call at runtime (#144) - @jeremyakers
+
 ## [0.33.0] - 2026-02-22
 
 ### Added
@@ -584,7 +600,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/yoanbernabeu/grepai/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/yoanbernabeu/grepai/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/yoanbernabeu/grepai/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/yoanbernabeu/grepai/compare/v0.31.0...v0.32.0

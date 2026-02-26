@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -26,7 +27,6 @@ type LLMExtractor struct {
 	cfg      LLMExtractorConfig
 	client   *http.Client
 	fallback *LocalExtractor
-	ctx      context.Context // parent context for cancellation propagation
 }
 
 // NewLLMExtractor creates an LLM-based feature extractor with local fallback.
@@ -43,44 +43,54 @@ func NewLLMExtractor(cfg LLMExtractorConfig) *LLMExtractor {
 
 func (e *LLMExtractor) Mode() string { return "llm" }
 
-// WithContext returns a copy of the extractor that uses the given context for LLM calls.
-func (e *LLMExtractor) WithContext(ctx context.Context) *LLMExtractor {
-	cp := *e
-	cp.ctx = ctx
-	return &cp
-}
-
 // ExtractFeature calls the LLM to generate a semantic feature label.
 // Falls back to local extraction on any error.
-func (e *LLMExtractor) ExtractFeature(symbolName, signature, receiver, comment string) string {
-	parent := e.ctx
-	if parent == nil {
-		parent = context.Background()
+func (e *LLMExtractor) ExtractFeature(ctx context.Context, symbolName, signature, receiver, comment string) string {
+	features := e.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
+	if len(features) == 0 {
+		return e.fallback.ExtractFeature(ctx, symbolName, signature, receiver, comment)
 	}
-	ctx, cancel := context.WithTimeout(parent, e.cfg.Timeout)
-	defer cancel()
-
-	label, err := e.callLLM(ctx, symbolName, signature, receiver, comment)
-	if err != nil {
-		// Fallback to local extractor
-		return e.fallback.ExtractFeature(symbolName, signature, receiver, comment)
-	}
-	return label
+	return primaryFromAtomicFeature(features[0])
 }
 
-// callLLM makes an OpenAI-compatible chat completion API call.
-func (e *LLMExtractor) callLLM(ctx context.Context, symbolName, signature, receiver, comment string) (string, error) {
-	// Build prompt
-	prompt := buildFeaturePrompt(symbolName, signature, receiver, comment)
+// ExtractAtomicFeatures calls the LLM to generate atomic semantic features.
+// Falls back to local extraction on any error.
+func (e *LLMExtractor) ExtractAtomicFeatures(ctx context.Context, symbolName, signature, receiver, comment string) []string {
+	ctx, cancel := context.WithTimeout(ctx, e.cfg.Timeout)
+	defer cancel()
 
+	prompt := buildAtomicFeaturePrompt(symbolName, signature, receiver, comment)
+	systemPrompt := "You are a senior software analyst. Return 1 to 5 atomic semantic features as lowercase verb-object phrases. Output ONLY a JSON array of strings."
+
+	response, err := e.callCompletion(ctx, systemPrompt, prompt)
+	if err != nil {
+		return e.fallback.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
+	}
+
+	features := parseAtomicFeatureResponse(response)
+	if len(features) == 0 {
+		return e.fallback.ExtractAtomicFeatures(ctx, symbolName, signature, receiver, comment)
+	}
+	return features
+}
+
+// GenerateSummary calls the LLM to generate a high-level summary.
+func (e *LLMExtractor) GenerateSummary(ctx context.Context, name, contextStr string) (string, error) {
+	systemPrompt := "You are a code analysis assistant. Summarize the provided code context (Area/Category/Subcategory) into a concise, high-level description of its responsibility. Output ONLY the summary."
+	userPrompt := fmt.Sprintf("Name: %s\nContext: %s\n\nGenerate a summary:", name, contextStr)
+	return e.callCompletion(ctx, systemPrompt, userPrompt)
+}
+
+// callCompletion makes an OpenAI-compatible chat completion API call.
+func (e *LLMExtractor) callCompletion(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	// Build request body (OpenAI chat completion format)
 	reqBody := map[string]any{
 		"model": e.cfg.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": "You are a code analysis assistant. Given a function/method signature, output a concise verb-object feature label in kebab-case (e.g., 'handle-request', 'validate-token', 'parse-config'). Output ONLY the label, nothing else."},
-			{"role": "user", "content": prompt},
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userPrompt},
 		},
-		"max_tokens":  30,
+		"max_tokens":  100, // Increased for summaries
 		"temperature": 0,
 	}
 
@@ -109,7 +119,7 @@ func (e *LLMExtractor) callLLM(ctx context.Context, symbolName, signature, recei
 		return "", fmt.Errorf("LLM returned status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
@@ -131,7 +141,6 @@ func (e *LLMExtractor) callLLM(ctx context.Context, symbolName, signature, recei
 	}
 
 	label := strings.TrimSpace(result.Choices[0].Message.Content)
-	label = sanitizeLabel(label)
 	if label == "" {
 		return "", fmt.Errorf("empty label from LLM")
 	}
@@ -139,8 +148,8 @@ func (e *LLMExtractor) callLLM(ctx context.Context, symbolName, signature, recei
 	return label, nil
 }
 
-// buildFeaturePrompt constructs the prompt for the LLM based on symbol metadata.
-func buildFeaturePrompt(symbolName, signature, receiver, comment string) string {
+// buildAtomicFeaturePrompt constructs the prompt for LLM feature extraction.
+func buildAtomicFeaturePrompt(symbolName, signature, receiver, comment string) string {
 	var sb strings.Builder
 	sb.WriteString("Function: " + symbolName + "\n")
 	if signature != "" {
@@ -150,27 +159,47 @@ func buildFeaturePrompt(symbolName, signature, receiver, comment string) string 
 		sb.WriteString("Receiver: " + receiver + "\n")
 	}
 	if comment != "" {
-		sb.WriteString("Comment: " + comment + "\n")
+		sb.WriteString("Docstring: " + comment + "\n")
 	}
-	sb.WriteString("\nOutput a kebab-case verb-object label:")
+	sb.WriteString("\nRules:\n")
+	sb.WriteString("- Use lowercase english.\n")
+	sb.WriteString("- Each item is one atomic verb-object phrase.\n")
+	sb.WriteString("- Avoid implementation details, frameworks, and control flow language.\n")
+	sb.WriteString("- Do not include receiver/type names unless semantically required.\n")
+	sb.WriteString("\nReturn JSON array only, for example: [\"validate token\", \"load config\"]")
 	return sb.String()
 }
 
-// sanitizeLabel cleans up the LLM output to ensure it's a valid feature label.
-func sanitizeLabel(label string) string {
-	// Remove quotes, backticks, trailing punctuation
-	label = strings.Trim(label, "\"'`\n\r\t .")
-	// Take only the first line
-	if idx := strings.IndexAny(label, "\n\r"); idx >= 0 {
-		label = label[:idx]
+func parseAtomicFeatureResponse(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
 	}
-	// Lowercase
-	label = strings.ToLower(label)
-	// Replace spaces with hyphens
-	label = strings.ReplaceAll(label, " ", "-")
-	// Cap length
-	if len(label) > 50 {
-		label = label[:50]
+
+	// Strip optional markdown fences.
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) >= 3 {
+			lines = lines[1 : len(lines)-1]
+			raw = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
 	}
-	return label
+
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+		return dedupeAtomicFeatures(arr, 5)
+	}
+
+	// Fallback: split by common separators and bullet prefixes.
+	re := regexp.MustCompile(`[\n,;]+`)
+	parts := re.Split(raw, -1)
+	features := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.TrimPrefix(part, "-"))
+		if part == "" {
+			continue
+		}
+		features = append(features, part)
+	}
+	return dedupeAtomicFeatures(features, 5)
 }

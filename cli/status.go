@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -10,8 +12,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/daemon"
+	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/store"
 )
+
+var statusNoUI bool
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -45,7 +51,16 @@ type model struct {
 	selectedChunk int
 	width         int
 	height        int
+	watchRunning  bool
+	watchPID      int
+	watchLogDir   string
+	watchLogFile  string
+	worktreeID    string
 	err           error
+}
+
+func init() {
+	statusCmd.Flags().BoolVar(&statusNoUI, "no-ui", false, "Print plain text summary instead of interactive UI")
 }
 
 // Styles
@@ -184,6 +199,19 @@ func (m model) viewStats() string {
 
 	sb.WriteString(normalStyle.Render("Provider:         "))
 	sb.WriteString(fmt.Sprintf("%s (%s)\n", m.cfg.Embedder.Provider, m.cfg.Embedder.Model))
+
+	sb.WriteString(normalStyle.Render("Watcher status:   "))
+	if m.watchRunning {
+		sb.WriteString(fmt.Sprintf("running (PID %d)\n", m.watchPID))
+	} else {
+		sb.WriteString("not running\n")
+	}
+	sb.WriteString(normalStyle.Render("Watcher logs:     "))
+	if m.watchLogFile == "" {
+		sb.WriteString("N/A\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("%s\n", m.watchLogFile))
+	}
 
 	sb.WriteString("\n")
 	sb.WriteString(helpStyle.Render("[Enter] Browse files  [q] Quit"))
@@ -349,24 +377,31 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get stats: %w", err)
 	}
 
-	// Get files
-	files, err := st.ListFilesWithStats(ctx)
+	watchStatus := resolveWatcherRuntimeStatus(projectRoot)
+	useUI := shouldUseStatusUI(isInteractiveTerminal(), statusNoUI)
+
+	if !useUI {
+		fmt.Print(renderStatusSummary(cfg, stats, watchStatus))
+		return nil
+	}
+
+	files, err := loadStatusFiles(ctx, useUI, st.ListFilesWithStats)
 	if err != nil {
 		return fmt.Errorf("failed to list files: %w", err)
 	}
 
-	// Sort files by path
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
-	})
-
 	// Create model
 	m := model{
-		st:    st,
-		cfg:   cfg,
-		state: viewStats,
-		stats: stats,
-		files: files,
+		st:           st,
+		cfg:          cfg,
+		state:        viewStats,
+		stats:        stats,
+		files:        files,
+		watchRunning: watchStatus.running,
+		watchPID:     watchStatus.pid,
+		watchLogDir:  watchStatus.logDir,
+		watchLogFile: watchStatus.logFile,
+		worktreeID:   watchStatus.worktreeID,
 	}
 
 	// Run TUI
@@ -396,4 +431,125 @@ func truncatePath(path string, maxLen int) string {
 		return path
 	}
 	return "..." + path[len(path)-maxLen+3:]
+}
+
+type watcherRuntimeStatus struct {
+	running    bool
+	pid        int
+	logDir     string
+	logFile    string
+	worktreeID string
+}
+
+func resolveWatcherRuntimeStatus(projectRoot string) watcherRuntimeStatus {
+	status := watcherRuntimeStatus{}
+
+	logDirs, err := resolveWatcherCandidateLogDirs(projectRoot)
+	if err != nil {
+		return status
+	}
+	if len(logDirs) == 0 {
+		return status
+	}
+
+	cwd, err := os.Getwd()
+	var worktreeID string
+	if err == nil {
+		gitInfo, gitErr := git.Detect(cwd)
+		if gitErr == nil && gitInfo.WorktreeID != "" {
+			worktreeID = gitInfo.WorktreeID
+		}
+	}
+
+	for idx, logDir := range logDirs {
+		status.logDir = logDir
+		status.worktreeID = worktreeID
+		if worktreeID != "" {
+			pid, _ := daemon.GetRunningWorktreePID(logDir, worktreeID)
+			logFile := daemon.GetWorktreeLogFile(logDir, worktreeID)
+			if pid == 0 {
+				legacyPID, _ := daemon.GetRunningPID(logDir)
+				if legacyPID > 0 {
+					pid = legacyPID
+					logFile = filepath.Join(logDir, "grepai-watch.log")
+				}
+			}
+			status.pid = pid
+			status.running = pid > 0
+			status.logFile = logFile
+		} else {
+			pid, _ := daemon.GetRunningPID(logDir)
+			status.pid = pid
+			status.running = pid > 0
+			status.logFile = filepath.Join(logDir, "grepai-watch.log")
+		}
+		if status.running || idx == len(logDirs)-1 {
+			return status
+		}
+	}
+
+	return status
+}
+
+func resolveWatcherCandidateLogDirs(projectRoot string) ([]string, error) {
+	defaultLogDir, err := daemon.GetDefaultLogDir()
+	if err != nil {
+		return nil, err
+	}
+
+	logDirs := make([]string, 0, 2)
+	if projectRoot != "" {
+		hintedLogDir, readErr := readWatchLogDirHint(projectRoot)
+		if readErr == nil && hintedLogDir != "" {
+			hintedLogDir = filepath.Clean(hintedLogDir)
+			if hintedLogDir != filepath.Clean(defaultLogDir) {
+				logDirs = append(logDirs, hintedLogDir)
+			}
+		}
+	}
+
+	logDirs = append(logDirs, defaultLogDir)
+	return logDirs, nil
+}
+
+func renderStatusSummary(cfg *config.Config, stats *store.IndexStats, watch watcherRuntimeStatus) string {
+	var sb strings.Builder
+	sb.WriteString("grepai index status\n")
+	sb.WriteString(fmt.Sprintf("Files indexed: %d\n", stats.TotalFiles))
+	sb.WriteString(fmt.Sprintf("Total chunks: %d\n", stats.TotalChunks))
+	sb.WriteString(fmt.Sprintf("Index size: %s\n", formatBytes(stats.IndexSize)))
+	if stats.LastUpdated.IsZero() {
+		sb.WriteString("Last updated: Never\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("Last updated: %s\n", stats.LastUpdated.Format("2006-01-02 15:04:05")))
+	}
+	sb.WriteString(fmt.Sprintf("Provider: %s (%s)\n", cfg.Embedder.Provider, cfg.Embedder.Model))
+	if watch.running {
+		sb.WriteString(fmt.Sprintf("Watcher: running (PID %d)\n", watch.pid))
+	} else {
+		sb.WriteString("Watcher: not running\n")
+	}
+	if watch.logFile != "" {
+		sb.WriteString(fmt.Sprintf("Watcher log: %s\n", watch.logFile))
+	}
+	return sb.String()
+}
+
+func loadStatusFiles(
+	ctx context.Context,
+	useUI bool,
+	listFn func(context.Context) ([]store.FileStats, error),
+) ([]store.FileStats, error) {
+	if !useUI {
+		return nil, nil
+	}
+
+	files, err := listFn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files, nil
 }

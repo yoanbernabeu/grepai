@@ -5,10 +5,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"time"
@@ -152,7 +155,7 @@ func NewServerWithWorkspace(projectRoot, workspaceName string) (*Server, error) 
 func (s *Server) registerTools() {
 	// grepai_search tool
 	searchTool := mcp.NewTool("grepai_search",
-		mcp.WithDescription("Semantic code search. Search your codebase using natural language queries. Returns the most relevant code chunks with file paths, line numbers, and similarity scores."),
+		mcp.WithDescription("Semantic code search. Search your codebase using natural language queries. Returns the most relevant code chunks with file paths, line numbers, and similarity scores.\n\nExamples:\n- workspace-only mode: workspace='acme', path='src/'\n- workspace + projects mode: workspace='acme', projects='backend,shared', path='api/'"),
 		mcp.WithString("query",
 			mcp.Required(),
 			mcp.Description("Natural language search query (e.g., 'user authentication flow', 'error handling middleware')"),
@@ -167,7 +170,7 @@ func (s *Server) registerTools() {
 			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
 		),
 		mcp.WithString("path",
-			mcp.Description("Path prefix to filter results. Relative to workspace root if only workspace provided, or project root if both workspace and projects provided (e.g., 'src/' or 'src/handlers/auth/')"),
+			mcp.Description("Path prefix to filter results. When projects is set, path is relative to each selected project root (not workspace root). Examples: workspace-only path='src/' and workspace+projects path='MM32/src' or 'api/'."),
 		),
 		mcp.WithString("workspace",
 			mcp.Description("Workspace name for cross-project search (optional)"),
@@ -256,6 +259,27 @@ func (s *Server) registerTools() {
 		),
 	)
 	s.mcpServer.AddTool(indexStatusTool, s.handleIndexStatus)
+
+	// grepai_list_workspaces tool
+	listWorkspacesTool := mcp.NewTool("grepai_list_workspaces",
+		mcp.WithDescription("List all available workspace names. Use this to discover valid values for tools that accept the workspace parameter."),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
+	)
+	s.mcpServer.AddTool(listWorkspacesTool, s.handleListWorkspaces)
+
+	// grepai_list_projects tool
+	listProjectsTool := mcp.NewTool("grepai_list_projects",
+		mcp.WithDescription("List all projects within a workspace. Use this to discover project names and file paths relative to their project roots, which informs how to use the --path parameter in grepai_search."),
+		mcp.WithString("workspace",
+			mcp.Description("Name of the workspace to list projects for (optional when mcp-serve was started with --workspace)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
+	)
+	s.mcpServer.AddTool(listProjectsTool, s.handleListProjects)
 
 	// grepai_rpg_search tool
 	rpgSearchTool := mcp.NewTool("grepai_rpg_search",
@@ -366,6 +390,14 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	// Load configuration
 	cfg, err := config.Load(s.projectRoot)
 	if err != nil {
+		if s.projectRoot == "" {
+			wsCfg, wsErr := config.LoadWorkspaceConfig()
+			if wsErr == nil && wsCfg != nil && len(wsCfg.Workspaces) > 0 {
+				return mcp.NewToolResultError(
+					fmt.Sprintf("failed to load configuration: no workspace was provided so grepai_search fell back to local project config; provide the workspace parameter (or start mcp-serve with --workspace). Details: %v", err),
+				), nil
+			}
+		}
 		return mcp.NewToolResultError(fmt.Sprintf("failed to load configuration: %v", err)), nil
 	}
 
@@ -483,7 +515,14 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 	projectNames := parseProjectNames(projectsStr)
 	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathPrefix, ws, projectNames)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid path parameter: %v", err)), nil
+		selected := projectNames
+		if len(selected) == 0 {
+			selected = listWorkspaceProjectNames(ws.Projects)
+		}
+		return mcp.NewToolResultError(buildWorkspacePathValidationError(pathPrefix, selected, workspaceProjectRoots(selectWorkspaceProjects(ws, selected)), workspacePathExamples(selectWorkspaceProjects(ws, selected)), err.Error())), nil
+	}
+	if validationErr := validateWorkspacePathForProjects(normalizedPath, ws, resolvedProjects); validationErr != "" {
+		return mcp.NewToolResultError(validationErr), nil
 	}
 
 	// Validate backend
@@ -571,6 +610,29 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 		results = filteredResults
 	}
 
+	if normalizedPath != "" && len(results) == 0 {
+		selected := resolvedProjects
+		if len(selected) == 0 {
+			selected = listWorkspaceProjectNames(ws.Projects)
+		}
+		projects := selectWorkspaceProjects(ws, selected)
+
+		hasIndexedMatch, matchErr := workspacePathHasIndexedFiles(ctx, st, ws.Name, selected, normalizedPath)
+		if matchErr != nil {
+			log.Printf("Warning: failed to inspect indexed workspace paths for validation: %v", matchErr)
+		} else if !hasIndexedMatch {
+			return mcp.NewToolResultError(
+				buildWorkspacePathValidationError(
+					pathPrefix,
+					selected,
+					workspaceProjectRoots(projects),
+					workspacePathExamples(projects),
+					"no indexed files matched this path prefix in selected projects",
+				),
+			), nil
+		}
+	}
+
 	var data any
 	if compact {
 		searchResultsCompact := make([]SearchResultCompact, len(results))
@@ -618,6 +680,242 @@ func parseProjectNames(projectsStr string) []string {
 		}
 	}
 	return projects
+}
+
+func validateWorkspacePathForProjects(normalizedPath string, ws *config.Workspace, selectedProjects []string) string {
+	if normalizedPath == "" || ws == nil {
+		return ""
+	}
+
+	selected := selectedProjects
+	if len(selected) == 0 {
+		selected = listWorkspaceProjectNames(ws.Projects)
+	}
+	projects := selectWorkspaceProjects(ws, selected)
+	roots := workspaceProjectRoots(projects)
+	if len(roots) == 0 {
+		return buildWorkspacePathValidationError(
+			normalizedPath,
+			selected,
+			nil,
+			workspacePathExamples(ws.Projects),
+			"no project roots available for selected projects",
+		)
+	}
+	if pathPrefixMatchesProjectRoots(normalizedPath, roots) {
+		return ""
+	}
+
+	return buildWorkspacePathValidationError(
+		normalizedPath,
+		selected,
+		roots,
+		workspacePathExamples(projects),
+		"path must be relative to a selected project root (not the workspace root)",
+	)
+}
+
+func pathPrefixMatchesProjectRoots(pathPrefix string, projectRoots []string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(pathPrefix), "/")
+	if trimmed == "" || trimmed == "." {
+		return true
+	}
+
+	firstSegment := trimmed
+	if idx := strings.Index(trimmed, "/"); idx >= 0 {
+		firstSegment = trimmed[:idx]
+	}
+	firstSegment = filepath.FromSlash(firstSegment)
+	if firstSegment == "." || firstSegment == "" {
+		return true
+	}
+
+	for _, root := range projectRoots {
+		if root == "" {
+			continue
+		}
+		candidate := filepath.Join(root, firstSegment)
+		if _, err := os.Stat(candidate); err == nil {
+			return true
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), firstSegment) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func selectWorkspaceProjects(ws *config.Workspace, selectedProjects []string) []config.ProjectEntry {
+	if ws == nil {
+		return nil
+	}
+	if len(selectedProjects) == 0 {
+		return ws.Projects
+	}
+
+	selectedSet := make(map[string]struct{}, len(selectedProjects))
+	for _, p := range selectedProjects {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			selectedSet[p] = struct{}{}
+		}
+	}
+
+	selectedEntries := make([]config.ProjectEntry, 0, len(selectedSet))
+	for _, p := range ws.Projects {
+		if _, ok := selectedSet[p.Name]; ok {
+			selectedEntries = append(selectedEntries, p)
+		}
+	}
+	return selectedEntries
+}
+
+func workspaceProjectRoots(projects []config.ProjectEntry) []string {
+	roots := make([]string, 0, len(projects))
+	for _, p := range projects {
+		if p.Path != "" {
+			roots = append(roots, p.Path)
+		}
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+func listWorkspaceProjectNames(projects []config.ProjectEntry) []string {
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		if p.Name != "" {
+			names = append(names, p.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func workspacePathExamples(projects []config.ProjectEntry) []string {
+	examples := make([]string, 0, 6)
+	seen := make(map[string]struct{})
+
+	add := func(example string) {
+		example = strings.Trim(strings.TrimSpace(filepath.ToSlash(example)), "/")
+		if example == "" {
+			return
+		}
+		if _, ok := seen[example]; ok {
+			return
+		}
+		seen[example] = struct{}{}
+		examples = append(examples, example)
+	}
+
+	for _, p := range projects {
+		if len(examples) >= 6 || p.Path == "" {
+			break
+		}
+
+		srcCandidate := filepath.Join(p.Path, "src")
+		if st, err := os.Stat(srcCandidate); err == nil && st.IsDir() {
+			add("src")
+		}
+
+		entries, err := os.ReadDir(p.Path)
+		if err != nil {
+			continue
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			add(name)
+			if e.IsDir() {
+				nestedSrc := filepath.Join(p.Path, name, "src")
+				if st, err := os.Stat(nestedSrc); err == nil && st.IsDir() {
+					add(filepath.Join(name, "src"))
+				}
+			}
+			if len(examples) >= 6 {
+				break
+			}
+		}
+	}
+
+	if len(examples) == 0 {
+		examples = append(examples, "src")
+	}
+	return examples
+}
+
+func buildWorkspacePathValidationError(path string, selectedProjects, selectedProjectRoots, exampleValidPaths []string, details string) string {
+	sort.Strings(selectedProjects)
+	sort.Strings(selectedProjectRoots)
+	sort.Strings(exampleValidPaths)
+
+	hint := map[string]any{
+		"reason":                 "path_not_within_selected_project",
+		"path":                   path,
+		"selected_projects":      selectedProjects,
+		"selected_project_roots": selectedProjectRoots,
+		"example_valid_paths":    exampleValidPaths,
+	}
+	if details != "" {
+		hint["details"] = details
+	}
+
+	encoded, err := json.Marshal(hint)
+	if err != nil {
+		return fmt.Sprintf("invalid path parameter: %s", details)
+	}
+	return string(encoded)
+}
+
+func workspacePathHasIndexedFiles(ctx context.Context, st store.VectorStore, workspaceName string, selectedProjects []string, normalizedPath string) (bool, error) {
+	if st == nil {
+		return false, fmt.Errorf("vector store is nil")
+	}
+
+	docPaths, err := st.ListDocuments(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	selectedSet := make(map[string]struct{}, len(selectedProjects))
+	for _, p := range selectedProjects {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			selectedSet[p] = struct{}{}
+		}
+	}
+
+	normalizedPath = strings.Trim(strings.TrimSpace(filepath.ToSlash(normalizedPath)), "/")
+	for _, docPath := range docPaths {
+		parts := strings.SplitN(filepath.ToSlash(docPath), "/", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		if parts[0] != workspaceName {
+			continue
+		}
+		if len(selectedSet) > 0 {
+			if _, ok := selectedSet[parts[1]]; !ok {
+				continue
+			}
+		}
+
+		rel := strings.Trim(parts[2], "/")
+		if normalizedPath == "" || strings.HasPrefix(rel, normalizedPath) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // createWorkspaceEmbedder creates an embedder based on workspace configuration.
@@ -1313,7 +1611,10 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	// Check RPG status
-	rpgSt, _, _ := s.tryLoadRPG(ctx)
+	rpgSt, _, rpgErr := s.tryLoadRPG(ctx)
+	if rpgErr != nil && !errors.Is(rpgErr, rpg.ErrRPGIndexOutdated) {
+		log.Printf("Warning: failed to load RPG status: %v", rpgErr)
+	}
 	if rpgSt != nil {
 		status.RPGEnabled = true
 		rpgStats := rpgSt.GetGraph().Stats()
@@ -1325,6 +1626,93 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 	output, err := encodeOutput(status, format)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode status: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(output), nil
+}
+
+// handleListWorkspaces handles the grepai_list_workspaces tool call.
+func (s *Server) handleListWorkspaces(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
+
+	// Load workspace configuration
+	wsConfig, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace configuration: %v", err)), nil
+	}
+	if wsConfig == nil {
+		return mcp.NewToolResultText("[]"), nil
+	}
+
+	// Build workspace list (workspace-level information only).
+	type WorkspaceInfo struct {
+		Name string `json:"name"`
+	}
+
+	names := wsConfig.ListWorkspaces()
+	sort.Strings(names)
+
+	workspaces := make([]WorkspaceInfo, 0, len(names))
+	for _, name := range names {
+		workspaces = append(workspaces, WorkspaceInfo{Name: name})
+	}
+
+	output, err := encodeOutput(workspaces, format)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode workspaces: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(output), nil
+}
+
+// handleListProjects handles the grepai_list_projects tool call.
+func (s *Server) handleListProjects(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	workspace := s.resolveWorkspace(request.GetString("workspace", ""))
+	if workspace == "" {
+		return mcp.NewToolResultError("workspace parameter is required unless mcp-serve was started with --workspace"), nil
+	}
+
+	format := request.GetString("format", "json")
+
+	// Validate format
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
+
+	// Load workspace configuration
+	wsConfig, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace configuration: %v", err)), nil
+	}
+
+	// Get specific workspace
+	wsEntry, exists := wsConfig.Workspaces[workspace]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("workspace '%s' not found", workspace)), nil
+	}
+
+	// Build projects list from wsEntry.Projects (slice of ProjectEntry)
+	type ProjectInfo struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+
+	projects := make([]ProjectInfo, 0, len(wsEntry.Projects))
+	for _, proj := range wsEntry.Projects {
+		projects = append(projects, ProjectInfo{
+			Name: proj.Name,
+			Path: proj.Path,
+		})
+	}
+
+	output, err := encodeOutput(projects, format)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode projects: %v", err)), nil
 	}
 
 	return mcp.NewToolResultText(output), nil
@@ -1452,6 +1840,9 @@ func (s *Server) tryLoadRPG(ctx context.Context) (rpg.RPGStore, *rpg.QueryEngine
 	}
 	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(s.projectRoot))
 	if err := rpgStore.Load(ctx); err != nil {
+		if errors.Is(err, rpg.ErrRPGIndexOutdated) {
+			return nil, nil, rpg.ErrRPGIndexOutdated
+		}
 		return nil, nil, fmt.Errorf("failed to load RPG store: %w", err)
 	}
 	graph := rpgStore.GetGraph()
@@ -1481,7 +1872,13 @@ func (s *Server) handleRPGSearch(ctx context.Context, request mcp.CallToolReques
 	}
 
 	// Load RPG
-	rpgSt, qe, _ := s.tryLoadRPG(ctx)
+	rpgSt, qe, loadErr := s.tryLoadRPG(ctx)
+	if errors.Is(loadErr, rpg.ErrRPGIndexOutdated) {
+		return mcp.NewToolResultError("RPG index is outdated; run 'grepai watch' to rebuild"), nil
+	}
+	if loadErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load RPG: %v", loadErr)), nil
+	}
 	if rpgSt == nil {
 		return mcp.NewToolResultError("RPG is not enabled or index is empty"), nil
 	}
@@ -1550,7 +1947,13 @@ func (s *Server) handleRPGFetch(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	// Load RPG
-	rpgSt, qe, _ := s.tryLoadRPG(ctx)
+	rpgSt, qe, loadErr := s.tryLoadRPG(ctx)
+	if errors.Is(loadErr, rpg.ErrRPGIndexOutdated) {
+		return mcp.NewToolResultError("RPG index is outdated; run 'grepai watch' to rebuild"), nil
+	}
+	if loadErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load RPG: %v", loadErr)), nil
+	}
 	if rpgSt == nil {
 		return mcp.NewToolResultError("RPG is not enabled or index is empty"), nil
 	}
@@ -1599,7 +2002,13 @@ func (s *Server) handleRPGExplore(ctx context.Context, request mcp.CallToolReque
 	}
 
 	// Load RPG
-	rpgSt, qe, _ := s.tryLoadRPG(ctx)
+	rpgSt, qe, loadErr := s.tryLoadRPG(ctx)
+	if errors.Is(loadErr, rpg.ErrRPGIndexOutdated) {
+		return mcp.NewToolResultError("RPG index is outdated; run 'grepai watch' to rebuild"), nil
+	}
+	if loadErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load RPG: %v", loadErr)), nil
+	}
 	if rpgSt == nil {
 		return mcp.NewToolResultError("RPG is not enabled or index is empty"), nil
 	}

@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
@@ -394,6 +396,172 @@ func TestRegisterTools_should_include_workspace_param_on_index_status(t *testing
 
 	if _, ok := props["workspace"]; !ok {
 		t.Error("expected 'workspace' property in grepai_index_status schema")
+	}
+}
+
+func TestRegisterTools_should_document_search_path_scope_and_examples(t *testing.T) {
+	s := &Server{projectRoot: "/tmp/test-project"}
+	s.mcpServer = server.NewMCPServer("grepai-test", "1.0.0")
+	s.registerTools()
+
+	tools := s.mcpServer.ListTools()
+	searchTool, ok := tools["grepai_search"]
+	if !ok {
+		t.Fatalf("tool %q not registered", "grepai_search")
+	}
+
+	desc := searchTool.Tool.Description
+	if !strings.Contains(desc, "workspace-only mode") {
+		t.Fatalf("search tool description missing workspace-only example: %q", desc)
+	}
+	if !strings.Contains(desc, "workspace + projects mode") {
+		t.Fatalf("search tool description missing workspace+projects example: %q", desc)
+	}
+
+	pathPropRaw, ok := searchTool.Tool.InputSchema.Properties["path"]
+	if !ok {
+		t.Fatalf("path property missing from grepai_search schema")
+	}
+	pathProp, ok := pathPropRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("path property is not object, got %T", pathPropRaw)
+	}
+	pathDesc, _ := pathProp["description"].(string)
+	if !strings.Contains(pathDesc, "relative to each selected project root") {
+		t.Fatalf("path description missing selected project root guidance: %q", pathDesc)
+	}
+	if !strings.Contains(pathDesc, "not workspace root") {
+		t.Fatalf("path description missing workspace-root clarification: %q", pathDesc)
+	}
+}
+
+func TestValidateWorkspacePathForProjects_should_return_structured_hint_for_invalid_path(t *testing.T) {
+	projectRoot := filepath.Join(t.TempDir(), "ubermap_agent")
+	if err := os.MkdirAll(filepath.Join(projectRoot, "MM32", "src"), 0755); err != nil {
+		t.Fatalf("failed to create MM32/src: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "src"), 0755); err != nil {
+		t.Fatalf("failed to create src: %v", err)
+	}
+
+	ws := &config.Workspace{
+		Name: "ws",
+		Projects: []config.ProjectEntry{
+			{Name: "ubermap_agent", Path: projectRoot},
+		},
+	}
+
+	errMsg := validateWorkspacePathForProjects("_agent_work/ubermap_agent/MM32/src", ws, []string{"ubermap_agent"})
+	if errMsg == "" {
+		t.Fatal("expected structured validation error, got empty string")
+	}
+
+	var hint map[string]any
+	if err := json.Unmarshal([]byte(errMsg), &hint); err != nil {
+		t.Fatalf("expected JSON structured hint, got parse error: %v, message: %s", err, errMsg)
+	}
+
+	if got := hint["reason"]; got != "path_not_within_selected_project" {
+		t.Fatalf("expected reason path_not_within_selected_project, got %v", got)
+	}
+
+	roots, ok := hint["selected_project_roots"].([]any)
+	if !ok || len(roots) == 0 {
+		t.Fatalf("expected non-empty selected_project_roots, got %#v", hint["selected_project_roots"])
+	}
+	foundRoot := false
+	for _, r := range roots {
+		if root, ok := r.(string); ok && root == projectRoot {
+			foundRoot = true
+			break
+		}
+	}
+	if !foundRoot {
+		t.Fatalf("expected selected_project_roots to include %q, got %#v", projectRoot, roots)
+	}
+
+	examples, ok := hint["example_valid_paths"].([]any)
+	if !ok || len(examples) == 0 {
+		t.Fatalf("expected non-empty example_valid_paths, got %#v", hint["example_valid_paths"])
+	}
+	hasMM32Src := false
+	for _, e := range examples {
+		if example, ok := e.(string); ok && example == "MM32/src" {
+			hasMM32Src = true
+			break
+		}
+	}
+	if !hasMM32Src {
+		t.Fatalf("expected MM32/src in example_valid_paths, got %#v", examples)
+	}
+}
+
+func TestValidateWorkspacePathForProjects_should_accept_valid_project_relative_path(t *testing.T) {
+	projectRoot := filepath.Join(t.TempDir(), "ubermap_agent")
+	if err := os.MkdirAll(filepath.Join(projectRoot, "MM32", "src"), 0755); err != nil {
+		t.Fatalf("failed to create MM32/src: %v", err)
+	}
+
+	ws := &config.Workspace{
+		Name: "ws",
+		Projects: []config.ProjectEntry{
+			{Name: "ubermap_agent", Path: projectRoot},
+		},
+	}
+
+	errMsg := validateWorkspacePathForProjects("MM32/src", ws, []string{"ubermap_agent"})
+	if errMsg != "" {
+		t.Fatalf("expected valid path without error, got: %s", errMsg)
+	}
+}
+
+func TestWorkspacePathHasIndexedFiles_should_detect_matching_paths(t *testing.T) {
+	ctx := context.Background()
+	mockStore := NewMockMCPStore()
+	if err := mockStore.SaveChunks(ctx, []store.Chunk{
+		{
+			ID:       "1",
+			FilePath: "tymemud/tymemud/MM32/src/a.go",
+		},
+		{
+			ID:       "2",
+			FilePath: "tymemud/tymemud/docs/readme.md",
+		},
+	}); err != nil {
+		t.Fatalf("failed to save chunks: %v", err)
+	}
+
+	found, err := workspacePathHasIndexedFiles(ctx, mockStore, "tymemud", []string{"tymemud"}, "MM32/src")
+	if err != nil {
+		t.Fatalf("workspacePathHasIndexedFiles returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected matching indexed files for MM32/src")
+	}
+}
+
+func TestWorkspacePathHasIndexedFiles_should_report_no_match_for_invalid_path(t *testing.T) {
+	ctx := context.Background()
+	mockStore := NewMockMCPStore()
+	if err := mockStore.SaveChunks(ctx, []store.Chunk{
+		{
+			ID:       "1",
+			FilePath: "tymemud/tymemud/MM32/src/a.go",
+		},
+		{
+			ID:       "2",
+			FilePath: "tymemud/tymemud/docs/readme.md",
+		},
+	}); err != nil {
+		t.Fatalf("failed to save chunks: %v", err)
+	}
+
+	found, err := workspacePathHasIndexedFiles(ctx, mockStore, "tymemud", []string{"tymemud"}, "_agent_work/ubermap_agent/MM32/src")
+	if err != nil {
+		t.Fatalf("workspacePathHasIndexedFiles returned error: %v", err)
+	}
+	if found {
+		t.Fatal("expected no indexed files for invalid path prefix")
 	}
 }
 

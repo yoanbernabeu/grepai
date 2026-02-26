@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/internal/fileutil"
 )
 
 // GOBSymbolStore implements SymbolStore using GOB encoding.
 type GOBSymbolStore struct {
 	indexPath         string
+	lockPath          string
 	index             *SymbolIndex
 	fileIndex         map[string]bool
 	fileContentHashes map[string]string
@@ -29,6 +32,7 @@ type gobSymbolData struct {
 func NewGOBSymbolStore(indexPath string) *GOBSymbolStore {
 	return &GOBSymbolStore{
 		indexPath: indexPath,
+		lockPath:  indexPath + ".lock",
 		index: &SymbolIndex{
 			Symbols:    make(map[string][]Symbol),
 			References: make(map[string][]Reference),
@@ -45,6 +49,22 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return s.loadUnlocked()
+	}
+	defer lockFile.Close()
+	if err := fileutil.FlockShared(lockFile, false); err != nil {
+		return s.loadUnlocked()
+	}
+	defer func() {
+		_ = fileutil.Funlock(lockFile)
+	}()
+
+	return s.loadUnlocked()
+}
+
+func (s *GOBSymbolStore) loadUnlocked() error {
 	file, err := os.Open(s.indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -84,19 +104,29 @@ func (s *GOBSymbolStore) Load(ctx context.Context) error {
 
 // Persist writes the index to storage.
 func (s *GOBSymbolStore) Persist(ctx context.Context) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if err := ensureParentDir(s.indexPath); err != nil {
+	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare symbol index directory: %w", err)
 	}
 
-	file, err := os.Create(s.indexPath)
+	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create symbol index file: %w", err)
+		return s.persistUnlocked()
 	}
-	defer file.Close()
+	defer lockFile.Close()
+	if err := fileutil.FlockExclusive(lockFile, false); err != nil {
+		return s.persistUnlocked()
+	}
+	defer func() {
+		_ = fileutil.Funlock(lockFile)
+	}()
 
+	return s.persistUnlocked()
+}
+
+func (s *GOBSymbolStore) persistUnlocked() error {
 	s.index.UpdatedAt = time.Now()
 	data := gobSymbolData{
 		Index:             *s.index,
@@ -104,16 +134,36 @@ func (s *GOBSymbolStore) Persist(ctx context.Context) error {
 		FileContentHashes: s.fileContentHashes,
 	}
 
-	if err := gob.NewEncoder(file).Encode(data); err != nil {
-		return fmt.Errorf("failed to encode symbol index: %w", err)
+	tmpFile, err := os.CreateTemp(filepath.Dir(s.indexPath), filepath.Base(s.indexPath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create symbol index temp file: %w", err)
 	}
 
-	return nil
-}
+	tmpPath := tmpFile.Name()
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-func ensureParentDir(filePath string) error {
-	dir := filepath.Dir(filePath)
-	return os.MkdirAll(dir, 0755)
+	if err := gob.NewEncoder(tmpFile).Encode(data); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("failed to encode symbol index: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("failed to sync symbol index temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close symbol index temp file: %w", err)
+	}
+	if err := fileutil.ReplaceFileAtomically(tmpPath, s.indexPath); err != nil {
+		return fmt.Errorf("failed to replace symbol index file: %w", err)
+	}
+	cleanupTemp = false
+
+	return nil
 }
 
 // SaveFile persists symbols and references for a file.

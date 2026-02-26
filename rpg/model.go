@@ -7,34 +7,43 @@ import (
 )
 
 // NodeKind represents the type of node in the RPG graph.
+// NodeKind distinguishes between implementation nodes and hierarchy nodes.
+// In paper terms:
+// - V_L (Low-level): File, Symbol, Chunk
+// - V_H (High-level): Area, Category, Subcategory
 type NodeKind string
 
 const (
-	KindArea        NodeKind = "area"        // functional area (top level)
-	KindCategory    NodeKind = "category"    // category within an area
-	KindSubcategory NodeKind = "subcategory" // subcategory within a category
-	KindFile        NodeKind = "file"        // source file
-	KindSymbol      NodeKind = "symbol"      // function/method/class/type
-	KindChunk       NodeKind = "chunk"       // vector chunk reference
+	KindArea        NodeKind = "area"        // functional area (top level) [V_H]
+	KindCategory    NodeKind = "category"    // category within an area [V_H]
+	KindSubcategory NodeKind = "subcategory" // subcategory within a category [V_H]
+	KindFile        NodeKind = "file"        // source file [V_L]
+	KindSymbol      NodeKind = "symbol"      // function/method/class/type [V_L]
+	KindChunk       NodeKind = "chunk"       // vector chunk reference [V_L]
 )
 
 // EdgeType represents the type of relationship between nodes.
+// EdgeType defines the relationship between nodes.
+// In paper terms:
+// - E_feature (Functional): EdgeFeatureParent, EdgeContains
+// - E_dep (Dependency): EdgeInvokes, EdgeImports, EdgeSemanticSim
 type EdgeType string
 
 const (
-	EdgeFeatureParent EdgeType = "feature_parent" // child -> parent in hierarchy
-	EdgeContains      EdgeType = "contains"       // file contains symbol
-	EdgeInvokes       EdgeType = "invokes"        // symbol calls symbol
-	EdgeImports       EdgeType = "imports"        // file imports file/package
-	EdgeMapsToChunk   EdgeType = "maps_to_chunk"  // symbol maps to vector chunk
-	EdgeSemanticSim   EdgeType = "semantic_sim"   // symbols with similar features/co-call patterns
+	EdgeFeatureParent EdgeType = "feature_parent" // parent -> child in feature hierarchy [E_feature]
+	EdgeContains      EdgeType = "contains"       // container -> contained implementation (file -> symbol) [E_feature]
+	EdgeInvokes       EdgeType = "invokes"        // symbol calls symbol [E_dep]
+	EdgeImports       EdgeType = "imports"        // file imports file/package [E_dep]
+	EdgeMapsToChunk   EdgeType = "maps_to_chunk"  // symbol maps to vector chunk [Implementation]
+	EdgeSemanticSim   EdgeType = "semantic_sim"   // symbols with similar features/co-call patterns [Implementation]
 )
 
 // Node represents a node in the RPG graph.
 type Node struct {
 	ID            string    `json:"id"`
 	Kind          NodeKind  `json:"kind"`
-	Feature       string    `json:"feature"`               // semantic feature label (verb-object)
+	Feature       string    `json:"feature"`               // primary semantic feature label (kebab-case)
+	Features      []string  `json:"features,omitempty"`    // atomic semantic features (verb-object phrases)
 	Path          string    `json:"path,omitempty"`        // file path (for file/symbol/chunk nodes)
 	SymbolName    string    `json:"symbol_name,omitempty"` // symbol name (for symbol nodes)
 	Receiver      string    `json:"receiver,omitempty"`    // Go receiver type
@@ -44,6 +53,7 @@ type Node struct {
 	Signature     string    `json:"signature,omitempty"`      // function signature
 	ChunkID       string    `json:"chunk_id,omitempty"`       // linked vector chunk ID
 	SemanticLabel string    `json:"semantic_label,omitempty"` // enriched label with semantic context
+	Summary       string    `json:"summary,omitempty"`        // high-level semantic summary (LLM generated)
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
@@ -94,6 +104,8 @@ func NewGraph() *Graph {
 // AddNode adds or updates a node and maintains indexes.
 // If a node with the same ID already exists, old index entries are removed first
 // to prevent stale reference accumulation.
+//
+// TODO: consider map[string]int index for O(1) stale-entry removal during bulk operations
 func (g *Graph) AddNode(n *Node) {
 	// If node already exists, remove old index entries first
 	if old, exists := g.Nodes[n.ID]; exists {
@@ -274,6 +286,48 @@ func (g *Graph) RemoveEdgesBetween(from, to string) {
 	}
 }
 
+// RemoveEdgesBetweenOfType removes edges of a specific type between two nodes.
+func (g *Graph) RemoveEdgesBetweenOfType(from, to string, edgeType EdgeType) {
+	// Remove from main edge list
+	filtered := make([]*Edge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		if !(e.From == from && e.To == to && e.Type == edgeType) {
+			filtered = append(filtered, e)
+		}
+	}
+	g.Edges = filtered
+
+	// Remove from forward adjacency
+	if edges, ok := g.adjForward[from]; ok {
+		cleaned := make([]*Edge, 0, len(edges))
+		for _, e := range edges {
+			if !(e.To == to && e.Type == edgeType) {
+				cleaned = append(cleaned, e)
+			}
+		}
+		if len(cleaned) == 0 {
+			delete(g.adjForward, from)
+		} else {
+			g.adjForward[from] = cleaned
+		}
+	}
+
+	// Remove from reverse adjacency
+	if edges, ok := g.adjReverse[to]; ok {
+		cleaned := make([]*Edge, 0, len(edges))
+		for _, e := range edges {
+			if !(e.From == from && e.Type == edgeType) {
+				cleaned = append(cleaned, e)
+			}
+		}
+		if len(cleaned) == 0 {
+			delete(g.adjReverse, to)
+		} else {
+			g.adjReverse[to] = cleaned
+		}
+	}
+}
+
 // RemoveEdgesIf removes edges that match the predicate and rebuilds edge indexes.
 func (g *Graph) RemoveEdgesIf(predicate func(*Edge) bool) {
 	if predicate == nil {
@@ -423,6 +477,8 @@ func (g *Graph) Stats() GraphStats {
 // For files: "file:<path>"
 // For hierarchy: "area:<name>", "cat:<parent>/<name>", "subcat:<parent>/<name>"
 // For chunks: "chunk:<chunkID>"
+//
+// TODO: consider adding ParseNodeID to avoid prefix-stripping in callers
 func MakeNodeID(kind NodeKind, parts ...string) string {
 	switch kind {
 	case KindSymbol:

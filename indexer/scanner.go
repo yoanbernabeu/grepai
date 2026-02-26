@@ -139,15 +139,16 @@ func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
 			return nil
 		}
 
-		// Skip ignored paths
-		if s.ignore.ShouldIgnore(relPath) {
-			if d.IsDir() {
+		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
+		if d.IsDir() {
+			if s.ignore.ShouldSkipDir(relPath) {
 				return filepath.SkipDir
 			}
-			return nil
+			return nil // Descend into the directory
 		}
 
-		if d.IsDir() {
+		// Skip ignored files
+		if s.ignore.ShouldIgnore(relPath) {
 			return nil
 		}
 
@@ -200,15 +201,16 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 			return nil
 		}
 
-		// Skip ignored paths
-		if s.ignore.ShouldIgnore(relPath) {
-			if d.IsDir() {
+		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
+		if d.IsDir() {
+			if s.ignore.ShouldSkipDir(relPath) {
 				return filepath.SkipDir
 			}
-			return nil
+			return nil // Descend into the directory
 		}
 
-		if d.IsDir() {
+		// Skip ignored files
+		if s.ignore.ShouldIgnore(relPath) {
 			return nil
 		}
 
