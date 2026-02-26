@@ -233,7 +233,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		enrichTraceWithRPG(projectRoot, cfg, &result)
 	}
 
-	return outputTraceResult(result, traceViewCallers)
+	return outputAndRecord(result, traceViewCallers, projectRoot, gstats.TraceCallers, len(result.Callers))
 }
 
 func runTraceCallees(cmd *cobra.Command, args []string) error {
@@ -367,7 +367,7 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 		enrichTraceWithRPG(projectRoot, cfg, &result)
 	}
 
-	return outputTraceResult(result, traceViewCallees)
+	return outputAndRecord(result, traceViewCallees, projectRoot, gstats.TraceCallees, len(result.Callees))
 }
 
 func runTraceGraph(cmd *cobra.Command, args []string) error {
@@ -473,7 +473,35 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		enrichTraceWithRPG(projectRoot, cfg, &result)
 	}
 
-	return outputTraceResult(result, traceViewGraph)
+	nodeCount := 0
+	if result.Graph != nil {
+		nodeCount = len(result.Graph.Nodes)
+	}
+
+	return outputAndRecord(result, traceViewGraph, projectRoot, gstats.TraceGraph, nodeCount)
+}
+
+func outputAndRecord(result trace.TraceResult, view traceViewKind, projectRoot, commandType string, resultCount int) error {
+	if traceJSON {
+		outputStr := captureJSON(result)
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, commandType, resultCount, outputStr)
+		return nil
+	}
+	if traceTOON {
+		outputStr, err := captureTOON(result)
+		if err != nil {
+			return err
+		}
+		fmt.Print(outputStr)
+		recordTraceStats(projectRoot, commandType, resultCount, outputStr)
+		return nil
+	}
+	if err := outputTraceResult(result, view); err != nil {
+		return err
+	}
+	recordTraceStats(projectRoot, commandType, resultCount, "")
+	return nil
 }
 
 // enrichTraceWithRPG enriches all symbols in a TraceResult with RPG feature paths.
