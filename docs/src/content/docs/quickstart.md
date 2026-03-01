@@ -100,6 +100,15 @@ func handleAPIError(w http.ResponseWriter, err error) {
 }
 ```
 
+## 5. Connect to Your AI Agent
+
+grepai is designed to work with AI coding agents. After indexing, connect it to your agent via [MCP](/grepai/mcp/) (recommended) or the [subagent](/grepai/subagent/) integration:
+
+- **[MCP Integration](/grepai/mcp/)** — Exposes grepai as native tools (search, trace, index status) to any MCP-compatible agent
+- **[Claude Code Subagent](/grepai/subagent/)** — Adds a specialized exploration agent that uses grepai for code discovery
+
+Without this step, your index is built but your agent doesn't know it exists.
+
 ## Tips for Better Searches
 
 - **Be descriptive**: "user login validation" works better than "login"
@@ -113,4 +122,3 @@ func handleAPIError(w http.ResponseWriter, err error) {
 - [Call Graph Analysis](/grepai/trace/) - Explore function relationships
 - [Configuration](/grepai/configuration/) - Customize chunking, embedders, and storage
 - [Commands Reference](/grepai/commands/grepai/) - Full CLI documentation
-- [AI Agent Setup](/grepai/commands/grepai_agent-setup/) - Integrate with Cursor or Claude Code
