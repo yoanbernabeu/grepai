@@ -16,6 +16,7 @@ var (
 	statsJSON    bool
 	statsHistory bool
 	statsLimit   int
+	statsNoUI    bool
 )
 
 var statsCmd = &cobra.Command{
@@ -35,6 +36,7 @@ func init() {
 	statsCmd.Flags().BoolVarP(&statsJSON, "json", "j", false, "Output results in JSON format")
 	statsCmd.Flags().BoolVar(&statsHistory, "history", false, "Show per-day history breakdown")
 	statsCmd.Flags().IntVarP(&statsLimit, "limit", "l", 30, "Max days shown with --history")
+	statsCmd.Flags().BoolVar(&statsNoUI, "no-ui", false, "Print plain text instead of interactive UI")
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
@@ -64,6 +66,10 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	if statsJSON {
 		return outputStatsJSON(summary, entries)
+	}
+
+	if shouldUseStatsUI(isInteractiveTerminal(), statsNoUI) && !statsHistory {
+		return runStatsUI(summary, entries, cfg.Embedder.Provider)
 	}
 
 	return outputStatsHuman(summary, entries, cfg.Embedder.Provider)
