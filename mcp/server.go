@@ -1491,7 +1491,6 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 	if result.Graph != nil {
 		nodeCount = len(result.Graph.Nodes)
 	}
-	_ = symStats
 	s.recordMCPStats(stats.TraceGraph, mcpOutputMode(false, format), nodeCount, output)
 	return mcp.NewToolResultText(output), nil
 }

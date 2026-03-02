@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -127,7 +128,7 @@ func outputStatsHuman(summary stats.Summary, entries []stats.Entry, provider str
 			cmdLine += fmt.Sprintf("%s %d · ", k, v)
 		}
 	}
-	content += dimStyle.Render(trimSuffix(cmdLine, " · ")) + "\n"
+	content += dimStyle.Render(strings.TrimSuffix(cmdLine, " · ")) + "\n"
 
 	modeLine := "By mode:     "
 	for _, k := range []string{"full", "compact", "toon"} {
@@ -135,7 +136,7 @@ func outputStatsHuman(summary stats.Summary, entries []stats.Entry, provider str
 			modeLine += fmt.Sprintf("%s %d · ", k, v)
 		}
 	}
-	content += dimStyle.Render(trimSuffix(modeLine, " · ")) + "\n"
+	content += dimStyle.Render(strings.TrimSuffix(modeLine, " · ")) + "\n"
 
 	fmt.Println(boxStyle.Render(content))
 
@@ -193,11 +194,4 @@ func formatInt(n int) string {
 		result += string(c)
 	}
 	return result
-}
-
-func trimSuffix(s, suffix string) string {
-	if len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix {
-		return s[:len(s)-len(suffix)]
-	}
-	return s
 }

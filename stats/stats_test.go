@@ -15,7 +15,11 @@ import (
 
 func writeStatsFile(t *testing.T, dir string, lines []string) {
 	t.Helper()
-	path := filepath.Join(dir, stats.StatsFileName)
+	grepaiDir := filepath.Join(dir, ".grepai")
+	if err := os.MkdirAll(grepaiDir, 0o755); err != nil {
+		t.Fatalf("mkdir .grepai: %v", err)
+	}
+	path := filepath.Join(grepaiDir, stats.StatsFileName)
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create stats file: %v", err)

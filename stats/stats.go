@@ -98,10 +98,10 @@ type DaySummary struct {
 
 // StatsPath returns the absolute path of the stats NDJSON file.
 func StatsPath(projectRoot string) string {
-	return filepath.Join(projectRoot, StatsFileName)
+	return filepath.Join(projectRoot, ".grepai", StatsFileName)
 }
 
 // LockPath returns the absolute path of the stats lock file.
 func LockPath(projectRoot string) string {
-	return filepath.Join(projectRoot, LockFileName)
+	return filepath.Join(projectRoot, ".grepai", LockFileName)
 }

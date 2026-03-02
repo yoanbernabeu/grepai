@@ -329,15 +329,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(&buf, "Found %d results for: %q\n\n", len(results), query)
 
 	for i, result := range results {
-		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
-		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		fmt.Fprintf(&buf, "─── Result %d (score: %.4f) ───\n", i+1, result.Score)
+		fmt.Fprintf(&buf, "File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
 		if enrichments[i].FeaturePath != "" {
-			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+			fmt.Fprintf(&buf, "Feature: %s\n", enrichments[i].FeaturePath)
 		}
 		if enrichments[i].SymbolName != "" {
-			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+			fmt.Fprintf(&buf, "Symbol: %s\n", enrichments[i].SymbolName)
 		}
-		fmt.Println()
+		buf.WriteString("\n")
 
 		lines := strings.Split(result.Chunk.Content, "\n")
 		startIdx := 0
@@ -679,24 +679,28 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 		return nil
 	}
 
+	projectRoot, _ := config.FindProjectRoot()
+
 	if len(results) == 0 {
 		fmt.Println("No results found.")
+		recordSearchStats(projectRoot, stats.Search, stats.Full, 0, "")
 		return nil
 	}
 
 	// Display results
-	fmt.Printf("Found %d results for: %q in workspace %q\n\n", len(results), query, searchWorkspace)
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "Found %d results for: %q in workspace %q\n\n", len(results), query, searchWorkspace)
 
 	for i, result := range results {
-		fmt.Printf("─── Result %d (score: %.4f) ───\n", i+1, result.Score)
-		fmt.Printf("File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
+		fmt.Fprintf(&buf, "─── Result %d (score: %.4f) ───\n", i+1, result.Score)
+		fmt.Fprintf(&buf, "File: %s:%d-%d\n", result.Chunk.FilePath, result.Chunk.StartLine, result.Chunk.EndLine)
 		if enrichments[i].FeaturePath != "" {
-			fmt.Printf("Feature: %s\n", enrichments[i].FeaturePath)
+			fmt.Fprintf(&buf, "Feature: %s\n", enrichments[i].FeaturePath)
 		}
 		if enrichments[i].SymbolName != "" {
-			fmt.Printf("Symbol: %s\n", enrichments[i].SymbolName)
+			fmt.Fprintf(&buf, "Symbol: %s\n", enrichments[i].SymbolName)
 		}
-		fmt.Println()
+		buf.WriteString("\n")
 
 		// Display content with line numbers
 		lines := strings.Split(result.Chunk.Content, "\n")
@@ -707,14 +711,17 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 
 		lineNum := result.Chunk.StartLine
 		for j := startIdx; j < len(lines) && j < startIdx+15; j++ {
-			fmt.Printf("%4d │ %s\n", lineNum, lines[j])
+			fmt.Fprintf(&buf, "%4d │ %s\n", lineNum, lines[j])
 			lineNum++
 		}
 		if len(lines)-startIdx > 15 {
-			fmt.Printf("     │ ... (%d more lines)\n", len(lines)-startIdx-15)
+			fmt.Fprintf(&buf, "     │ ... (%d more lines)\n", len(lines)-startIdx-15)
 		}
-		fmt.Println()
+		buf.WriteString("\n")
 	}
 
+	outputStr := buf.String()
+	fmt.Print(outputStr)
+	recordSearchStats(projectRoot, stats.Search, stats.Full, len(results), outputStr)
 	return nil
 }

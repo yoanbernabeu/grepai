@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Recorder appends stat entries to the local NDJSON stats file.
@@ -54,6 +55,9 @@ func (r *Recorder) Record(ctx context.Context, e Entry) error {
 }
 
 func (r *Recorder) appendLine(line []byte) error {
+	if err := os.MkdirAll(filepath.Dir(r.statsPath), 0o755); err != nil {
+		return fmt.Errorf("stats: create dir: %w", err)
+	}
 	f, err := os.OpenFile(r.statsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("stats: open file: %w", err)
