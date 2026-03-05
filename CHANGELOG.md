@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shell Completion**: New `grepai completion [zsh|bash|fish|powershell]` command for shell autocompletion (#175)
+  - Static completions with descriptions for `--provider`, `--backend`, `--mode` flags
+  - Dynamic completions for `--workspace` and `--project` flags (loaded from config)
+  - Positional argument completions for workspace subcommands (names, project names, directories)
+  - Installation instructions for Zsh (eval, Oh-My-Zsh plugin, manual fpath), Bash, Fish, PowerShell
 - **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#107)
 
 ## [0.34.0] - 2026-02-24
