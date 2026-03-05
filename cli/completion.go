@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 )
@@ -49,7 +47,7 @@ var completionZshCmd = &cobra.Command{
 	Short: "Generate zsh completion script",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return rootCmd.GenZshCompletion(os.Stdout)
+		return rootCmd.GenZshCompletion(cmd.OutOrStdout())
 	},
 }
 
@@ -58,7 +56,7 @@ var completionBashCmd = &cobra.Command{
 	Short: "Generate bash completion script",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return rootCmd.GenBashCompletionV2(os.Stdout, true)
+		return rootCmd.GenBashCompletionV2(cmd.OutOrStdout(), true)
 	},
 }
 
@@ -67,7 +65,7 @@ var completionFishCmd = &cobra.Command{
 	Short: "Generate fish completion script",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return rootCmd.GenFishCompletion(os.Stdout, true)
+		return rootCmd.GenFishCompletion(cmd.OutOrStdout(), true)
 	},
 }
 
@@ -76,7 +74,7 @@ var completionPowershellCmd = &cobra.Command{
 	Short: "Generate powershell completion script",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
+		return rootCmd.GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
 	},
 }
 

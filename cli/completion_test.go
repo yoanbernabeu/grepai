@@ -4,102 +4,71 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
 )
 
 func TestCompletionZsh_should_output_compdef(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"completion", "zsh"})
+	defer rootCmd.SetOut(nil)
 
-	cmd := rootCmd
-	cmd.SetArgs([]string{"completion", "zsh"})
-	err := cmd.Execute()
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("completion zsh failed: %v", err)
 	}
 
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
 	output := buf.String()
-
 	if len(output) == 0 {
 		t.Fatal("completion zsh produced empty output")
 	}
-	// Cobra's zsh completion should contain compdef or _grepai
-	if !bytes.Contains([]byte(output), []byte("compdef")) && !bytes.Contains([]byte(output), []byte("_grepai")) {
+	if !strings.Contains(output, "compdef") && !strings.Contains(output, "_grepai") {
 		t.Fatalf("completion zsh output missing expected markers, got: %s", output[:min(200, len(output))])
 	}
 }
 
 func TestCompletionBash_should_output_valid_script(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"completion", "bash"})
+	defer rootCmd.SetOut(nil)
 
-	cmd := rootCmd
-	cmd.SetArgs([]string{"completion", "bash"})
-	err := cmd.Execute()
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("completion bash failed: %v", err)
 	}
 
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
-
-	if len(output) == 0 {
+	if buf.Len() == 0 {
 		t.Fatal("completion bash produced empty output")
 	}
 }
 
 func TestCompletionFish_should_output_valid_script(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"completion", "fish"})
+	defer rootCmd.SetOut(nil)
 
-	cmd := rootCmd
-	cmd.SetArgs([]string{"completion", "fish"})
-	err := cmd.Execute()
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("completion fish failed: %v", err)
 	}
 
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
 	if buf.Len() == 0 {
 		t.Fatal("completion fish produced empty output")
 	}
 }
 
 func TestCompletionPowershell_should_output_valid_script(t *testing.T) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"completion", "powershell"})
+	defer rootCmd.SetOut(nil)
 
-	cmd := rootCmd
-	cmd.SetArgs([]string{"completion", "powershell"})
-	err := cmd.Execute()
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("completion powershell failed: %v", err)
 	}
 
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
 	if buf.Len() == 0 {
 		t.Fatal("completion powershell produced empty output")
 	}
