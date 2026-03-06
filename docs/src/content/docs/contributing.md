@@ -86,8 +86,10 @@ grepai/
 ├── config/           # Configuration loading
 ├── embedder/         # Embedding providers
 │   ├── embedder.go   # Interface
+│   ├── factory.go    # Provider factory
 │   ├── ollama.go
-│   └── openai.go
+│   ├── openai.go
+│   └── voyageai.go
 ├── store/            # Vector storage
 │   ├── store.go      # Interface
 │   ├── gob.go

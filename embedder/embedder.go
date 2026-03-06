@@ -33,4 +33,8 @@ type BatchEmbedder interface {
 	// It returns results mapped back to their source files, or an error if any batch fails.
 	// The progress callback is called for each batch completion or retry attempt.
 	EmbedBatches(ctx context.Context, batches []Batch, progress BatchProgress) ([]BatchResult, error)
+
+	// BatchConfig returns the provider-specific batch configuration.
+	// Each provider may have different API limits for batch size and token count.
+	BatchConfig() BatchConfig
 }
