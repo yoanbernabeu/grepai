@@ -821,6 +821,14 @@ end
 M.qux = function(x)
   return baz(x)
 end
+
+M["zip"] = function(x)
+  return x - 1
+end
+
+M["nested"]["zap"] = function(x)
+  return x + 3
+end
 `
 
 	symbols, err := extractor.ExtractSymbols(ctx, "test.lua", content)
@@ -844,7 +852,7 @@ end
 			t.Errorf("missing function: %s", name)
 		}
 	}
-	for _, name := range []string{"foo", "bar", "qux"} {
+	for _, name := range []string{"foo", "bar", "qux", "zip", "zap"} {
 		if !foundMethods[name] {
 			t.Errorf("missing method: %s", name)
 		}
@@ -961,6 +969,47 @@ end`
 	for _, unexpected := range []string{"hiddenCall", "longHiddenCall", "eqHiddenCall", "stringCall", "anotherStringCall"} {
 		if found[unexpected] {
 			t.Errorf("unexpected Lua artifact reference: %s", unexpected)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_DedupesAndSkipsDeclarationNoise(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function M.foo(x)
+  return x
+end
+
+function M:bar(x)
+  return x
+end
+
+function process(input)
+  M.foo(input)
+  M:bar(input)
+end`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	if len(refs) != 2 {
+		t.Fatalf("expected exactly 2 refs, got %d: %#v", len(refs), refs)
+	}
+
+	seen := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.CallerName != "process" {
+			t.Fatalf("unexpected caller %q for ref %q", ref.CallerName, ref.SymbolName)
+		}
+		seen[ref.SymbolName] = true
+	}
+
+	for _, name := range []string{"foo", "bar"} {
+		if !seen[name] {
+			t.Errorf("missing reference to %s", name)
 		}
 	}
 }

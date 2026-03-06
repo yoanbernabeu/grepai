@@ -222,7 +222,12 @@ var luaPatterns = &LanguagePatterns{
 		regexp.MustCompile(`(?m)^\s*function\s+[A-Za-z_][A-Za-z0-9_\.]*[:\.]([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 		// [local] obj.method = function(args) / [local] obj:method = function(args)
 		regexp.MustCompile(`(?m)^\s*(?:local\s+)?[A-Za-z_][A-Za-z0-9_\.]*[:\.]([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(`),
+		// [local] obj["method"] = function(args) / obj["nested"]["method"] = function(args)
+		regexp.MustCompile(`(?m)^\s*(?:local\s+)?[A-Za-z_][A-Za-z0-9_\.]*(?:\s*\[\s*["'][A-Za-z_][A-Za-z0-9_]*["']\s*\])*\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]\s*=\s*function\s*\(`),
 	},
+	// Parenthesis-free Lua calls like f "x" and f {} are intentionally unsupported in fast mode.
+	// They are easy to overmatch, and supporting them cleanly would require expanding
+	// LanguagePatterns with several Lua-only pattern types for relatively little value.
 	FunctionCall:   regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 	MethodCall:     regexp.MustCompile(`(?:\.|:)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 	BracketKeyCall: regexp.MustCompile(`\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]\s*\(`),

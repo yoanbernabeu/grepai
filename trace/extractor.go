@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -163,6 +164,9 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 		matches := patterns.FunctionCall.FindAllStringSubmatchIndex(scanContent, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
+				if isDeclarationReferenceMatch(content, patterns, match[0]) {
+					continue
+				}
 				if ignored[match[2]] {
 					continue
 				}
@@ -183,6 +187,9 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 		matches := patterns.MethodCall.FindAllStringSubmatchIndex(scanContent, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
+				if isDeclarationReferenceMatch(content, patterns, match[0]) {
+					continue
+				}
 				if ignored[match[2]] {
 					continue
 				}
@@ -194,7 +201,7 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 
 	refs = append(refs, e.extractLanguageSpecificReferences(filePath, content, lines, patterns, functionBoundaries)...)
 
-	return refs, nil
+	return dedupeReferences(refs), nil
 }
 
 // getReferenceScanContent returns the content view used for regex reference matching.
@@ -220,6 +227,42 @@ func (e *RegexExtractor) extractLanguageSpecificReferences(filePath string, cont
 	default:
 		return nil
 	}
+}
+
+// isDeclarationReferenceMatch reports whether a regex call match occurs in a declaration context.
+func isDeclarationReferenceMatch(content string, patterns *LanguagePatterns, pos int) bool {
+	if patterns == nil {
+		return false
+	}
+
+	switch patterns.Language {
+	case "lua":
+		return isLuaDeclarationReferenceMatch(content, pos)
+	default:
+		return false
+	}
+}
+
+// isLuaDeclarationReferenceMatch filters out call-like matches inside Lua function declarations.
+func isLuaDeclarationReferenceMatch(content string, pos int) bool {
+	lineStart := 0
+	if idx := strings.LastIndexByte(content[:pos], '\n'); idx >= 0 {
+		lineStart = idx + 1
+	}
+
+	lineEnd := len(content)
+	if idx := strings.IndexByte(content[pos:], '\n'); idx >= 0 {
+		lineEnd = pos + idx
+	}
+
+	line := content[lineStart:lineEnd]
+	signatureEnd := strings.IndexByte(line, ')')
+	if signatureEnd < 0 || pos >= lineStart+signatureEnd+1 {
+		return false
+	}
+
+	linePrefix := strings.TrimSpace(content[lineStart:pos])
+	return strings.HasPrefix(linePrefix, "function") || strings.HasPrefix(linePrefix, "local function")
 }
 
 // extractLuaBracketKeyReferences maps bracket-key calls like obj["foo"]() to foo.
@@ -649,6 +692,27 @@ func buildReference(filePath, content string, lines []string, name string, pos i
 		CallerFile: filePath,
 		CallerLine: caller.Line,
 	}
+}
+
+// dedupeReferences removes duplicate logical refs emitted by overlapping regex passes.
+func dedupeReferences(refs []Reference) []Reference {
+	if len(refs) < 2 {
+		return refs
+	}
+
+	seen := make(map[string]bool, len(refs))
+	deduped := make([]Reference, 0, len(refs))
+
+	for _, ref := range refs {
+		key := ref.SymbolName + "\x00" + ref.File + "\x00" + ref.CallerName + "\x00" + strconv.Itoa(ref.Line) + "\x00" + strconv.Itoa(ref.CallerLine)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, ref)
+	}
+
+	return deduped
 }
 
 // extractSignature extracts the function/method signature from content.
