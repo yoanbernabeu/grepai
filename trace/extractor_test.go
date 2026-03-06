@@ -17,6 +17,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".tsx":  true,
 		".py":   true,
 		".php":  true,
+		".lua":  true,
 		".c":    true,
 		".h":    true,
 		".zig":  true,
@@ -793,6 +794,177 @@ func run() {
 	}
 }
 
+func TestRegexExtractor_ExtractSymbols_Lua(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function helper(x)
+  return x + 1
+end
+
+function process(input)
+  return helper(input)
+end
+
+function M.foo(x)
+  return helper(x)
+end
+
+function M:bar(x)
+  return self:foo(x)
+end
+
+local baz = function(x)
+  return x * 2
+end
+
+M.qux = function(x)
+  return baz(x)
+end
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundFunctions := make(map[string]bool)
+	foundMethods := make(map[string]bool)
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindFunction:
+			foundFunctions[sym.Name] = true
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		}
+	}
+
+	for _, name := range []string{"helper", "process", "baz"} {
+		if !foundFunctions[name] {
+			t.Errorf("missing function: %s", name)
+		}
+	}
+	for _, name := range []string{"foo", "bar", "qux"} {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function helper(x)
+  return x + 1
+end
+
+local function weirdCall(x)
+  return helper(x)
+end
+
+function process(input)
+  helper(input)
+  M.foo(input)
+  M:bar(input)
+  weirdCall --[[inline comment]] (input)
+  local hello = "world" -- commentCall()
+end
+
+obj["foo"](1)
+obj["bar"]["foo"](2)
+obj["bar"]()["foo"](3)
+asdf["f"] --[[asdf ]] ()
+`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	callers := make(map[string]map[string]bool)
+	for _, ref := range refs {
+		if callers[ref.CallerName] == nil {
+			callers[ref.CallerName] = make(map[string]bool)
+		}
+		callers[ref.CallerName][ref.SymbolName] = true
+	}
+
+	for _, callee := range []string{"helper", "foo", "bar", "weirdCall"} {
+		if callers["process"] == nil || !callers["process"][callee] {
+			t.Errorf("missing process -> %s reference", callee)
+		}
+	}
+
+	if callers["process"]["commentCall"] {
+		t.Error("unexpected inline-comment artifact: commentCall")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["foo"] {
+		t.Error("missing top-level bracket-call reference to foo")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["bar"] {
+		t.Error("missing top-level bracket-call reference to bar")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["f"] {
+		t.Error("missing top-level comment-separated bracket-call reference to f")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_SkipCallResultKeyAccess(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `obj["bar"]()["foo"](1)`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	found := make(map[string]bool)
+	for _, ref := range refs {
+		found[ref.SymbolName] = true
+	}
+	if !found["bar"] {
+		t.Error("missing reference to bar")
+	}
+	if found["foo"] {
+		t.Error("unexpected reference to foo from call-result key access")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_IgnoresLongCommentsAndStrings(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function run()
+  -- hiddenCall()
+  --[[ longHiddenCall() ]]
+  --[=[ eqHiddenCall() ]=]
+  local a = [[stringCall()]]
+  local b = [=[anotherStringCall()]=]
+  realCall()
+end`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	found := make(map[string]bool)
+	for _, ref := range refs {
+		found[ref.SymbolName] = true
+	}
+	if !found["realCall"] {
+		t.Error("missing realCall reference")
+	}
+	for _, unexpected := range []string{"hiddenCall", "longHiddenCall", "eqHiddenCall", "stringCall", "anotherStringCall"} {
+		if found[unexpected] {
+			t.Errorf("unexpected Lua artifact reference: %s", unexpected)
+		}
+	}
+}
+
 func TestIsKeyword(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -816,6 +988,9 @@ func TestIsKeyword(t *testing.T) {
 		{"instanceof", "java", true},
 		{"println", "java", true},
 		{"myMethod", "java", false},
+		{"if", "lua", true},
+		{"function", "lua", true},
+		{"myFunc", "lua", false},
 	}
 
 	for _, tt := range tests {

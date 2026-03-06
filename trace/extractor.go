@@ -150,13 +150,17 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 	var refs []Reference
 	lines := strings.Split(content, "\n")
 	ignored := buildIgnoredMask(content, patterns.Language)
+	scanContent := getReferenceScanContent(content, patterns, ignored)
 
 	// Build function boundaries for caller detection
 	functionBoundaries := e.buildFunctionBoundaries(content, patterns)
+	appendRef := func(name string, pos int) {
+		refs = append(refs, buildReference(filePath, content, lines, name, pos, functionBoundaries))
+	}
 
 	// Extract function calls
 	if patterns.FunctionCall != nil {
-		matches := patterns.FunctionCall.FindAllStringSubmatchIndex(content, -1)
+		matches := patterns.FunctionCall.FindAllStringSubmatchIndex(scanContent, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
 				if ignored[match[2]] {
@@ -169,50 +173,82 @@ func (e *RegexExtractor) ExtractReferences(ctx context.Context, filePath string,
 					continue
 				}
 
-				pos := match[0]
-				line := countLines(content[:pos]) + 1
-				caller := findContainingFunction(pos, functionBoundaries)
-
-				refs = append(refs, Reference{
-					SymbolName: name,
-					File:       filePath,
-					Line:       line,
-					Context:    getLineContext(lines, line-1, 0),
-					CallerName: caller.Name,
-					CallerFile: filePath,
-					CallerLine: caller.Line,
-				})
+				appendRef(name, match[0])
 			}
 		}
 	}
 
 	// Extract method calls
 	if patterns.MethodCall != nil {
-		matches := patterns.MethodCall.FindAllStringSubmatchIndex(content, -1)
+		matches := patterns.MethodCall.FindAllStringSubmatchIndex(scanContent, -1)
 		for _, match := range matches {
 			if len(match) >= 4 {
 				if ignored[match[2]] {
 					continue
 				}
 				name := content[match[2]:match[3]]
-				pos := match[0]
-				line := countLines(content[:pos]) + 1
-				caller := findContainingFunction(pos, functionBoundaries)
-
-				refs = append(refs, Reference{
-					SymbolName: name,
-					File:       filePath,
-					Line:       line,
-					Context:    getLineContext(lines, line-1, 0),
-					CallerName: caller.Name,
-					CallerFile: filePath,
-					CallerLine: caller.Line,
-				})
+				appendRef(name, match[0])
 			}
 		}
 	}
 
+	refs = append(refs, e.extractLanguageSpecificReferences(filePath, content, lines, patterns, functionBoundaries)...)
+
 	return refs, nil
+}
+
+// getReferenceScanContent returns the content view used for regex reference matching.
+func getReferenceScanContent(content string, patterns *LanguagePatterns, ignored []bool) string {
+	if patterns == nil {
+		return content
+	}
+	if patterns.Language == "lua" {
+		return maskedContent(content, ignored)
+	}
+	return content
+}
+
+// extractLanguageSpecificReferences runs supplemental reference extraction for specific languages.
+func (e *RegexExtractor) extractLanguageSpecificReferences(filePath string, content string, lines []string, patterns *LanguagePatterns, functionBoundaries []functionBoundary) []Reference {
+	if patterns == nil {
+		return nil
+	}
+
+	switch patterns.Language {
+	case "lua":
+		return e.extractLuaBracketKeyReferences(filePath, content, lines, patterns, functionBoundaries)
+	default:
+		return nil
+	}
+}
+
+// extractLuaBracketKeyReferences maps bracket-key calls like obj["foo"]() to foo.
+// It skips call-result key accesses like obj["bar"]()["foo"]() to avoid over-linking dynamic values.
+func (e *RegexExtractor) extractLuaBracketKeyReferences(filePath string, content string, lines []string, patterns *LanguagePatterns, functionBoundaries []functionBoundary) []Reference {
+	if patterns == nil || patterns.BracketKeyCall == nil {
+		return nil
+	}
+
+	commentMask := buildLuaCommentMask(content)
+	bracketScanContent := maskedContent(content, commentMask)
+	matches := patterns.BracketKeyCall.FindAllStringSubmatchIndex(bracketScanContent, -1)
+	refs := make([]Reference, 0, len(matches))
+
+	for _, match := range matches {
+		if len(match) < 4 || commentMask[match[2]] {
+			continue
+		}
+		if prevNonSpaceByte(bracketScanContent, match[0]) == ')' {
+			continue
+		}
+		name := content[match[2]:match[3]]
+		if IsKeyword(name, patterns.Language) {
+			continue
+		}
+		refs = append(refs, buildReference(filePath, content, lines, name, match[0], functionBoundaries))
+	}
+
+	return refs
 }
 
 // buildIgnoredMask marks bytes inside strings and comments.
@@ -228,10 +264,13 @@ func buildIgnoredMask(content string, lang string) []bool {
 		stateSingleQuote
 		stateDoubleQuote
 		stateBacktick
+		stateLuaLongComment
+		stateLuaLongString
 	)
 
 	state := stateNormal
 	parenDepth := 0
+	luaLongEqCount := 0
 	for i := 0; i < len(content); i++ {
 		ch := content[i]
 		next := byte(0)
@@ -297,6 +336,44 @@ func buildIgnoredMask(content string, lang string) []bool {
 				state = stateNormal
 			}
 			continue
+		case stateLuaLongComment, stateLuaLongString:
+			mask[i] = true
+			if closeLen := luaLongBracketCloseAt(content, i, luaLongEqCount); closeLen > 0 {
+				for j := 0; j < closeLen; j++ {
+					mask[i+j] = true
+				}
+				i += closeLen - 1
+				state = stateNormal
+			}
+			continue
+		}
+
+		if lang == "lua" {
+			if ch == '-' && next == '-' {
+				mask[i] = true
+				mask[i+1] = true
+				if openLen, eqCount, ok := luaLongBracketOpenAt(content, i+2); ok {
+					for j := 0; j < openLen; j++ {
+						mask[i+2+j] = true
+					}
+					i += 1 + openLen
+					luaLongEqCount = eqCount
+					state = stateLuaLongComment
+				} else {
+					i++
+					state = stateLineComment
+				}
+				continue
+			}
+			if openLen, eqCount, ok := luaLongBracketOpenAt(content, i); ok {
+				for j := 0; j < openLen; j++ {
+					mask[i+j] = true
+				}
+				i += openLen - 1
+				luaLongEqCount = eqCount
+				state = stateLuaLongString
+				continue
+			}
 		}
 
 		if ch == '/' && next == '/' {
@@ -495,6 +572,9 @@ func findFunctionEnd(content string, start int, lang string) int {
 				return pos
 			}
 		}
+	case "lua":
+		// Lua functions end with 'end', but we need to handle nested functions and control structures.
+		return findLuaFunctionEnd(content, start)
 	}
 
 	return len(content)
@@ -555,6 +635,22 @@ func isExported(name string, lang string) bool {
 	}
 }
 
+// buildReference constructs a reference with caller and context metadata.
+func buildReference(filePath, content string, lines []string, name string, pos int, functionBoundaries []functionBoundary) Reference {
+	line := countLines(content[:pos]) + 1
+	caller := findContainingFunction(pos, functionBoundaries)
+
+	return Reference{
+		SymbolName: name,
+		File:       filePath,
+		Line:       line,
+		Context:    getLineContext(lines, line-1, 0),
+		CallerName: caller.Name,
+		CallerFile: filePath,
+		CallerLine: caller.Line,
+	}
+}
+
 // extractSignature extracts the function/method signature from content.
 func extractSignature(content string, start, end int) string {
 	// Extend to find the full signature (up to opening brace or colon)
@@ -595,4 +691,217 @@ func getLineContext(lines []string, lineIdx int, contextLines int) string {
 		result = result[:200] + "..."
 	}
 	return strings.TrimSpace(result)
+}
+
+// findLuaFunctionEnd locates the matching end of a Lua function body.
+func findLuaFunctionEnd(content string, start int) int {
+	ignored := buildIgnoredMask(content, "lua")
+	depth := 1
+	pendingLoopDo := 0
+
+	for i := start; i < len(content); {
+		if ignored[i] {
+			i++
+			continue
+		}
+		if isIdentStartASCII(content[i]) {
+			j := i + 1
+			for j < len(content) && isIdentPartASCII(content[j]) {
+				j++
+			}
+			token := content[i:j]
+			switch token {
+			case "function", "if":
+				depth++
+			case "for", "while":
+				depth++
+				pendingLoopDo++
+			case "do":
+				if pendingLoopDo > 0 {
+					pendingLoopDo--
+				} else {
+					depth++
+				}
+			case "repeat":
+				depth++
+			case "end", "until":
+				depth--
+				if depth == 0 {
+					return j
+				}
+			}
+			i = j
+			continue
+		}
+		i++
+	}
+
+	return len(content)
+}
+
+// buildLuaCommentMask marks only Lua comment bytes (line and long comments).
+// It preserves string bytes so bracket-key calls like obj["foo"]() remain matchable.
+func buildLuaCommentMask(content string) []bool {
+	mask := make([]bool, len(content))
+	const (
+		stateNormal = iota
+		stateLineComment
+		stateLongComment
+		stateSingleQuote
+		stateDoubleQuote
+		stateLongString
+	)
+
+	state := stateNormal
+	longEqCount := 0
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+		next := byte(0)
+		if i+1 < len(content) {
+			next = content[i+1]
+		}
+
+		switch state {
+		case stateLineComment:
+			mask[i] = true
+			if ch == '\n' {
+				state = stateNormal
+			}
+			continue
+		case stateLongComment:
+			mask[i] = true
+			if closeLen := luaLongBracketCloseAt(content, i, longEqCount); closeLen > 0 {
+				for j := 0; j < closeLen; j++ {
+					mask[i+j] = true
+				}
+				i += closeLen - 1
+				state = stateNormal
+			}
+			continue
+		case stateSingleQuote:
+			if ch == '\\' && i+1 < len(content) {
+				i++
+				continue
+			}
+			if ch == '\'' {
+				state = stateNormal
+			}
+			continue
+		case stateDoubleQuote:
+			if ch == '\\' && i+1 < len(content) {
+				i++
+				continue
+			}
+			if ch == '"' {
+				state = stateNormal
+			}
+			continue
+		case stateLongString:
+			if closeLen := luaLongBracketCloseAt(content, i, longEqCount); closeLen > 0 {
+				i += closeLen - 1
+				state = stateNormal
+			}
+			continue
+		}
+
+		if ch == '-' && next == '-' {
+			mask[i] = true
+			mask[i+1] = true
+			if openLen, eqCount, ok := luaLongBracketOpenAt(content, i+2); ok {
+				for j := 0; j < openLen; j++ {
+					mask[i+2+j] = true
+				}
+				i += 1 + openLen
+				longEqCount = eqCount
+				state = stateLongComment
+			} else {
+				i++
+				state = stateLineComment
+			}
+			continue
+		}
+		if openLen, eqCount, ok := luaLongBracketOpenAt(content, i); ok {
+			i += openLen - 1
+			longEqCount = eqCount
+			state = stateLongString
+			continue
+		}
+		if ch == '\'' {
+			state = stateSingleQuote
+			continue
+		}
+		if ch == '"' {
+			state = stateDoubleQuote
+			continue
+		}
+	}
+
+	return mask
+}
+
+func maskedContent(content string, ignored []bool) string {
+	if len(content) == 0 || len(ignored) != len(content) {
+		return content
+	}
+
+	b := []byte(content)
+	for i, skip := range ignored {
+		if !skip {
+			continue
+		}
+		if b[i] == '\n' || b[i] == '\r' {
+			continue
+		}
+		b[i] = ' '
+	}
+	return string(b)
+}
+
+func luaLongBracketOpenAt(content string, i int) (length int, eqCount int, ok bool) {
+	if i >= len(content) || content[i] != '[' {
+		return 0, 0, false
+	}
+	j := i + 1
+	for j < len(content) && content[j] == '=' {
+		j++
+	}
+	if j >= len(content) || content[j] != '[' {
+		return 0, 0, false
+	}
+	return j - i + 1, j - (i + 1), true
+}
+
+func luaLongBracketCloseAt(content string, i int, eqCount int) int {
+	if i >= len(content) || content[i] != ']' {
+		return 0
+	}
+	j := i + 1
+	for n := 0; n < eqCount; n++ {
+		if j >= len(content) || content[j] != '=' {
+			return 0
+		}
+		j++
+	}
+	if j >= len(content) || content[j] != ']' {
+		return 0
+	}
+	return j - i + 1
+}
+
+func prevNonSpaceByte(content string, i int) byte {
+	for j := i - 1; j >= 0; j-- {
+		if content[j] == ' ' || content[j] == '\t' || content[j] == '\n' || content[j] == '\r' {
+			continue
+		}
+		return content[j]
+	}
+	return 0
+}
+
+func isIdentStartASCII(b byte) bool {
+	return b == '_' || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+func isIdentPartASCII(b byte) bool {
+	return isIdentStartASCII(b) || (b >= '0' && b <= '9')
 }

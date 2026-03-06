@@ -328,6 +328,7 @@ func DefaultConfig() *Config {
 			Mode: "fast",
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
+				".lua",
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#
