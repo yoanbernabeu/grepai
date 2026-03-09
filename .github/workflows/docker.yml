@@ -1,0 +1,102 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build test image
+        run: docker build -t grepai-test .
+
+      - name: Test - binary runs
+        run: docker run --rm --entrypoint /grepai grepai-test version
+
+      - name: Test - config generation with defaults
+        run: |
+          mkdir -p /tmp/grepai-test-default && sudo chown 65534:65534 /tmp/grepai-test-default
+          docker run --rm -v /tmp/grepai-test-default:/workspace grepai-test || true
+          sudo grep 'provider: ollama' /tmp/grepai-test-default/.grepai/config.yaml
+
+      - name: Test - config generation with env vars
+        run: |
+          mkdir -p /tmp/grepai-test-env && sudo chown 65534:65534 /tmp/grepai-test-env
+          docker run --rm \
+            -v /tmp/grepai-test-env:/workspace \
+            -e GREPAI_PROVIDER=openai \
+            -e GREPAI_MODEL=text-embedding-3-large \
+            -e GREPAI_API_KEY=sk-test \
+            -e GREPAI_BACKEND=postgres \
+            grepai-test || true
+          sudo grep 'provider: openai' /tmp/grepai-test-env/.grepai/config.yaml
+          sudo grep 'text-embedding-3-large' /tmp/grepai-test-env/.grepai/config.yaml
+
+      - name: Test - config not overwritten (idempotent)
+        run: |
+          mkdir -p /tmp/grepai-test-idem/.grepai
+          echo -e "version: 1\ncustom: true" > /tmp/grepai-test-idem/.grepai/config.yaml
+          sudo chown -R 65534:65534 /tmp/grepai-test-idem
+          docker run --rm \
+            -v /tmp/grepai-test-idem:/workspace \
+            -e GREPAI_PROVIDER=openai \
+            grepai-test || true
+          sudo grep 'custom: true' /tmp/grepai-test-idem/.grepai/config.yaml
+
+      - name: Test - image size < 50MB
+        run: |
+          SIZE=$(docker image inspect grepai-test --format='{{.Size}}')
+          echo "Image size: $((SIZE / 1024 / 1024))MB"
+          [ "$SIZE" -lt 52428800 ] || (echo "Image too large!" && exit 1)
+
+  build-and-push:
+    needs: [test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/yoanbernabeu/grepai
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

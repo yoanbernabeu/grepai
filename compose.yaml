@@ -48,6 +48,18 @@ services:
   #   #           count: all
   #   #           capabilities: [gpu]
 
+  # grepai watcher (indexes mounted code)
+  grepai:
+    image: ghcr.io/yoanbernabeu/grepai:latest
+    # build: .  # Uncomment to build locally
+    environment:
+      - GREPAI_PROVIDER=ollama
+      - GREPAI_ENDPOINT=http://host.docker.internal:11434
+    volumes:
+      - ./:/workspace
+    profiles:
+      - watch
+
 volumes:
   grepai-pgdata:
   # grepai-ollama:

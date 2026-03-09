@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docker Support**: Official Docker image published on GHCR with environment variable configuration for all providers and backends
 - **Shell Completion**: New `grepai completion [zsh|bash|fish|powershell]` command for shell autocompletion (#175)
   - Static completions with descriptions for `--provider`, `--backend`, `--mode` flags
   - Dynamic completions for `--workspace` and `--project` flags (loaded from config)
