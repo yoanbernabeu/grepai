@@ -83,6 +83,9 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 	if openai.Dimensions != nil {
 		t.Fatalf("openai dimensions should be nil, got %v", openai.Dimensions)
 	}
+	if openai.Parallelism != DefaultOpenAIParallelism {
+		t.Fatalf("openai parallelism = %d, want %d", openai.Parallelism, DefaultOpenAIParallelism)
+	}
 }
 
 func TestDefaultStoreForBackend(t *testing.T) {
@@ -472,6 +475,19 @@ store:
 `,
 			expectedNil:        true,
 			expectedDimensions: 1536, // GetDimensions() returns default
+		},
+		{
+			name: "openai large without dimensions infers large dimensions",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-large
+  api_key: sk-test
+store:
+  backend: gob
+`,
+			expectedNil:        true,
+			expectedDimensions: 3072,
 		},
 		{
 			name: "openai with explicit dimensions sets pointer",
