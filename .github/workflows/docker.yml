@@ -27,13 +27,13 @@ jobs:
 
       - name: Test - config generation with defaults
         run: |
-          mkdir -p /tmp/grepai-test-default && chmod 777 /tmp/grepai-test-default
+          mkdir -p /tmp/grepai-test-default && chown 65534:65534 /tmp/grepai-test-default
           docker run --rm -v /tmp/grepai-test-default:/workspace grepai-test || true
-          grep 'provider: ollama' /tmp/grepai-test-default/.grepai/config.yaml
+          sudo grep 'provider: ollama' /tmp/grepai-test-default/.grepai/config.yaml
 
       - name: Test - config generation with env vars
         run: |
-          mkdir -p /tmp/grepai-test-env && chmod 777 /tmp/grepai-test-env
+          mkdir -p /tmp/grepai-test-env && chown 65534:65534 /tmp/grepai-test-env
           docker run --rm \
             -v /tmp/grepai-test-env:/workspace \
             -e GREPAI_PROVIDER=openai \
@@ -41,18 +41,19 @@ jobs:
             -e GREPAI_API_KEY=sk-test \
             -e GREPAI_BACKEND=postgres \
             grepai-test || true
-          grep 'provider: openai' /tmp/grepai-test-env/.grepai/config.yaml
-          grep 'text-embedding-3-large' /tmp/grepai-test-env/.grepai/config.yaml
+          sudo grep 'provider: openai' /tmp/grepai-test-env/.grepai/config.yaml
+          sudo grep 'text-embedding-3-large' /tmp/grepai-test-env/.grepai/config.yaml
 
       - name: Test - config not overwritten (idempotent)
         run: |
-          mkdir -p /tmp/grepai-test-idem/.grepai && chmod -R 777 /tmp/grepai-test-idem
+          mkdir -p /tmp/grepai-test-idem/.grepai && chown -R 65534:65534 /tmp/grepai-test-idem
           echo -e "version: 1\ncustom: true" > /tmp/grepai-test-idem/.grepai/config.yaml
+          chown 65534:65534 /tmp/grepai-test-idem/.grepai/config.yaml
           docker run --rm \
             -v /tmp/grepai-test-idem:/workspace \
             -e GREPAI_PROVIDER=openai \
             grepai-test || true
-          grep 'custom: true' /tmp/grepai-test-idem/.grepai/config.yaml
+          sudo grep 'custom: true' /tmp/grepai-test-idem/.grepai/config.yaml
 
       - name: Test - image size < 50MB
         run: |
