@@ -50,6 +50,14 @@ curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh 
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
+**Docker:**
+```bash
+docker run -v /path/to/project:/workspace \
+  -e GREPAI_PROVIDER=ollama \
+  -e GREPAI_ENDPOINT=http://host.docker.internal:11434 \
+  ghcr.io/yoanbernabeu/grepai
+```
+
 Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI.
 
 **Ollama (recommended):**

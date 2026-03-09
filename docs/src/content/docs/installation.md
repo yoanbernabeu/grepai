@@ -39,6 +39,34 @@ Run the following command in your PowerShell terminal:
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
+## Docker
+
+Run grepai as a container — no Go toolchain needed:
+
+```bash
+docker run -v /path/to/project:/workspace \
+  -e GREPAI_PROVIDER=ollama \
+  -e GREPAI_ENDPOINT=http://host.docker.internal:11434 \
+  ghcr.io/yoanbernabeu/grepai
+```
+
+With OpenAI:
+
+```bash
+docker run -v /path/to/project:/workspace \
+  -e GREPAI_PROVIDER=openai \
+  -e GREPAI_API_KEY=sk-... \
+  ghcr.io/yoanbernabeu/grepai
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose --profile=watch up
+```
+
+See the [Docker guide](/grepai/docker/) for full configuration options.
+
 ## Install from Source
 
 Requires **Go 1.24+**.
