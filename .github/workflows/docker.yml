@@ -27,13 +27,13 @@ jobs:
 
       - name: Test - config generation with defaults
         run: |
-          mkdir -p /tmp/grepai-test-default && chown 65534:65534 /tmp/grepai-test-default
+          mkdir -p /tmp/grepai-test-default && sudo chown 65534:65534 /tmp/grepai-test-default
           docker run --rm -v /tmp/grepai-test-default:/workspace grepai-test || true
           sudo grep 'provider: ollama' /tmp/grepai-test-default/.grepai/config.yaml
 
       - name: Test - config generation with env vars
         run: |
-          mkdir -p /tmp/grepai-test-env && chown 65534:65534 /tmp/grepai-test-env
+          mkdir -p /tmp/grepai-test-env && sudo chown 65534:65534 /tmp/grepai-test-env
           docker run --rm \
             -v /tmp/grepai-test-env:/workspace \
             -e GREPAI_PROVIDER=openai \
@@ -46,9 +46,9 @@ jobs:
 
       - name: Test - config not overwritten (idempotent)
         run: |
-          mkdir -p /tmp/grepai-test-idem/.grepai && chown -R 65534:65534 /tmp/grepai-test-idem
+          mkdir -p /tmp/grepai-test-idem/.grepai && sudo chown -R 65534:65534 /tmp/grepai-test-idem
           echo -e "version: 1\ncustom: true" > /tmp/grepai-test-idem/.grepai/config.yaml
-          chown 65534:65534 /tmp/grepai-test-idem/.grepai/config.yaml
+          sudo chown 65534:65534 /tmp/grepai-test-idem/.grepai/config.yaml
           docker run --rm \
             -v /tmp/grepai-test-idem:/workspace \
             -e GREPAI_PROVIDER=openai \
