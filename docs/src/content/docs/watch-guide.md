@@ -25,7 +25,7 @@ grepai init
 grepai watch
 ```
 
-In interactive terminals, `grepai watch` now opens a Bubble Tea monitoring UI by default (foreground mode).  
+In interactive terminals, `grepai watch` now opens a Bubble Tea monitoring UI by default (foreground mode).
 Use `--no-ui` to force plain text output:
 
 ```bash

@@ -25,6 +25,7 @@ type IndexStats struct {
 	ChunksCreated int
 	FilesRemoved  int
 	Duration      time.Duration
+	ScannedFiles  []FileMeta // All files found during scan (for reuse by callers)
 }
 
 // ProgressInfo contains progress information for indexing
@@ -91,6 +92,7 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 		return nil, fmt.Errorf("failed to scan files: %w", err)
 	}
 	stats.FilesSkipped = len(skipped)
+	stats.ScannedFiles = fileMetas
 
 	// Get existing documents
 	existingDocs, err := idx.store.ListDocuments(ctx)

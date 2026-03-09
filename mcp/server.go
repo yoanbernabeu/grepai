@@ -922,60 +922,6 @@ func (s *Server) createWorkspaceStore(ctx context.Context, ws *config.Workspace)
 	}
 }
 
-// loadWorkspaceSymbolStores loads GOBSymbolStores for workspace projects.
-func (s *Server) loadWorkspaceSymbolStores(ctx context.Context, workspaceName, projectName string) ([]trace.SymbolStore, error) {
-	wsCfg, err := config.LoadWorkspaceConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load workspace config: %v", err)
-	}
-	if wsCfg == nil {
-		return nil, fmt.Errorf("no workspaces configured")
-	}
-
-	ws, err := wsCfg.GetWorkspace(workspaceName)
-	if err != nil {
-		return nil, fmt.Errorf("workspace not found: %v", err)
-	}
-
-	var projects []config.ProjectEntry
-	if projectName != "" {
-		found := false
-		for _, p := range ws.Projects {
-			if p.Name == projectName {
-				projects = []config.ProjectEntry{p}
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("project %q not found in workspace %q", projectName, workspaceName)
-		}
-	} else {
-		projects = ws.Projects
-	}
-
-	stores := make([]trace.SymbolStore, 0, len(projects))
-	for _, p := range projects {
-		ss := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(p.Path))
-		if err := ss.Load(ctx); err != nil {
-			ss.Close()
-			for _, existing := range stores {
-				existing.Close()
-			}
-			return nil, fmt.Errorf("failed to load symbol index for project %s: %v", p.Name, err)
-		}
-		stores = append(stores, ss)
-	}
-	return stores, nil
-}
-
-// closeSymbolStores closes all symbol stores in the slice.
-func closeSymbolStores(stores []trace.SymbolStore) {
-	for _, s := range stores {
-		s.Close()
-	}
-}
-
 // resolveWorkspace returns the effective workspace name, auto-injecting from server config.
 func (s *Server) resolveWorkspace(workspace string) string {
 	if workspace == "" && s.workspaceName != "" {
@@ -1040,11 +986,11 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 
 	// Workspace mode
 	if workspace != "" {
-		stores, loadErr := s.loadWorkspaceSymbolStores(ctx, workspace, project)
+		stores, loadErr := trace.LoadWorkspaceSymbolStores(ctx, workspace, project)
 		if loadErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace symbol stores: %v", loadErr)), nil
 		}
-		defer closeSymbolStores(stores)
+		defer trace.CloseSymbolStores(stores)
 
 		return s.handleTraceCallersFromStores(ctx, symbolName, compact, format, stores)
 	}
@@ -1075,18 +1021,27 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 	var allRefs []trace.Reference
 
 	for _, ss := range stores {
-		symbols, _ := ss.LookupSymbol(ctx, symbolName)
+		symbols, err := ss.LookupSymbol(ctx, symbolName)
+		if err != nil {
+			log.Printf("Warning: failed to lookup symbol %q: %v", symbolName, err)
+		}
 		if len(symbols) > 0 && firstSymbol == nil {
 			sym := symbols[0]
 			firstSymbol = &sym
 		}
-		refs, _ := ss.LookupCallers(ctx, symbolName)
+		refs, err := ss.LookupCallers(ctx, symbolName)
+		if err != nil {
+			log.Printf("Warning: failed to lookup callers of %q: %v", symbolName, err)
+		}
 		allRefs = append(allRefs, refs...)
 	}
 
 	if firstSymbol == nil {
 		result := trace.TraceResult{Query: symbolName, Mode: "fast"}
-		output, _ := encodeOutput(result, format)
+		output, err := encodeOutput(result, format)
+		if err != nil {
+			log.Printf("Warning: failed to encode empty trace result: %v", err)
+		}
 		return mcp.NewToolResultText(output), nil
 	}
 
@@ -1107,7 +1062,10 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 		for _, ref := range allRefs {
 			var callerSym trace.Symbol
 			for _, ss := range stores {
-				callerSyms, _ := ss.LookupSymbol(ctx, ref.CallerName)
+				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
+				if err != nil {
+					log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
+				}
 				if len(callerSyms) > 0 {
 					callerSym = callerSyms[0]
 					break
@@ -1142,7 +1100,10 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 		for _, ref := range allRefs {
 			var callerSym trace.Symbol
 			for _, ss := range stores {
-				callerSyms, _ := ss.LookupSymbol(ctx, ref.CallerName)
+				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
+				if err != nil {
+					log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
+				}
 				if len(callerSyms) > 0 {
 					callerSym = callerSyms[0]
 					break
@@ -1198,11 +1159,11 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 
 	// Workspace mode
 	if workspace != "" {
-		stores, loadErr := s.loadWorkspaceSymbolStores(ctx, workspace, project)
+		stores, loadErr := trace.LoadWorkspaceSymbolStores(ctx, workspace, project)
 		if loadErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace symbol stores: %v", loadErr)), nil
 		}
-		defer closeSymbolStores(stores)
+		defer trace.CloseSymbolStores(stores)
 
 		return s.handleTraceCalleesFromStores(ctx, symbolName, compact, format, stores)
 	}
@@ -1232,20 +1193,29 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 	var allRefs []trace.Reference
 
 	for _, ss := range stores {
-		symbols, _ := ss.LookupSymbol(ctx, symbolName)
+		symbols, err := ss.LookupSymbol(ctx, symbolName)
+		if err != nil {
+			log.Printf("Warning: failed to lookup symbol %q: %v", symbolName, err)
+		}
 		if len(symbols) > 0 {
 			if firstSymbol == nil {
 				sym := symbols[0]
 				firstSymbol = &sym
 			}
-			refs, _ := ss.LookupCallees(ctx, symbolName, symbols[0].File)
+			refs, err := ss.LookupCallees(ctx, symbolName, symbols[0].File)
+			if err != nil {
+				log.Printf("Warning: failed to lookup callees of %q: %v", symbolName, err)
+			}
 			allRefs = append(allRefs, refs...)
 		}
 	}
 
 	if firstSymbol == nil {
 		result := trace.TraceResult{Query: symbolName, Mode: "fast"}
-		output, _ := encodeOutput(result, format)
+		output, err := encodeOutput(result, format)
+		if err != nil {
+			log.Printf("Warning: failed to encode empty trace result: %v", err)
+		}
 		return mcp.NewToolResultText(output), nil
 	}
 
@@ -1266,7 +1236,10 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 		for _, ref := range allRefs {
 			var calleeSym trace.Symbol
 			for _, ss := range stores {
-				calleeSyms, _ := ss.LookupSymbol(ctx, ref.SymbolName)
+				calleeSyms, err := ss.LookupSymbol(ctx, ref.SymbolName)
+				if err != nil {
+					log.Printf("Warning: failed to lookup callee symbol %q: %v", ref.SymbolName, err)
+				}
 				if len(calleeSyms) > 0 {
 					calleeSym = calleeSyms[0]
 					break
@@ -1301,7 +1274,10 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 		for _, ref := range allRefs {
 			var calleeSym trace.Symbol
 			for _, ss := range stores {
-				calleeSyms, _ := ss.LookupSymbol(ctx, ref.SymbolName)
+				calleeSyms, err := ss.LookupSymbol(ctx, ref.SymbolName)
+				if err != nil {
+					log.Printf("Warning: failed to lookup callee symbol %q: %v", ref.SymbolName, err)
+				}
 				if len(calleeSyms) > 0 {
 					calleeSym = calleeSyms[0]
 					break
@@ -1361,11 +1337,11 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 
 	// Workspace mode: merge call graphs across projects
 	if workspace != "" {
-		stores, loadErr := s.loadWorkspaceSymbolStores(ctx, workspace, project)
+		stores, loadErr := trace.LoadWorkspaceSymbolStores(ctx, workspace, project)
 		if loadErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace symbol stores: %v", loadErr)), nil
 		}
-		defer closeSymbolStores(stores)
+		defer trace.CloseSymbolStores(stores)
 
 		merged := &trace.CallGraph{
 			Root:  symbolName,

@@ -798,11 +798,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		log.Println("Building symbol index...")
 	}
 	symbolCount := 0
-	files, _, err := scanner.ScanMetadata()
-	if err != nil {
-		log.Printf("Warning: failed to scan files for symbol index: %v", err)
-		return stats, nil
-	}
+	files := stats.ScannedFiles
 
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Path))
