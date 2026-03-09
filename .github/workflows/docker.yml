@@ -27,12 +27,13 @@ jobs:
 
       - name: Test - config generation with defaults
         run: |
+          mkdir -p /tmp/grepai-test-default && chmod 777 /tmp/grepai-test-default
           docker run --rm -v /tmp/grepai-test-default:/workspace grepai-test || true
-          sleep 2
           grep 'provider: ollama' /tmp/grepai-test-default/.grepai/config.yaml
 
       - name: Test - config generation with env vars
         run: |
+          mkdir -p /tmp/grepai-test-env && chmod 777 /tmp/grepai-test-env
           docker run --rm \
             -v /tmp/grepai-test-env:/workspace \
             -e GREPAI_PROVIDER=openai \
@@ -45,7 +46,7 @@ jobs:
 
       - name: Test - config not overwritten (idempotent)
         run: |
-          mkdir -p /tmp/grepai-test-idem/.grepai
+          mkdir -p /tmp/grepai-test-idem/.grepai && chmod -R 777 /tmp/grepai-test-idem
           echo -e "version: 1\ncustom: true" > /tmp/grepai-test-idem/.grepai/config.yaml
           docker run --rm \
             -v /tmp/grepai-test-idem:/workspace \
