@@ -46,9 +46,9 @@ jobs:
 
       - name: Test - config not overwritten (idempotent)
         run: |
-          mkdir -p /tmp/grepai-test-idem/.grepai && sudo chown -R 65534:65534 /tmp/grepai-test-idem
+          mkdir -p /tmp/grepai-test-idem/.grepai
           echo -e "version: 1\ncustom: true" > /tmp/grepai-test-idem/.grepai/config.yaml
-          sudo chown 65534:65534 /tmp/grepai-test-idem/.grepai/config.yaml
+          sudo chown -R 65534:65534 /tmp/grepai-test-idem
           docker run --rm \
             -v /tmp/grepai-test-idem:/workspace \
             -e GREPAI_PROVIDER=openai \
