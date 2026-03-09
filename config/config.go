@@ -24,6 +24,9 @@ const (
 	DefaultOpenAIEmbeddingModel     = "text-embedding-3-small"
 	DefaultSyntheticEmbeddingModel  = "hf:nomic-ai/nomic-embed-text-v1.5"
 	DefaultOpenRouterEmbeddingModel = "openai/text-embedding-3-small"
+	OpenAIEmbeddingModelLarge       = "text-embedding-3-large"
+	OpenRouterEmbeddingModelLarge   = "openai/text-embedding-3-large"
+	OpenRouterEmbeddingModelQwen8B  = "qwen/qwen3-embedding-8b"
 
 	DefaultOllamaEndpoint     = "http://localhost:11434"
 	DefaultLMStudioEndpoint   = "http://127.0.0.1:1234"
@@ -33,6 +36,9 @@ const (
 
 	DefaultLocalEmbeddingDimensions = 768
 	DefaultOpenAIDimensions         = 1536
+	DefaultOpenAILargeDimensions    = 3072
+	DefaultQwen8BDimensions         = 4096
+	DefaultOpenAIParallelism        = 4
 
 	DefaultPostgresDSN    = "postgres://localhost:5432/grepai"
 	DefaultQdrantEndpoint = "localhost"
@@ -110,7 +116,14 @@ func (e *EmbedderConfig) GetDimensions() int {
 	}
 	switch e.Provider {
 	case "openai", "openrouter":
-		return DefaultOpenAIDimensions
+		switch strings.TrimSpace(e.Model) {
+		case OpenAIEmbeddingModelLarge, OpenRouterEmbeddingModelLarge:
+			return DefaultOpenAILargeDimensions
+		case OpenRouterEmbeddingModelQwen8B, "qwen3-embedding-8b":
+			return DefaultQwen8BDimensions
+		default:
+			return DefaultOpenAIDimensions
+		}
 	default:
 		return DefaultLocalEmbeddingDimensions
 	}
@@ -143,10 +156,11 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 		}
 	case "openai":
 		return EmbedderConfig{
-			Provider:   "openai",
-			Model:      DefaultOpenAIEmbeddingModel,
-			Endpoint:   DefaultOpenAIEndpoint,
-			Dimensions: nil,
+			Provider:    "openai",
+			Model:       DefaultOpenAIEmbeddingModel,
+			Endpoint:    DefaultOpenAIEndpoint,
+			Dimensions:  nil,
+			Parallelism: DefaultOpenAIParallelism,
 		}
 	case "ollama":
 		fallthrough
