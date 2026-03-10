@@ -37,3 +37,7 @@ func shouldUseWatchUI(isTTY, noUI, background, status, stop bool, workspace stri
 func shouldUseStatusUI(isTTY, noUI bool) bool {
 	return isTTY && !noUI
 }
+
+func shouldUseStatsUI(isTTY, noUI bool) bool {
+	return isTTY && !noUI
+}
