@@ -72,6 +72,7 @@ trace:
     - .tsx
     - .py
     - .php
+    - .lua
     - .c
     - .h
     - .cpp

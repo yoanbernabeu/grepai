@@ -1016,7 +1016,7 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
 	// Run initial scan and build symbol index.
@@ -2623,7 +2623,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 
 	tracedLanguages := projectCfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
 
 	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil)

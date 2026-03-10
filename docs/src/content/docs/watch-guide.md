@@ -80,6 +80,7 @@ The watcher indexes files with these extensions:
 | JavaScript/TypeScript | `.js`, `.jsx`, `.ts`, `.tsx` |
 | Python | `.py` |
 | PHP | `.php` |
+| Lua | `.lua` |
 | Rust | `.rs` |
 | C/C++ | `.c`, `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx` |
 | Zig | `.zig` |

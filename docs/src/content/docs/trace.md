@@ -89,6 +89,7 @@ grepai trace callers "MyFunction" --mode precise
 | JavaScript | `.js`, `.jsx` | Excellent |
 | Python | `.py` | Good |
 | PHP | `.php` | Good |
+| Lua | `.lua` | Good |
 | Java | `.java` | Good |
 | C | `.c`, `.h` | Good |
 | C++ | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx` | Good |
@@ -139,6 +140,7 @@ trace:
     - .tsx
     - .py
     - .php
+    - .lua
     - .java
     - .c
     - .h

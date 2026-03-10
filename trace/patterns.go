@@ -4,15 +4,16 @@ import "regexp"
 
 // LanguagePatterns holds regex patterns for a specific language.
 type LanguagePatterns struct {
-	Extension    string
-	Language     string
-	Functions    []*regexp.Regexp
-	Methods      []*regexp.Regexp
-	Classes      []*regexp.Regexp
-	Interfaces   []*regexp.Regexp
-	Types        []*regexp.Regexp
-	FunctionCall *regexp.Regexp
-	MethodCall   *regexp.Regexp
+	Extension      string
+	Language       string
+	Functions      []*regexp.Regexp
+	Methods        []*regexp.Regexp
+	Classes        []*regexp.Regexp
+	Interfaces     []*regexp.Regexp
+	Types          []*regexp.Regexp
+	FunctionCall   *regexp.Regexp
+	MethodCall     *regexp.Regexp
+	BracketKeyCall *regexp.Regexp
 }
 
 // GetPatternsForLanguage returns patterns for a file extension.
@@ -37,6 +38,7 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".tsx":  tsxPatterns,
 	".py":   pythonPatterns,
 	".php":  phpPatterns,
+	".lua":  luaPatterns,
 	".c":    cPatterns,
 	".h":    cPatterns,
 	".zig":  zigPatterns,
@@ -203,6 +205,34 @@ var phpPatterns = &LanguagePatterns{
 	MethodCall:   regexp.MustCompile(`(?:->|::)([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 }
 
+// Lua patterns
+var luaPatterns = &LanguagePatterns{
+	Extension: ".lua",
+	Language:  "lua",
+	Functions: []*regexp.Regexp{
+		// function name(args)
+		regexp.MustCompile(`(?m)^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// local function name(args)
+		regexp.MustCompile(`(?m)^\s*local\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// [local] name = function(args)
+		regexp.MustCompile(`(?m)^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(`),
+	},
+	Methods: []*regexp.Regexp{
+		// function obj.method(args) / function obj:method(args)
+		regexp.MustCompile(`(?m)^\s*function\s+[A-Za-z_][A-Za-z0-9_\.]*[:\.]([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// [local] obj.method = function(args) / [local] obj:method = function(args)
+		regexp.MustCompile(`(?m)^\s*(?:local\s+)?[A-Za-z_][A-Za-z0-9_\.]*[:\.]([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\s*\(`),
+		// [local] obj["method"] = function(args) / obj["nested"]["method"] = function(args)
+		regexp.MustCompile(`(?m)^\s*(?:local\s+)?[A-Za-z_][A-Za-z0-9_\.]*(?:\s*\[\s*["'][A-Za-z_][A-Za-z0-9_]*["']\s*\])*\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]\s*=\s*function\s*\(`),
+	},
+	// Parenthesis-free Lua calls like f "x" and f {} are intentionally unsupported in fast mode.
+	// They are easy to overmatch, and supporting them cleanly would require expanding
+	// LanguagePatterns with several Lua-only pattern types for relatively little value.
+	FunctionCall:   regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	MethodCall:     regexp.MustCompile(`(?:\.|:)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	BracketKeyCall: regexp.MustCompile(`\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]\s*\(`),
+}
+
 // Language keywords to filter out from function calls.
 var languageKeywords = map[string]map[string]bool{
 	"go": {
@@ -238,6 +268,12 @@ var languageKeywords = map[string]map[string]bool{
 		"return": true, "new": true, "echo": true, "print": true, "isset": true,
 		"empty": true, "array": true, "unset": true, "include": true, "require": true,
 		"include_once": true, "require_once": true, "die": true, "exit": true,
+	},
+	"lua": {
+		"if": true, "then": true, "elseif": true, "else": true, "for": true, "while": true,
+		"repeat": true, "until": true, "do": true, "end": true, "function": true, "local": true,
+		"return": true, "break": true, "goto": true, "in": true, "and": true, "or": true,
+		"not": true, "nil": true, "true": true, "false": true,
 	},
 	"c": {
 		"if": true, "for": true, "while": true, "switch": true, "return": true,
