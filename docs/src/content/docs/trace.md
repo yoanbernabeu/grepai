@@ -7,6 +7,22 @@ description: Analyze function relationships with grepai trace
 
 `grepai trace` provides call graph analysis for your codebase, allowing you to understand how functions relate to each other by tracking callers and callees.
 
+### Trace vs Refs
+
+Use `trace` for call relationships, and `refs` for property/state usage.
+
+```bash
+# Call graph (functions/methods)
+grepai trace callers "isAdmin"
+
+# Property/state usage (reads/writes)
+grepai refs readers "uid"
+grepai refs writers "uid"
+grepai refs graph "uid"
+```
+
+`grepai refs` is especially useful in Vue/Pinia code where state keys (for example `store.uid`) are read and written without direct function calls.
+
 ### Features
 
 - **Find callers**: Discover which functions call a specific symbol
@@ -198,3 +214,6 @@ grepai trace graph "AuthMiddleware" --depth 2 --json
 - [`grepai trace callers`](/grepai/commands/grepai_trace_callers/) - Find functions that call a symbol
 - [`grepai trace callees`](/grepai/commands/grepai_trace_callees/) - Find functions called by a symbol
 - [`grepai trace graph`](/grepai/commands/grepai_trace_graph/) - Build complete call graph
+- [`grepai refs readers`](/grepai/commands/grepai_refs_readers/) - Find property/state readers
+- [`grepai refs writers`](/grepai/commands/grepai_refs_writers/) - Find property/state writers
+- [`grepai refs graph`](/grepai/commands/grepai_refs_graph/) - Build property usage graph

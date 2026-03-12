@@ -239,7 +239,7 @@ var (
 	jsPropertyWriteRe = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
 	jsBracketReadRe   = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]`)
 	jsBracketWriteRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]\s*=`)
-	jsStoreToRefsRe   = regexp.MustCompile(`\bconst\s*{\s*([^}]*)\s*}\s*=\s*storeToRefs\s*\([^)]*\)`)
+	jsStoreToRefsRe   = regexp.MustCompile(`\bconst\s*{\s*([^}]*)\s*}\s*=\s*(?:storeToRefs|toRefs)\s*\([^)]*\)`)
 	jsSimpleAliasRe   = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 )
 

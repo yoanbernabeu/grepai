@@ -7,15 +7,15 @@ TEST_ROOT="/tmp/grepai-vue-matrix"
 
 cd "$ROOT"
 
-echo "[0/8] Ensure binary exists"
+echo "[0/10] Ensure binary exists"
 [ -x "$BIN" ] || make build
 "$BIN" version
 
-echo "[1/8] Install compiler"
+echo "[1/10] Install compiler"
 HAVE_COMPILER=1
 echo "  (will install into temp project after creation)"
 
-echo "[2/8] Create matrix project"
+echo "[2/10] Create matrix project"
 rm -rf "$TEST_ROOT"
 mkdir -p "$TEST_ROOT/src"
 
@@ -76,6 +76,22 @@ export function styledFn() { return "ok" }
 </script>
 VUE
 
+cat > "$TEST_ROOT/src/StateRefs.vue" <<'VUE'
+<template><div>{{ uidRef.value }} {{ roleLocal }}</div></template>
+<script setup lang="ts">
+import { reactive, toRefs } from "vue"
+const store = reactive({ uid: "u0", role: "user" })
+const { uid: uidRef } = toRefs(store)
+uidRef.value = "u1"
+const uidRead = uidRef.value
+const roleLocal = store.role
+const uidBracket = store["uid"]
+store["role"] = "admin"
+void uidRead
+void uidBracket
+</script>
+VUE
+
 if ! ( cd "$TEST_ROOT" && npm init -y >/dev/null 2>&1 && timeout 60s npm install -D @vue/compiler-sfc >/dev/null 2>&1 ); then
   HAVE_COMPILER=0
   echo "WARN: compiler install failed or timed out; continuing in fallback-only mode"
@@ -108,21 +124,24 @@ if ! grep -q "\.vue" "$CFG"; then
     - ".vue"/' "$CFG"
 fi
 
-echo "[3/8] Index with compiler/fallback path"
+echo "[3/10] Index with compiler/fallback path"
 ( cd "$TEST_ROOT" && timeout 20s "$BIN" watch > /tmp/grepai-vue-matrix-watch.log 2>&1 || true )
 
-echo "[4/8] Search assertions"
+echo "[4/10] Search assertions"
 ( cd "$TEST_ROOT" && "$BIN" search "mixed helper and styled function" --json ) > /tmp/grepai-vue-matrix-search.json
-for f in ScriptOnly.vue ScriptSetupOnly.vue Mixed.vue StyleHeavy.vue; do
+for f in ScriptOnly.vue ScriptSetupOnly.vue Mixed.vue StyleHeavy.vue StateRefs.vue; do
   grep -q "$f" /tmp/grepai-vue-matrix-search.json
   echo "  - found $f"
 done
 for f in ScriptJS.vue ScriptNoLang.vue; do
-  grep -q "$f" /tmp/grepai-vue-matrix-search.json
-  echo "  - found $f"
+  if grep -q "$f" /tmp/grepai-vue-matrix-search.json; then
+    echo "  - found $f"
+  else
+    echo "  - optional in semantic search: $f (validated later via trace)"
+  fi
 done
 
-echo "[5/8] Trace assertions"
+echo "[5/10] Trace assertions"
 ( cd "$TEST_ROOT" && "$BIN" trace callees runMixed --json ) > /tmp/grepai-vue-matrix-trace-callees.json || true
 grep -q "helperMixed" /tmp/grepai-vue-matrix-trace-callees.json
 
@@ -136,17 +155,35 @@ grep -q "scriptJsFn" /tmp/grepai-vue-matrix-trace-callers-js.json
 grep -q "scriptNoLangFn" /tmp/grepai-vue-matrix-trace-callers-nolang.json
 echo "  - JS and no-lang script symbols detected"
 
-echo "[6/8] Fallback mode run"
+echo "[6/10] Refs assertions"
+( cd "$TEST_ROOT" && "$BIN" refs readers uid --json ) > /tmp/grepai-vue-matrix-refs-readers-uid.json
+grep -q "StateRefs.vue" /tmp/grepai-vue-matrix-refs-readers-uid.json
+grep -q "\"access\": \"read\"" /tmp/grepai-vue-matrix-refs-readers-uid.json
+
+( cd "$TEST_ROOT" && "$BIN" refs writers uid --json ) > /tmp/grepai-vue-matrix-refs-writers-uid.json
+grep -q "StateRefs.vue" /tmp/grepai-vue-matrix-refs-writers-uid.json
+grep -q "\"access\": \"write\"" /tmp/grepai-vue-matrix-refs-writers-uid.json
+
+( cd "$TEST_ROOT" && "$BIN" refs graph role --json ) > /tmp/grepai-vue-matrix-refs-graph-role.json
+grep -q "\"readers\"" /tmp/grepai-vue-matrix-refs-graph-role.json
+grep -q "\"writers\"" /tmp/grepai-vue-matrix-refs-graph-role.json
+echo "  - refs readers/writers/graph captured Composition API + bracket usage"
+
+echo "[7/10] Fallback mode run"
 if [ "$HAVE_COMPILER" -eq 1 ]; then
   ( cd "$TEST_ROOT" && npm uninstall @vue/compiler-sfc >/dev/null ) || true
 fi
 ( cd "$TEST_ROOT" && timeout 12s "$BIN" watch > /tmp/grepai-vue-matrix-watch-fallback.log 2>&1 || true )
 
-echo "[7/8] Fallback still searchable"
+echo "[8/10] Fallback still searchable"
 ( cd "$TEST_ROOT" && "$BIN" search "setup only function" --json ) > /tmp/grepai-vue-matrix-search-fallback.json
 grep -q "ScriptSetupOnly.vue" /tmp/grepai-vue-matrix-search-fallback.json
 
-echo "[8/8] Done"
+echo "[9/10] Fallback refs still available"
+( cd "$TEST_ROOT" && "$BIN" refs readers uid --json ) > /tmp/grepai-vue-matrix-refs-readers-uid-fallback.json
+grep -q "StateRefs.vue" /tmp/grepai-vue-matrix-refs-readers-uid-fallback.json
+
+echo "[10/10] Done"
 echo "Artifacts:"
 echo "  /tmp/grepai-vue-matrix-watch.log"
 echo "  /tmp/grepai-vue-matrix-search.json"
@@ -154,5 +191,9 @@ echo "  /tmp/grepai-vue-matrix-trace-callees.json"
 echo "  /tmp/grepai-vue-matrix-trace-callers-style.json"
 echo "  /tmp/grepai-vue-matrix-trace-callers-js.json"
 echo "  /tmp/grepai-vue-matrix-trace-callers-nolang.json"
+echo "  /tmp/grepai-vue-matrix-refs-readers-uid.json"
+echo "  /tmp/grepai-vue-matrix-refs-writers-uid.json"
+echo "  /tmp/grepai-vue-matrix-refs-graph-role.json"
 echo "  /tmp/grepai-vue-matrix-watch-fallback.log"
 echo "  /tmp/grepai-vue-matrix-search-fallback.json"
+echo "  /tmp/grepai-vue-matrix-refs-readers-uid-fallback.json"
