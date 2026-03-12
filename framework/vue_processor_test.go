@@ -54,3 +54,25 @@ func TestExtractStyleVBindRefs(t *testing.T) {
 		t.Fatalf("unexpected third ref: %+v", refs[2])
 	}
 }
+
+func TestAppendTemplateCtxReadCalls(t *testing.T) {
+	input := "const _s = 1\nreturn _ctx.isAdmin && _ctx.store && _ctx.$slots.default && _ctx._hidden"
+	mapping := []int{3, 8}
+
+	out, outMap := appendTemplateCtxReadCalls(input, mapping)
+	if !strings.Contains(out, "function __vue_template_reads__() {") {
+		t.Fatalf("missing synthetic template caller function: %q", out)
+	}
+	if !strings.Contains(out, "isAdmin();") {
+		t.Fatalf("missing isAdmin synthetic read caller: %q", out)
+	}
+	if !strings.Contains(out, "store();") {
+		t.Fatalf("missing store synthetic read caller: %q", out)
+	}
+	if strings.Contains(out, "$slots();") || strings.Contains(out, "_hidden();") {
+		t.Fatalf("unexpected internal ctx symbols emitted: %q", out)
+	}
+	if len(outMap) <= len(mapping) {
+		t.Fatalf("expected extended line map, got %d <= %d", len(outMap), len(mapping))
+	}
+}

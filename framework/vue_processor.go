@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -85,12 +86,13 @@ func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (
 	if virtual == "" {
 		virtual = filePath + ".__trace__.ts"
 	}
+	text, mapping := appendTemplateCtxReadCalls(text, out.GeneratedToSourceMap)
 	return TransformResult{
 		Processor:             p.Name(),
 		FilePath:              filePath,
 		VirtualPath:           virtual,
 		Text:                  text,
-		GeneratedToSourceLine: out.GeneratedToSourceMap,
+		GeneratedToSourceLine: mapping,
 		Warnings:              out.Warnings,
 		Transformed:           true,
 	}, nil
@@ -98,6 +100,7 @@ func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (
 
 var scriptBlockRE = regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)
 var styleBlockRE = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style>`)
+var vueTemplateCtxIdentRE = regexp.MustCompile(`\b_ctx\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 
 func (p *VueProcessor) fallback(filePath, source string) (TransformResult, error) {
 	matches := scriptBlockRE.FindAllStringSubmatchIndex(source, -1)
@@ -163,13 +166,14 @@ func (p *VueProcessor) fallback(filePath, source string) (TransformResult, error
 	if out.Len() == 0 {
 		return TransformResult{}, fmt.Errorf("no script blocks or style v-bind expressions found")
 	}
+	text, mapped := appendTemplateCtxReadCalls(out.String(), mapping)
 
 	return TransformResult{
 		Processor:             p.Name(),
 		FilePath:              filePath,
 		VirtualPath:           filePath + ".__trace__.ts",
-		Text:                  out.String(),
-		GeneratedToSourceLine: mapping,
+		Text:                  text,
+		GeneratedToSourceLine: mapped,
 		Transformed:           true,
 	}, nil
 }
@@ -238,4 +242,70 @@ func normalizeStyleVBindExpr(expr string) string {
 		}
 	}
 	return trimmed
+}
+
+func appendTemplateCtxReadCalls(text string, generatedToSource []int) (string, []int) {
+	if strings.TrimSpace(text) == "" {
+		return text, generatedToSource
+	}
+
+	lines := strings.Split(text, "\n")
+	sourceLineByIdent := make(map[string]int)
+	for i, line := range lines {
+		matches := vueTemplateCtxIdentRE.FindAllStringSubmatch(line, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		lineSource := 0
+		if i < len(generatedToSource) {
+			lineSource = generatedToSource[i]
+		}
+		for _, m := range matches {
+			if len(m) < 2 {
+				continue
+			}
+			name := m[1]
+			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "_") {
+				continue
+			}
+			if _, ok := sourceLineByIdent[name]; !ok {
+				sourceLineByIdent[name] = lineSource
+			}
+		}
+	}
+
+	if len(sourceLineByIdent) == 0 {
+		return text, generatedToSource
+	}
+
+	idents := make([]string, 0, len(sourceLineByIdent))
+	for name := range sourceLineByIdent {
+		idents = append(idents, name)
+	}
+	sort.Strings(idents)
+
+	baseSource := 0
+	for _, name := range idents {
+		if sourceLineByIdent[name] > 0 {
+			baseSource = sourceLineByIdent[name]
+			break
+		}
+	}
+
+	var b strings.Builder
+	b.Grow(len(text) + 64 + len(idents)*24)
+	b.WriteString(text)
+	b.WriteString("\nfunction __vue_template_reads__() {")
+	updatedMap := append([]int(nil), generatedToSource...)
+	updatedMap = append(updatedMap, baseSource)
+	for _, name := range idents {
+		b.WriteString("\n  ")
+		b.WriteString(name)
+		b.WriteString("();")
+		updatedMap = append(updatedMap, sourceLineByIdent[name])
+	}
+	b.WriteString("\n}")
+	updatedMap = append(updatedMap, baseSource)
+
+	return b.String(), updatedMap
 }
