@@ -237,6 +237,8 @@ func (e *RegexExtractor) extractLanguageSpecificReferences(filePath string, cont
 var (
 	jsPropertyReadRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 	jsPropertyWriteRe = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
+	jsStoreToRefsRe   = regexp.MustCompile(`\bconst\s*{\s*([^}]*)\s*}\s*=\s*storeToRefs\s*\([^)]*\)`)
+	jsSimpleAliasRe   = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 )
 
 func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content string, lines []string, functionBoundaries []functionBoundary) []Reference {
@@ -267,7 +269,115 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindRead, functionBoundaries))
 	}
 
-	return refs
+	refs = append(refs, extractJSAliasPropertyReferences(filePath, content, lines, functionBoundaries)...)
+	return dedupeReferences(refs)
+}
+
+type jsAliasProperty struct {
+	alias    string
+	propName string
+	isRef    bool
+	declPos  int
+}
+
+func extractJSAliasPropertyReferences(filePath, content string, lines []string, functionBoundaries []functionBoundary) []Reference {
+	aliases := collectJSAliases(content)
+	if len(aliases) == 0 {
+		return nil
+	}
+
+	refs := make([]Reference, 0)
+	for _, a := range aliases {
+		if a.isRef {
+			readRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(a.alias) + `\s*\.\s*value\b`)
+			for _, m := range readRe.FindAllStringIndex(content, -1) {
+				if m[0] == a.declPos {
+					continue
+				}
+				refs = append(refs, buildDataReference(filePath, content, lines, a.propName, m[0], RefKindRead, functionBoundaries))
+			}
+			writeEqRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(a.alias) + `\s*\.\s*value\s*=`)
+			for _, m := range writeEqRe.FindAllStringIndex(content, -1) {
+				if m[0] == a.declPos {
+					continue
+				}
+				refs = append(refs, buildDataReference(filePath, content, lines, a.propName, m[0], RefKindWrite, functionBoundaries))
+			}
+			writeUpdRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(a.alias) + `\s*\.\s*value\s*(?:\+\+|--)`)
+			for _, m := range writeUpdRe.FindAllStringIndex(content, -1) {
+				if m[0] == a.declPos {
+					continue
+				}
+				refs = append(refs, buildDataReference(filePath, content, lines, a.propName, m[0], RefKindWrite, functionBoundaries))
+			}
+			continue
+		}
+
+		writeRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(a.alias) + `\s*=`)
+		writeStarts := map[int]bool{}
+		for _, m := range writeRe.FindAllStringIndex(content, -1) {
+			if m[0] == a.declPos {
+				continue
+			}
+			writeStarts[m[0]] = true
+			refs = append(refs, buildDataReference(filePath, content, lines, a.propName, m[0], RefKindWrite, functionBoundaries))
+		}
+		readRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(a.alias) + `\b`)
+		for _, m := range readRe.FindAllStringIndex(content, -1) {
+			if m[0] == a.declPos || writeStarts[m[0]] {
+				continue
+			}
+			refs = append(refs, buildDataReference(filePath, content, lines, a.propName, m[0], RefKindRead, functionBoundaries))
+		}
+	}
+
+	return dedupeReferences(refs)
+}
+
+func collectJSAliases(content string) []jsAliasProperty {
+	aliases := make([]jsAliasProperty, 0)
+
+	destructured := jsStoreToRefsRe.FindAllStringSubmatchIndex(content, -1)
+	for _, m := range destructured {
+		if len(m) < 4 {
+			continue
+		}
+		inner := content[m[2]:m[3]]
+		parts := strings.Split(inner, ",")
+		for _, p := range parts {
+			part := strings.TrimSpace(p)
+			if part == "" {
+				continue
+			}
+			prop := part
+			alias := part
+			if strings.Contains(part, ":") {
+				sides := strings.SplitN(part, ":", 2)
+				prop = strings.TrimSpace(sides[0])
+				alias = strings.TrimSpace(sides[1])
+			}
+			if prop == "" || alias == "" {
+				continue
+			}
+			declPos := m[2] + strings.Index(inner, alias)
+			aliases = append(aliases, jsAliasProperty{alias: alias, propName: prop, isRef: true, declPos: declPos})
+		}
+	}
+
+	simple := jsSimpleAliasRe.FindAllStringSubmatchIndex(content, -1)
+	for _, m := range simple {
+		if len(m) < 6 {
+			continue
+		}
+		alias := strings.TrimSpace(content[m[2]:m[3]])
+		prop := strings.TrimSpace(content[m[4]:m[5]])
+		if alias == "" || prop == "" {
+			continue
+		}
+		aliases = append(aliases, jsAliasProperty{alias: alias, propName: prop, isRef: false, declPos: m[2]})
+	}
+
+	return aliases
 }
 
 // isDeclarationReferenceMatch reports whether a regex call match occurs in a declaration context.
@@ -824,7 +934,7 @@ func dedupeReferences(refs []Reference) []Reference {
 	deduped := make([]Reference, 0, len(refs))
 
 	for _, ref := range refs {
-		key := ref.SymbolName + "\x00" + ref.File + "\x00" + ref.CallerName + "\x00" + strconv.Itoa(ref.Line) + "\x00" + strconv.Itoa(ref.CallerLine)
+		key := ref.SymbolName + "\x00" + ref.Kind + "\x00" + ref.File + "\x00" + ref.CallerName + "\x00" + strconv.Itoa(ref.Line) + "\x00" + strconv.Itoa(ref.CallerLine)
 		if seen[key] {
 			continue
 		}

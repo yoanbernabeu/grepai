@@ -1340,3 +1340,46 @@ func TestRegexExtractor_ExtractReferences_JSTypeScriptPropertyReadWrite(t *testi
 		t.Fatal("expected at least one write reference for uid")
 	}
 }
+
+func TestRegexExtractor_ExtractReferences_CompositionAPIAliases(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const { uid: uidRef } = storeToRefs(store)
+  const roleLocal = store.role
+  const r1 = uidRef.value
+  uidRef.value = "x"
+  return roleLocal
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeUID := false
+	readRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "uid" && ref.Kind == RefKindWrite {
+			writeUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindRead {
+			readRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via uidRef.value")
+	}
+	if !writeUID {
+		t.Fatal("expected uid write via uidRef.value assignment")
+	}
+	if !readRole {
+		t.Fatal("expected role read via simple alias")
+	}
+}
