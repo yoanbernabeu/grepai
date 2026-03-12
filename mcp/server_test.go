@@ -389,6 +389,39 @@ func TestRegisterTools_should_include_workspace_param_on_trace_graph(t *testing.
 	}
 }
 
+func TestRegisterTools_should_include_workspace_param_on_refs_readers(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_readers")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_readers schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_readers schema")
+	}
+}
+
+func TestRegisterTools_should_include_workspace_param_on_refs_writers(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_writers")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_writers schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_writers schema")
+	}
+}
+
+func TestRegisterTools_should_include_workspace_param_on_refs_graph(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_graph")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_graph schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_graph schema")
+	}
+}
+
 // TestRegisterTools_should_include_workspace_param_on_index_status verifies that
 // grepai_index_status has a workspace property in its schema.
 func TestRegisterTools_should_include_workspace_param_on_index_status(t *testing.T) {

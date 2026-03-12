@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,5 +94,63 @@ func TestRunRefs_should_return_readers_and_writers_from_index(t *testing.T) {
 	}
 	if writers.Writers[0].Symbol.Name != "user_details" {
 		t.Fatalf("expected writer symbol user_details, got %q", writers.Writers[0].Symbol.Name)
+	}
+}
+
+func TestOutputRefsGraphResult_should_output_valid_json(t *testing.T) {
+	oldJSON := refsJSON
+	oldTOON := refsTOON
+	refsJSON = true
+	refsTOON = false
+	defer func() {
+		refsJSON = oldJSON
+		refsTOON = oldTOON
+	}()
+
+	graph := refsGraphResult{
+		Query: "uid",
+		Kind:  "property",
+		Mode:  "fast",
+		Readers: []refsUsage{
+			{
+				Symbol: trace.Symbol{Name: "loggedIn", File: "src/Home.vue", Line: 10},
+				Access: trace.RefKindRead,
+				AccessAt: trace.CallSite{
+					File: "src/Home.vue", Line: 12, Context: "store.uid",
+				},
+			},
+		},
+		Writers: []refsUsage{
+			{
+				Symbol: trace.Symbol{Name: "user_details", File: "src/store.ts", Line: 20},
+				Access: trace.RefKindWrite,
+				AccessAt: trace.CallSite{
+					File: "src/store.ts", Line: 22, Context: "this.uid = x",
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := outputRefsGraphResult(graph)
+	_ = w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatalf("outputRefsGraphResult failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	var decoded refsGraphResult
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("invalid JSON output: %v", err)
+	}
+	if decoded.Query != "uid" {
+		t.Fatalf("decoded query = %q, want uid", decoded.Query)
+	}
+	if len(decoded.Readers) != 1 || len(decoded.Writers) != 1 {
+		t.Fatalf("expected one reader and one writer, got %d/%d", len(decoded.Readers), len(decoded.Writers))
 	}
 }

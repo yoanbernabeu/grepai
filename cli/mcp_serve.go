@@ -24,6 +24,7 @@ The server communicates via stdio and exposes the following tools:
   - grepai_trace_graph: Build a call graph around a symbol
   - grepai_refs_readers: Find property/state readers for a symbol name
   - grepai_refs_writers: Find property/state writers for a symbol name
+  - grepai_refs_graph: Build a property usage graph (readers + writers)
   - grepai_index_status: Check index health and statistics (includes RPG stats when enabled)
   - grepai_rpg_search: Search RPG graph nodes by feature semantics
   - grepai_rpg_fetch: Fetch hierarchy and edge context for a specific RPG node

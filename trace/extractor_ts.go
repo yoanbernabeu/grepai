@@ -754,16 +754,12 @@ func (e *TreeSitterExtractor) extractMemberAccessReference(node *sitter.Node, co
 		return Reference{}, false
 	}
 
-	name := strings.TrimSpace(propertyNode.Content(content))
+	name := normalizeJSPropertyName(propertyNode.Content(content))
 	if name == "" {
 		return Reference{}, false
 	}
 	// Skip private/internal slots used by transformed Vue internals.
 	if strings.HasPrefix(name, "_") {
-		return Reference{}, false
-	}
-	// Ignore computed member access (obj["uid"]) for now; handled later by a dedicated parser path.
-	if strings.ContainsAny(name, "\"'[]") {
 		return Reference{}, false
 	}
 
@@ -795,6 +791,31 @@ func (e *TreeSitterExtractor) extractMemberAccessReference(node *sitter.Node, co
 		CallerName: caller,
 		CallerFile: filePath,
 	}, true
+}
+
+func normalizeJSPropertyName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
+	}
+
+	// Handle computed string members such as obj["uid"] or obj['uid'].
+	if len(name) >= 2 && ((name[0] == '"' && name[len(name)-1] == '"') || (name[0] == '\'' && name[len(name)-1] == '\'')) {
+		name = name[1 : len(name)-1]
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	for _, r := range name {
+		if !(r == '$' || r == '_' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return ""
+		}
+	}
+
+	return name
 }
 
 func extractFSharpCallName(node *sitter.Node, content []byte) string {

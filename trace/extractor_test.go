@@ -1383,3 +1383,37 @@ func TestRegexExtractor_ExtractReferences_CompositionAPIAliases(t *testing.T) {
 		t.Fatal("expected role read via simple alias")
 	}
 }
+
+func TestRegexExtractor_ExtractReferences_BracketPropertyAccess(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const a = store["uid"]
+  this.store["role"] = "admin"
+  return a
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindWrite {
+			writeRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via bracket access")
+	}
+	if !writeRole {
+		t.Fatal("expected role write via bracket access")
+	}
+}

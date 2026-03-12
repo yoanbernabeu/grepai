@@ -237,6 +237,8 @@ func (e *RegexExtractor) extractLanguageSpecificReferences(filePath string, cont
 var (
 	jsPropertyReadRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 	jsPropertyWriteRe = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
+	jsBracketReadRe   = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]`)
+	jsBracketWriteRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]\s*=`)
 	jsStoreToRefsRe   = regexp.MustCompile(`\bconst\s*{\s*([^}]*)\s*}\s*=\s*storeToRefs\s*\([^)]*\)`)
 	jsSimpleAliasRe   = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 )
@@ -258,6 +260,31 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 
 	readMatches := jsPropertyReadRe.FindAllStringSubmatchIndex(content, -1)
 	for _, m := range readMatches {
+		if len(m) < 4 {
+			continue
+		}
+		start := m[0]
+		if writeStarts[start] {
+			continue
+		}
+		name := content[m[2]:m[3]]
+		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindRead, functionBoundaries))
+	}
+
+	// Bracket property access: store["uid"], this.store['role']
+	bracketWriteMatches := jsBracketWriteRe.FindAllStringSubmatchIndex(content, -1)
+	for _, m := range bracketWriteMatches {
+		if len(m) < 4 {
+			continue
+		}
+		start := m[0]
+		writeStarts[start] = true
+		name := content[m[2]:m[3]]
+		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindWrite, functionBoundaries))
+	}
+
+	bracketReadMatches := jsBracketReadRe.FindAllStringSubmatchIndex(content, -1)
+	for _, m := range bracketReadMatches {
 		if len(m) < 4 {
 			continue
 		}

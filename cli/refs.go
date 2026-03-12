@@ -35,6 +35,14 @@ type refsResult struct {
 	Writers []refsUsage `json:"writers,omitempty"`
 }
 
+type refsGraphResult struct {
+	Query   string      `json:"query"`
+	Kind    string      `json:"kind"`
+	Mode    string      `json:"mode"`
+	Readers []refsUsage `json:"readers,omitempty"`
+	Writers []refsUsage `json:"writers,omitempty"`
+}
+
 var refsCmd = &cobra.Command{
 	Use:   "refs <subcommand> <symbol>",
 	Short: "Trace property/data readers and writers",
@@ -73,8 +81,33 @@ var refsWritersCmd = &cobra.Command{
 	},
 }
 
+var refsGraphCmd = &cobra.Command{
+	Use:   "graph <symbol>",
+	Short: "Show readers and writers graph for a property/data symbol",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		readersResult, err := runRefs(args[0], true)
+		if err != nil {
+			return err
+		}
+		writersResult, err := runRefs(args[0], false)
+		if err != nil {
+			return err
+		}
+
+		graph := refsGraphResult{
+			Query:   args[0],
+			Kind:    "property",
+			Mode:    "fast",
+			Readers: readersResult.Readers,
+			Writers: writersResult.Writers,
+		}
+		return outputRefsGraphResult(graph)
+	},
+}
+
 func init() {
-	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd} {
+	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd, refsGraphCmd} {
 		cmd.Flags().BoolVar(&refsJSON, "json", false, "Output results in JSON format")
 		cmd.Flags().BoolVarP(&refsTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
 		cmd.MarkFlagsMutuallyExclusive("json", "toon")
@@ -84,6 +117,7 @@ func init() {
 
 	refsCmd.AddCommand(refsReadersCmd)
 	refsCmd.AddCommand(refsWritersCmd)
+	refsCmd.AddCommand(refsGraphCmd)
 	rootCmd.AddCommand(refsCmd)
 }
 
@@ -214,6 +248,48 @@ func outputRefsResult(result refsResult, readers bool) error {
 		if usage.AccessAt.Context != "" {
 			fmt.Printf("   Context: %s\n", truncate(usage.AccessAt.Context, 100))
 		}
+	}
+
+	return nil
+}
+
+func outputRefsGraphResult(result refsGraphResult) error {
+	if refsJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+	if refsTOON {
+		output, err := gotoon.Encode(result)
+		if err != nil {
+			return fmt.Errorf("failed to encode TOON: %w", err)
+		}
+		fmt.Println(output)
+		return nil
+	}
+
+	fmt.Printf("Symbol: %s (%s)\n", result.Query, result.Kind)
+	fmt.Printf("Readers: %d\n", len(result.Readers))
+	fmt.Printf("Writers: %d\n", len(result.Writers))
+	fmt.Println(strings.Repeat("-", 60))
+
+	if len(result.Readers) > 0 {
+		fmt.Println("Reader Sites:")
+		for i, usage := range result.Readers {
+			fmt.Printf("%d. %s @ %s:%d\n", i+1, usage.Symbol.Name, usage.AccessAt.File, usage.AccessAt.Line)
+		}
+	}
+	if len(result.Writers) > 0 {
+		if len(result.Readers) > 0 {
+			fmt.Println()
+		}
+		fmt.Println("Writer Sites:")
+		for i, usage := range result.Writers {
+			fmt.Printf("%d. %s @ %s:%d\n", i+1, usage.Symbol.Name, usage.AccessAt.File, usage.AccessAt.Line)
+		}
+	}
+	if len(result.Readers) == 0 && len(result.Writers) == 0 {
+		fmt.Println("No references found.")
 	}
 
 	return nil
