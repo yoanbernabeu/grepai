@@ -1417,3 +1417,55 @@ func TestRegexExtractor_ExtractReferences_BracketPropertyAccess(t *testing.T) {
 		t.Fatal("expected role write via bracket access")
 	}
 }
+
+func TestRegexExtractor_ExtractReferences_FiltersBuiltinAndVueInternalNoise(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store, obj) {
+  const n = Math.max(1, 2)
+  console.log(n)
+  const keys = Object.keys(obj)
+  this.$refs.input.focus()
+  const uid = store.uid
+  return uid
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "noise.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	hasUID := false
+	hasMax := false
+	hasLog := false
+	hasKeys := false
+	hasRefs := false
+
+	for _, ref := range refs {
+		if ref.Kind == RefKindCall {
+			continue
+		}
+		switch ref.SymbolName {
+		case "uid":
+			if ref.Kind == RefKindRead {
+				hasUID = true
+			}
+		case "max":
+			hasMax = true
+		case "log":
+			hasLog = true
+		case "keys":
+			hasKeys = true
+		case "$refs":
+			hasRefs = true
+		}
+	}
+
+	if !hasUID {
+		t.Fatal("expected store uid read to remain after filtering")
+	}
+	if hasMax || hasLog || hasKeys || hasRefs {
+		t.Fatalf("expected builtins/vue internals filtered, got max=%v log=%v keys=%v $refs=%v", hasMax, hasLog, hasKeys, hasRefs)
+	}
+}

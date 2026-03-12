@@ -240,8 +240,22 @@ var (
 	jsBracketReadRe   = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]`)
 	jsBracketWriteRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Za-z_$][A-Za-z0-9_$]*\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]\s*=`)
 	jsStoreToRefsRe   = regexp.MustCompile(`\bconst\s*{\s*([^}]*)\s*}\s*=\s*(?:storeToRefs|toRefs)\s*\([^)]*\)`)
-	jsSimpleAliasRe   = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
+	jsSimpleAliasRe   = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([A-Za-z_$][A-Za-z0-9_$]*)\.([A-Za-z_$][A-Za-z0-9_$]*)\b`)
 )
+
+var jsBuiltinRoots = map[string]bool{
+	"Math": true, "JSON": true, "Object": true, "Array": true, "String": true,
+	"Number": true, "Boolean": true, "Date": true, "RegExp": true, "Promise": true,
+	"Reflect": true, "Intl": true, "Set": true, "Map": true, "WeakSet": true,
+	"WeakMap": true, "Symbol": true, "BigInt": true, "console": true,
+	"window": true, "document": true, "globalThis": true,
+}
+
+var jsVueRuntimeInternalProps = map[string]bool{
+	"$el": true, "$refs": true, "$slots": true, "$attrs": true, "$listeners": true,
+	"$parent": true, "$root": true, "$children": true, "$scopedSlots": true,
+	"$isServer": true, "$ssrContext": true, "$vnode": true, "$props": true,
+}
 
 func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content string, lines []string, functionBoundaries []functionBoundary) []Reference {
 	writeMatches := jsPropertyWriteRe.FindAllStringSubmatchIndex(content, -1)
@@ -254,7 +268,11 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 		}
 		start := m[0]
 		writeStarts[start] = true
+		expr := content[m[0]:m[1]]
 		name := content[m[2]:m[3]]
+		if !keepJSPropertyReference(name, expr) {
+			continue
+		}
 		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindWrite, functionBoundaries))
 	}
 
@@ -267,7 +285,11 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 		if writeStarts[start] {
 			continue
 		}
+		expr := content[m[0]:m[1]]
 		name := content[m[2]:m[3]]
+		if !keepJSPropertyReference(name, expr) {
+			continue
+		}
 		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindRead, functionBoundaries))
 	}
 
@@ -279,7 +301,11 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 		}
 		start := m[0]
 		writeStarts[start] = true
+		expr := content[m[0]:m[1]]
 		name := content[m[2]:m[3]]
+		if !keepJSPropertyReference(name, expr) {
+			continue
+		}
 		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindWrite, functionBoundaries))
 	}
 
@@ -292,12 +318,49 @@ func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content st
 		if writeStarts[start] {
 			continue
 		}
+		expr := content[m[0]:m[1]]
 		name := content[m[2]:m[3]]
+		if !keepJSPropertyReference(name, expr) {
+			continue
+		}
 		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindRead, functionBoundaries))
 	}
 
 	refs = append(refs, extractJSAliasPropertyReferences(filePath, content, lines, functionBoundaries)...)
 	return dedupeReferences(refs)
+}
+
+func keepJSPropertyReference(name string, expr string) bool {
+	if name == "" || strings.HasPrefix(name, "_") {
+		return false
+	}
+	if jsVueRuntimeInternalProps[name] {
+		return false
+	}
+	root := extractJSRootIdentifier(expr)
+	if jsBuiltinRoots[root] {
+		return false
+	}
+	return true
+}
+
+func extractJSRootIdentifier(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return ""
+	}
+	if strings.HasPrefix(expr, "this.") {
+		expr = expr[len("this."):]
+	}
+	for i, r := range expr {
+		if r == '.' || r == '[' || r == '(' || r == ' ' || r == '\t' || r == '\n' {
+			if i == 0 {
+				return ""
+			}
+			return expr[:i]
+		}
+	}
+	return expr
 }
 
 type jsAliasProperty struct {
@@ -393,12 +456,16 @@ func collectJSAliases(content string) []jsAliasProperty {
 
 	simple := jsSimpleAliasRe.FindAllStringSubmatchIndex(content, -1)
 	for _, m := range simple {
-		if len(m) < 6 {
+		if len(m) < 8 {
 			continue
 		}
 		alias := strings.TrimSpace(content[m[2]:m[3]])
-		prop := strings.TrimSpace(content[m[4]:m[5]])
+		root := strings.TrimSpace(content[m[4]:m[5]])
+		prop := strings.TrimSpace(content[m[6]:m[7]])
 		if alias == "" || prop == "" {
+			continue
+		}
+		if jsBuiltinRoots[root] || jsVueRuntimeInternalProps[prop] || strings.HasPrefix(prop, "_") {
 			continue
 		}
 		aliases = append(aliases, jsAliasProperty{alias: alias, propName: prop, isRef: false, declPos: m[2]})

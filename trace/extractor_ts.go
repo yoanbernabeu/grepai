@@ -758,9 +758,15 @@ func (e *TreeSitterExtractor) extractMemberAccessReference(node *sitter.Node, co
 	if name == "" {
 		return Reference{}, false
 	}
-	// Skip private/internal slots used by transformed Vue internals.
-	if strings.HasPrefix(name, "_") {
+	if strings.HasPrefix(name, "_") || jsVueRuntimeInternalProps[name] {
 		return Reference{}, false
+	}
+	objectNode := node.ChildByFieldName("object")
+	if objectNode != nil {
+		root := extractJSRootFromNodeContent(objectNode.Content(content))
+		if jsBuiltinRoots[root] {
+			return Reference{}, false
+		}
 	}
 
 	kind := RefKindRead
@@ -791,6 +797,25 @@ func (e *TreeSitterExtractor) extractMemberAccessReference(node *sitter.Node, co
 		CallerName: caller,
 		CallerFile: filePath,
 	}, true
+}
+
+func extractJSRootFromNodeContent(objExpr string) string {
+	objExpr = strings.TrimSpace(objExpr)
+	if objExpr == "" {
+		return ""
+	}
+	if strings.HasPrefix(objExpr, "this.") {
+		objExpr = objExpr[len("this."):]
+	}
+	for i, r := range objExpr {
+		if r == '.' || r == '[' || r == '(' || r == ' ' || r == '\t' || r == '\n' {
+			if i == 0 {
+				return ""
+			}
+			return objExpr[:i]
+		}
+	}
+	return objExpr
 }
 
 func normalizeJSPropertyName(raw string) string {
