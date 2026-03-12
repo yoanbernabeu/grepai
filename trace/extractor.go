@@ -225,11 +225,49 @@ func (e *RegexExtractor) extractLanguageSpecificReferences(filePath string, cont
 	}
 
 	switch patterns.Language {
+	case "javascript", "typescript":
+		return e.extractJSPropertyReferences(filePath, content, lines, functionBoundaries)
 	case "lua":
 		return e.extractLuaBracketKeyReferences(filePath, content, lines, patterns, functionBoundaries)
 	default:
 		return nil
 	}
+}
+
+var (
+	jsPropertyReadRe  = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
+	jsPropertyWriteRe = regexp.MustCompile(`\b(?:this\.)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+([A-Za-z_$][A-Za-z0-9_$]*)\s*=`)
+)
+
+func (e *RegexExtractor) extractJSPropertyReferences(filePath string, content string, lines []string, functionBoundaries []functionBoundary) []Reference {
+	writeMatches := jsPropertyWriteRe.FindAllStringSubmatchIndex(content, -1)
+	writeStarts := make(map[int]bool, len(writeMatches))
+	refs := make([]Reference, 0, len(writeMatches))
+
+	for _, m := range writeMatches {
+		if len(m) < 4 {
+			continue
+		}
+		start := m[0]
+		writeStarts[start] = true
+		name := content[m[2]:m[3]]
+		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindWrite, functionBoundaries))
+	}
+
+	readMatches := jsPropertyReadRe.FindAllStringSubmatchIndex(content, -1)
+	for _, m := range readMatches {
+		if len(m) < 4 {
+			continue
+		}
+		start := m[0]
+		if writeStarts[start] {
+			continue
+		}
+		name := content[m[2]:m[3]]
+		refs = append(refs, buildDataReference(filePath, content, lines, name, start, RefKindRead, functionBoundaries))
+	}
+
+	return refs
 }
 
 // isDeclarationReferenceMatch reports whether a regex call match occurs in a declaration context.
@@ -751,6 +789,22 @@ func buildReference(filePath, content string, lines []string, name string, pos i
 
 	return Reference{
 		SymbolName: name,
+		Kind:       RefKindCall,
+		File:       filePath,
+		Line:       line,
+		Context:    getLineContext(lines, line-1, 0),
+		CallerName: caller.Name,
+		CallerFile: filePath,
+		CallerLine: caller.Line,
+	}
+}
+
+func buildDataReference(filePath, content string, lines []string, name string, pos int, kind string, functionBoundaries []functionBoundary) Reference {
+	line := countLines(content[:pos]) + 1
+	caller := findContainingFunction(pos, functionBoundaries)
+	return Reference{
+		SymbolName: name,
+		Kind:       kind,
 		File:       filePath,
 		Line:       line,
 		Context:    getLineContext(lines, line-1, 0),

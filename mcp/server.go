@@ -71,6 +71,18 @@ type CalleeInfoCompact struct {
 	CallSite CallSiteCompact `json:"call_site"`
 }
 
+type RefUsageCompact struct {
+	Symbol   trace.Symbol    `json:"symbol"`
+	Access   string          `json:"access"`
+	AccessAt CallSiteCompact `json:"access_at"`
+}
+
+type RefUsage struct {
+	Symbol   trace.Symbol   `json:"symbol"`
+	Access   string         `json:"access"`
+	AccessAt trace.CallSite `json:"access_at"`
+}
+
 // CallEdgeCompact is a compact version of trace.CallEdge for compact output.
 type CallEdgeCompact struct {
 	CallerName string `json:"caller_name"`
@@ -240,6 +252,48 @@ func (s *Server) registerTools() {
 		),
 	)
 	s.mcpServer.AddTool(traceGraphTool, s.handleTraceGraph)
+
+	refsReadersTool := mcp.NewTool("grepai_refs_readers",
+		mcp.WithDescription("Find readers of a property/state symbol (non-call data usage such as store.uid reads)."),
+		mcp.WithString("symbol",
+			mcp.Required(),
+			mcp.Description("Property/state symbol name to find readers for"),
+		),
+		mcp.WithBoolean("compact",
+			mcp.Description("Return minimal output without context (default: false)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
+		mcp.WithString("workspace",
+			mcp.Description("Workspace name for cross-project refs (optional)"),
+		),
+		mcp.WithString("project",
+			mcp.Description("Project name within workspace (requires workspace)"),
+		),
+	)
+	s.mcpServer.AddTool(refsReadersTool, s.handleRefsReaders)
+
+	refsWritersTool := mcp.NewTool("grepai_refs_writers",
+		mcp.WithDescription("Find writers of a property/state symbol (non-call data usage such as this.uid = ...)."),
+		mcp.WithString("symbol",
+			mcp.Required(),
+			mcp.Description("Property/state symbol name to find writers for"),
+		),
+		mcp.WithBoolean("compact",
+			mcp.Description("Return minimal output without context (default: false)"),
+		),
+		mcp.WithString("format",
+			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+		),
+		mcp.WithString("workspace",
+			mcp.Description("Workspace name for cross-project refs (optional)"),
+		),
+		mcp.WithString("project",
+			mcp.Description("Project name within workspace (requires workspace)"),
+		),
+	)
+	s.mcpServer.AddTool(refsWritersTool, s.handleRefsWriters)
 
 	// grepai_index_status tool
 	indexStatusTool := mcp.NewTool("grepai_index_status",
@@ -1435,6 +1489,148 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 	}
 
 	return mcp.NewToolResultText(output), nil
+}
+
+func (s *Server) handleRefsReaders(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.handleRefsByKind(ctx, request, trace.RefKindRead)
+}
+
+func (s *Server) handleRefsWriters(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.handleRefsByKind(ctx, request, trace.RefKindWrite)
+}
+
+func (s *Server) handleRefsByKind(ctx context.Context, request mcp.CallToolRequest, kind string) (*mcp.CallToolResult, error) {
+	symbolName, err := request.RequireString("symbol")
+	if err != nil {
+		return mcp.NewToolResultError("symbol parameter is required"), nil
+	}
+
+	compact := request.GetBool("compact", false)
+	format := request.GetString("format", "json")
+	workspace := s.resolveWorkspace(request.GetString("workspace", ""))
+	project := request.GetString("project", "")
+
+	if format != "json" && format != "toon" {
+		return mcp.NewToolResultError("format must be 'json' or 'toon'"), nil
+	}
+
+	// Workspace mode
+	if workspace != "" {
+		stores, loadErr := trace.LoadWorkspaceSymbolStores(ctx, workspace, project)
+		if loadErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace symbol stores: %v", loadErr)), nil
+		}
+		defer trace.CloseSymbolStores(stores)
+		return s.handleRefsFromStores(ctx, symbolName, kind, compact, format, stores)
+	}
+
+	// Single-project mode
+	if s.projectRoot == "" {
+		return mcp.NewToolResultError("refs requires a project context; use --workspace parameter or start mcp-serve from a project directory"), nil
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(s.projectRoot))
+	if err := symbolStore.Load(ctx); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load symbol index: %v. Run 'grepai watch' first", err)), nil
+	}
+	defer symbolStore.Close()
+
+	stats, err := symbolStore.GetStats(ctx)
+	if err != nil || stats.TotalSymbols == 0 {
+		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
+	}
+
+	return s.handleRefsFromStores(ctx, symbolName, kind, compact, format, []trace.SymbolStore{symbolStore})
+}
+
+func (s *Server) handleRefsFromStores(ctx context.Context, symbolName string, kind string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
+	usages := make([]RefUsage, 0)
+
+	for _, ss := range stores {
+		var refs []trace.Reference
+		var err error
+		if kind == trace.RefKindWrite {
+			refs, err = ss.LookupWriters(ctx, symbolName)
+		} else {
+			refs, err = ss.LookupReaders(ctx, symbolName)
+		}
+		if err != nil {
+			log.Printf("Warning: failed to lookup refs of %q: %v", symbolName, err)
+			continue
+		}
+
+		for _, ref := range refs {
+			usages = append(usages, RefUsage{
+				Symbol: resolveRefCallerSymbol(ss, ctx, ref),
+				Access: ref.Kind,
+				AccessAt: trace.CallSite{
+					File:    ref.File,
+					Line:    ref.Line,
+					Context: ref.Context,
+				},
+			})
+		}
+	}
+
+	label := "readers"
+	if kind == trace.RefKindWrite {
+		label = "writers"
+	}
+
+	var data any
+	if compact {
+		result := map[string]any{
+			"query": symbolName,
+			"kind":  "property",
+			"mode":  "fast",
+		}
+		comp := make([]RefUsageCompact, 0, len(usages))
+		for _, usage := range usages {
+			comp = append(comp, RefUsageCompact{
+				Symbol: usage.Symbol,
+				Access: usage.Access,
+				AccessAt: CallSiteCompact{
+					File: usage.AccessAt.File,
+					Line: usage.AccessAt.Line,
+				},
+			})
+		}
+		result[label] = comp
+		data = result
+	} else {
+		result := map[string]any{
+			"query": symbolName,
+			"kind":  "property",
+			"mode":  "fast",
+		}
+		result[label] = usages
+		data = result
+	}
+
+	output, err := encodeOutput(data, format)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(output), nil
+}
+
+func resolveRefCallerSymbol(ss trace.SymbolStore, ctx context.Context, ref trace.Reference) trace.Symbol {
+	if ref.CallerName == "" || ref.CallerName == "<top-level>" {
+		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
+	}
+
+	candidates, err := ss.LookupSymbol(ctx, ref.CallerName)
+	if err != nil || len(candidates) == 0 {
+		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
+	}
+	for _, sym := range candidates {
+		if sym.File == ref.CallerFile {
+			return sym
+		}
+	}
+
+	return candidates[0]
 }
 
 // WorkspaceIndexStatus represents the status of a workspace index.

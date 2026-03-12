@@ -1303,3 +1303,40 @@ func TestRegexExtractor_ExtractReferences_FSharp_IgnoresCommentsAndStrings(t *te
 		t.Error("nested block comment not fully masked: stillHidden leaked")
 	}
 }
+
+func TestRegexExtractor_ExtractReferences_JSTypeScriptPropertyReadWrite(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function login(store) {
+  const ok = store.uid !== null
+  this.store.uid = "next"
+  return ok
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "store.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRead := false
+	foundWrite := false
+	for _, ref := range refs {
+		if ref.SymbolName != "uid" {
+			continue
+		}
+		if ref.Kind == RefKindRead {
+			foundRead = true
+		}
+		if ref.Kind == RefKindWrite {
+			foundWrite = true
+		}
+	}
+
+	if !foundRead {
+		t.Fatal("expected at least one read reference for uid")
+	}
+	if !foundWrite {
+		t.Fatal("expected at least one write reference for uid")
+	}
+}
