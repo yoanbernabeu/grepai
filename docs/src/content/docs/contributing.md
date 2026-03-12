@@ -171,6 +171,51 @@ func (s *MyStore) Close() error {
 
 3. Wire it up in CLI commands
 
+## Adding a Framework Processor
+
+Framework processors normalize non-standard source files (Vue/Svelte/Astro/etc.) into index/trace friendly text while preserving source mapping.
+
+### 1. Implement the processor contract
+
+Create a new file under `framework/` and implement:
+
+- `Name() string`
+- `Supports(filePath string) bool`
+- `Capabilities() ProcessorCapabilities`
+- `TransformForEmbedding(ctx, filePath, source)`
+- `TransformForTrace(ctx, filePath, source)`
+
+Return `ErrNotImplemented` for scaffold placeholders and `ErrUnavailable` when runtime/compiler dependencies are missing.
+
+### 2. Respect mapping invariants
+
+- `GeneratedToSourceLine` is 1-based.
+- Use `0` for generated lines without a reliable source line.
+- Persisted symbols/chunks must always reference the original source path.
+- Keep embedding text and displayed snippet separate when transformed output differs from source.
+
+### 3. Register processor and config flags
+
+- Add processor construction in `cli/watch.go` (`buildFrameworkRegistry`).
+- Add per-framework enable toggle in `config/config.go` under `framework_processing.frameworks`.
+- Honor global mode: `auto | require | off`.
+
+### 4. Required tests
+
+- Registry routing by extension.
+- `auto` fallback behavior.
+- `require` failure behavior.
+- Source line remapping correctness.
+- Regression tests for non-framework files.
+
+### 5. Scaffold examples
+
+- `framework/svelte_processor.go`
+- `framework/astro_processor.go`
+- `framework/solid_processor.go`
+
+These are intentionally non-functional placeholders showing expected structure.
+
 ## Commit Convention
 
 Follow conventional commits:

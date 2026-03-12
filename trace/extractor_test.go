@@ -1014,6 +1014,48 @@ end`
 	}
 }
 
+func TestRegexExtractor_ExtractReferences_TypeScriptSkipsDeclarationArtifacts(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := "export function formatUserName(name: string): string {\n" +
+		"  return name.trim().toUpperCase()\n" +
+		"}\n\n" +
+		"export function getGreeting(name: string): string {\n" +
+		"  return formatUserName(name)\n" +
+		"}\n\n" +
+		"export function buildActivityLabel(name: string, count: number): string {\n" +
+		"  return formatUserName(name) + ' has ' + String(count) + ' alerts'\n" +
+		"}\n"
+
+	refs, err := extractor.ExtractReferences(ctx, "test.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	var selfCall bool
+	callers := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.SymbolName != "formatUserName" {
+			continue
+		}
+		if ref.CallerName == "formatUserName" {
+			selfCall = true
+		}
+		callers[ref.CallerName] = true
+	}
+
+	if selfCall {
+		t.Fatal("unexpected self-call artifact for function declaration")
+	}
+	if !callers["getGreeting"] {
+		t.Fatal("expected getGreeting -> formatUserName reference")
+	}
+	if !callers["buildActivityLabel"] {
+		t.Fatal("expected buildActivityLabel -> formatUserName reference")
+	}
+}
+
 func TestIsKeyword(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1259,5 +1301,171 @@ func TestRegexExtractor_ExtractReferences_FSharp_IgnoresCommentsAndStrings(t *te
 	}
 	if nestedFound["stillHidden"] {
 		t.Error("nested block comment not fully masked: stillHidden leaked")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_JSTypeScriptPropertyReadWrite(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function login(store) {
+  const ok = store.uid !== null
+  this.store.uid = "next"
+  return ok
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "store.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRead := false
+	foundWrite := false
+	for _, ref := range refs {
+		if ref.SymbolName != "uid" {
+			continue
+		}
+		if ref.Kind == RefKindRead {
+			foundRead = true
+		}
+		if ref.Kind == RefKindWrite {
+			foundWrite = true
+		}
+	}
+
+	if !foundRead {
+		t.Fatal("expected at least one read reference for uid")
+	}
+	if !foundWrite {
+		t.Fatal("expected at least one write reference for uid")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_CompositionAPIAliases(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const { uid: uidRef } = storeToRefs(store)
+  const roleLocal = store.role
+  const r1 = uidRef.value
+  uidRef.value = "x"
+  return roleLocal
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeUID := false
+	readRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "uid" && ref.Kind == RefKindWrite {
+			writeUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindRead {
+			readRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via uidRef.value")
+	}
+	if !writeUID {
+		t.Fatal("expected uid write via uidRef.value assignment")
+	}
+	if !readRole {
+		t.Fatal("expected role read via simple alias")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_BracketPropertyAccess(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const a = store["uid"]
+  this.store["role"] = "admin"
+  return a
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindWrite {
+			writeRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via bracket access")
+	}
+	if !writeRole {
+		t.Fatal("expected role write via bracket access")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_FiltersBuiltinAndVueInternalNoise(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store, obj) {
+  const n = Math.max(1, 2)
+  console.log(n)
+  const keys = Object.keys(obj)
+  this.$refs.input.focus()
+  const uid = store.uid
+  return uid
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "noise.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	hasUID := false
+	hasMax := false
+	hasLog := false
+	hasKeys := false
+	hasRefs := false
+
+	for _, ref := range refs {
+		if ref.Kind == RefKindCall {
+			continue
+		}
+		switch ref.SymbolName {
+		case "uid":
+			if ref.Kind == RefKindRead {
+				hasUID = true
+			}
+		case "max":
+			hasMax = true
+		case "log":
+			hasLog = true
+		case "keys":
+			hasKeys = true
+		case "$refs":
+			hasRefs = true
+		}
+	}
+
+	if !hasUID {
+		t.Fatal("expected store uid read to remain after filtering")
+	}
+	if hasMax || hasLog || hasKeys || hasRefs {
+		t.Fatalf("expected builtins/vue internals filtered, got max=%v log=%v keys=%v $refs=%v", hasMax, hasLog, hasKeys, hasRefs)
 	}
 }
