@@ -194,8 +194,9 @@ type QdrantConfig struct {
 }
 
 type ChunkingConfig struct {
-	Size    int `yaml:"size"`
-	Overlap int `yaml:"overlap"`
+	Size     int    `yaml:"size"`
+	Overlap  int    `yaml:"overlap"`
+	Strategy string `yaml:"strategy"` // "fixed" (default) or "ast"
 }
 
 func DefaultStoreForBackend(backend string) StoreConfig {
@@ -289,8 +290,9 @@ func DefaultConfig() *Config {
 		Embedder: DefaultEmbedderForProvider(DefaultEmbedderProvider),
 		Store:    DefaultStoreForBackend("gob"),
 		Chunking: ChunkingConfig{
-			Size:    512,
-			Overlap: 50,
+			Size:     512,
+			Overlap:  50,
+			Strategy: "fixed",
 		},
 		Watch: WatchConfig{
 			DebounceMs:                  500,
@@ -474,6 +476,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Chunking.Overlap == 0 {
 		c.Chunking.Overlap = defaults.Chunking.Overlap
+	}
+	if c.Chunking.Strategy == "" {
+		c.Chunking.Strategy = defaults.Chunking.Strategy
 	}
 
 	// Watch defaults
