@@ -68,6 +68,10 @@ pre-commit: fmt
 	go test -race ./...
 	@echo "✓ All checks passed! Ready to commit."
 
+# Docker: build image locally
+docker-build:
+	docker build -t grepai .
+
 # Nix flake: compute vendorHash via Docker
 nix-hash:
 	@echo "Computing vendorHash (requires Docker)..."
