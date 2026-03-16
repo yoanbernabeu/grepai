@@ -80,6 +80,12 @@ type UpdateConfig struct {
 type SearchConfig struct {
 	Boost  BoostConfig  `yaml:"boost"`
 	Hybrid HybridConfig `yaml:"hybrid"`
+	Dedup  DedupConfig  `yaml:"dedup"`
+}
+
+// DedupConfig controls file-level deduplication of search results.
+type DedupConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type HybridConfig struct {
@@ -300,6 +306,9 @@ func DefaultConfig() *Config {
 			RPGMaxDirtyFilesPerBatch:    DefaultWatchRPGMaxDirtyFilesPerBatch,
 		},
 		Search: SearchConfig{
+			Dedup: DedupConfig{
+				Enabled: true,
+			},
 			Hybrid: HybridConfig{
 				Enabled: false,
 				K:       60,
