@@ -961,7 +961,7 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
 
 	// Initialize chunker
-	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
+	chunker := indexer.NewFileChunker(cfg.Chunking.Strategy, cfg.Chunking.Size, cfg.Chunking.Overlap)
 
 	// Initialize indexer
 	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
@@ -2607,7 +2607,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 	}
 
 	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
-	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
+	chunker := indexer.NewFileChunker(projectCfg.Chunking.Strategy, projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
 	vectorStore := &projectPrefixStore{
 		store:         sharedStore,
 		workspaceName: ws.Name,

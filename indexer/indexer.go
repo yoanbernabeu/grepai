@@ -14,7 +14,7 @@ type Indexer struct {
 	root          string
 	store         store.VectorStore
 	embedder      embedder.Embedder
-	chunker       *Chunker
+	chunker       FileChunker
 	scanner       *Scanner
 	lastIndexTime time.Time
 }
@@ -56,7 +56,7 @@ func NewIndexer(
 	root string,
 	st store.VectorStore,
 	emb embedder.Embedder,
-	chunker *Chunker,
+	chunker FileChunker,
 	scanner *Scanner,
 	lastIndexTime time.Time,
 ) *Indexer {
