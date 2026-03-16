@@ -128,7 +128,7 @@ func runRefs(symbolName string, readers bool) (refsResult, error) {
 		return refsResult{}, fmt.Errorf("--project requires --workspace")
 	}
 
-	stores := []trace.SymbolStore{}
+	var stores []trace.SymbolStore
 	if refsWorkspace != "" {
 		var err error
 		stores, err = trace.LoadWorkspaceSymbolStores(ctx, refsWorkspace, refsProject)

@@ -57,7 +57,7 @@ type vueScriptOutput struct {
 
 func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (TransformResult, error) {
 	in, _ := json.Marshal(vueScriptInput{FilePath: filePath, Source: source})
-	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript)
+	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript) //nolint:gosec // nodePath is an executable path from trusted config; no shell is invoked
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

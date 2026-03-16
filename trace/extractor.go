@@ -338,10 +338,7 @@ func keepJSPropertyReference(name string, expr string) bool {
 		return false
 	}
 	root := extractJSRootIdentifier(expr)
-	if jsBuiltinRoots[root] {
-		return false
-	}
-	return true
+	return !jsBuiltinRoots[root]
 }
 
 func extractJSRootIdentifier(expr string) string {
@@ -349,9 +346,7 @@ func extractJSRootIdentifier(expr string) string {
 	if expr == "" {
 		return ""
 	}
-	if strings.HasPrefix(expr, "this.") {
-		expr = expr[len("this."):]
-	}
+	expr = strings.TrimPrefix(expr, "this.")
 	for i, r := range expr {
 		if r == '.' || r == '[' || r == '(' || r == ' ' || r == '\t' || r == '\n' {
 			if i == 0 {
