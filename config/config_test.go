@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"runtime"
 	"testing"
 )
 
@@ -96,6 +97,9 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 	}
 	if openai.Dimensions != nil {
 		t.Fatalf("openai dimensions should be nil, got %v", openai.Dimensions)
+	}
+	if openai.Parallelism != DefaultOpenAIParallelism {
+		t.Fatalf("openai parallelism = %d, want %d", openai.Parallelism, DefaultOpenAIParallelism)
 	}
 }
 
@@ -379,6 +383,9 @@ func TestFindProjectRootWithSymlink(t *testing.T) {
 	symlinkParent := t.TempDir()
 	symlinkPath := filepath.Join(symlinkParent, "symlink-project")
 	if err := os.Symlink(realDir, symlinkPath); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("skipping: symlink creation requires elevated privileges on Windows: %v", err)
+		}
 		t.Fatalf("failed to create symlink: %v", err)
 	}
 
@@ -545,6 +552,19 @@ store:
 `,
 			expectedNil:        true,
 			expectedDimensions: 1536, // GetDimensions() returns default
+		},
+		{
+			name: "openai large without dimensions infers large dimensions",
+			configYAML: `version: 1
+embedder:
+  provider: openai
+  model: text-embedding-3-large
+  api_key: sk-test
+store:
+  backend: gob
+`,
+			expectedNil:        true,
+			expectedDimensions: 3072,
 		},
 		{
 			name: "openai with explicit dimensions sets pointer",
