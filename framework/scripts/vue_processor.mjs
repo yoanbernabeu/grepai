@@ -1,4 +1,6 @@
-import { parse, compileTemplate } from "@vue/compiler-sfc";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const chunks = [];
 for await (const chunk of process.stdin) {
@@ -8,6 +10,37 @@ for await (const chunk of process.stdin) {
 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 const source = input.source ?? "";
 const filePath = input.filePath ?? "Component.vue";
+const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+
+function candidateResolveDirs(startFilePath) {
+  const dirs = [];
+  let dir = path.dirname(startFilePath);
+  while (true) {
+    dirs.push(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!dirs.includes(process.cwd())) {
+    dirs.push(process.cwd());
+  }
+  return dirs;
+}
+
+async function loadVueCompiler(startFilePath) {
+  for (const dir of candidateResolveDirs(startFilePath)) {
+    const req = createRequire(path.join(dir, "__grepai_vue_processor__.cjs"));
+    try {
+      const resolved = req.resolve("@vue/compiler-sfc");
+      return import(pathToFileURL(resolved).href);
+    } catch (err) {
+      if (err?.code !== "MODULE_NOT_FOUND") {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`Cannot resolve @vue/compiler-sfc from ${path.dirname(startFilePath)}`);
+}
 
 function countLines(text) {
   if (text.length === 0) return 1;
@@ -94,6 +127,7 @@ function appendStyleBindings(out, map, refs, index) {
 }
 
 try {
+  const { parse, compileTemplate } = await loadVueCompiler(absoluteFilePath);
   const parsed = parse(source, { filename: filePath });
   if (parsed.errors?.length) {
     const msg = String(parsed.errors[0]);

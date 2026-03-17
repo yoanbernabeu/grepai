@@ -662,9 +662,7 @@ func (idx *Indexer) embeddingContent(ctx context.Context, file FileInfo) (string
 		log.Printf("Warning: framework embedding transform failed for %s: %v", file.Path, err)
 		return file.Content, nil
 	}
-	for _, w := range res.Warnings {
-		log.Printf("Warning: %s", w)
-	}
+	framework.LogWarningsOnce(res.Warnings)
 	if res.Text == "" {
 		return file.Content, nil
 	}

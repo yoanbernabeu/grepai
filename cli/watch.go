@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -45,6 +46,13 @@ var (
 	watchForegroundUIRunner    = runWatchForegroundUI
 	watchStopDaemonRunner      = stopWatchDaemon
 )
+
+type watchProgressRenderer struct {
+	mu          sync.Mutex
+	currentLine string
+}
+
+var watchProgressOutput watchProgressRenderer
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
@@ -766,8 +774,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 				}
 			},
 		)
-		// Clear progress line
-		fmt.Print("\r" + strings.Repeat(" ", 80) + "\r")
+		watchProgressOutput.clear()
+		fmt.Println()
 	} else {
 		stats, err = idx.IndexAllWithBatchProgress(ctx, func(info indexer.ProgressInfo) {
 			if onScan != nil {
@@ -1864,6 +1872,12 @@ func runWatchForeground() error {
 		}
 	}
 
+	var restoreLogs func()
+	if !isBackgroundChild && watchNoUI {
+		restoreLogs = captureWatchPlainLogs()
+		defer restoreLogs()
+	}
+
 	// Initialize shared embedder (reused across all worktrees)
 	emb, err := initializeEmbedder(ctx, cfg)
 	if err != nil {
@@ -1997,9 +2011,7 @@ func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtr
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, w := range result.Warnings {
-		log.Printf("Warning: %s", w)
-	}
+	framework.LogWarningsOnce(result.Warnings)
 
 	inputPath := result.VirtualPath
 	if inputPath == "" {
@@ -2228,21 +2240,85 @@ func printProgress(current, total int, filePath string) {
 		displayPath = "..." + filePath[len(filePath)-maxPathLen+3:]
 	}
 
-	// Print with carriage return to overwrite previous line
-	fmt.Printf("\rIndexing [%s] %3.0f%% (%d/%d) %s", bar, percent, current, total, displayPath)
+	watchProgressOutput.render(fmt.Sprintf("Indexing [%s] %3.0f%% (%d/%d) %s", bar, percent, current, total, displayPath))
 }
 
 func printBatchProgress(info indexer.BatchProgressInfo) {
 	if info.Retrying {
-		fmt.Printf("\r%s\r", strings.Repeat(" ", 80))
 		reason := describeRetryReason(info.StatusCode)
-		fmt.Printf("%s - Retrying batch %d (attempt %d/5)...\n", reason, info.BatchIndex+1, info.Attempt)
+		watchProgressOutput.println(fmt.Sprintf("%s - Retrying batch %d (attempt %d/5)...", reason, info.BatchIndex+1, info.Attempt))
 	} else if info.TotalChunks > 0 {
 		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
 		barWidth := 20
 		filled := int(float64(barWidth) * float64(info.CompletedChunks) / float64(info.TotalChunks))
 		bar := strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", barWidth-filled)
-		fmt.Printf("\rEmbedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks)
+		watchProgressOutput.render(fmt.Sprintf("Embedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks))
+	}
+}
+
+func (r *watchProgressRenderer) render(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.currentLine = line
+	fmt.Printf("\r%s", line)
+}
+
+func (r *watchProgressRenderer) println(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearLocked()
+	fmt.Println(line)
+	r.redrawLocked()
+}
+
+func (r *watchProgressRenderer) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearLocked()
+}
+
+func (r *watchProgressRenderer) clearLocked() {
+	if r.currentLine == "" {
+		return
+	}
+	fmt.Printf("\r%s\r", strings.Repeat(" ", len(r.currentLine)))
+}
+
+func (r *watchProgressRenderer) redrawLocked() {
+	if r.currentLine == "" {
+		return
+	}
+	fmt.Printf("\r%s", r.currentLine)
+}
+
+type watchPlainLogForwarder struct {
+	writer io.Writer
+}
+
+func (f *watchPlainLogForwarder) Write(p []byte) (int, error) {
+	// Foreground plain mode keeps progress on a single line, so log writes need
+	// to temporarily clear and then redraw that line.
+	watchProgressOutput.mu.Lock()
+	defer watchProgressOutput.mu.Unlock()
+	watchProgressOutput.clearLocked()
+	n, err := f.writer.Write(p)
+	watchProgressOutput.redrawLocked()
+	return n, err
+}
+
+func captureWatchPlainLogs() func() {
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	oldPrefix := log.Prefix()
+
+	log.SetOutput(&watchPlainLogForwarder{writer: oldWriter})
+	log.SetFlags(oldFlags)
+	log.SetPrefix(oldPrefix)
+
+	return func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
 	}
 }
 

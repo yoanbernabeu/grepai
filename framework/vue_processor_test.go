@@ -1,6 +1,9 @@
 package framework
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -74,5 +77,55 @@ func TestAppendTemplateCtxReadCalls(t *testing.T) {
 	}
 	if len(outMap) <= len(mapping) {
 		t.Fatalf("expected extended line map, got %d <= %d", len(outMap), len(mapping))
+	}
+}
+
+func TestVueProcessorTransform_ResolvesCompilerFromFileHierarchy(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	nodeModuleDir := filepath.Join(projectDir, "node_modules", "@vue", "compiler-sfc")
+	componentPath := filepath.Join(projectDir, "src", "Comp.vue")
+
+	if err := os.MkdirAll(nodeModuleDir, 0o755); err != nil {
+		t.Fatalf("mkdir node module dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(componentPath), 0o755); err != nil {
+		t.Fatalf("mkdir component dir: %v", err)
+	}
+
+	packageJSON := `{"name":"@vue/compiler-sfc","type":"module","exports":"./index.mjs"}`
+	if err := os.WriteFile(filepath.Join(nodeModuleDir, "package.json"), []byte(packageJSON), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	moduleSource := `export function parse() {
+  return {
+    descriptor: {
+      script: {
+        content: "export const resolved = 1",
+        loc: { start: { line: 1 } }
+      },
+      scriptSetup: null,
+      template: null,
+      styles: []
+    },
+    errors: []
+  };
+}
+
+export function compileTemplate() {
+  return { code: "", errors: [] };
+}`
+	if err := os.WriteFile(filepath.Join(nodeModuleDir, "index.mjs"), []byte(moduleSource), 0o644); err != nil {
+		t.Fatalf("write compiler module: %v", err)
+	}
+
+	p := NewVueProcessor("node")
+	res, err := p.TransformForEmbedding(context.Background(), componentPath, "<template><div/></template>")
+	if err != nil {
+		t.Fatalf("transform failed: %v", err)
+	}
+	if !strings.Contains(res.Text, "export const resolved = 1") {
+		t.Fatalf("expected resolved compiler output, got %q", res.Text)
 	}
 }

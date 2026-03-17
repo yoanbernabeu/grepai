@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 //go:embed scripts/vue_processor.mjs
@@ -17,6 +18,8 @@ var vueProcessorScript string
 
 type VueProcessor struct {
 	nodePath string
+	mu       sync.RWMutex
+	missing  string
 }
 
 func NewVueProcessor(nodePath string) *VueProcessor {
@@ -56,6 +59,10 @@ type vueScriptOutput struct {
 }
 
 func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (TransformResult, error) {
+	if msg, ok := p.missingCompilerMessage(); ok {
+		return p.fallbackWithCompilerWarning(filePath, source, msg)
+	}
+
 	in, _ := json.Marshal(vueScriptInput{FilePath: filePath, Source: source})
 	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript) //nolint:gosec // nodePath is an executable path from trusted config; no shell is invoked
 	cmd.Stdin = bytes.NewReader(in)
@@ -65,10 +72,15 @@ func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if isMissingVueCompiler(msg) {
+			msg = normalizeMissingVueCompilerMessage(filePath)
+			p.setMissingCompilerMessage(msg)
+		}
 		fallback, fbErr := p.fallback(filePath, source)
 		if fbErr == nil {
 			fallback.Warnings = append(fallback.Warnings,
-				fmt.Sprintf("vue compiler unavailable: %s", strings.TrimSpace(stderr.String())))
+				fmt.Sprintf("vue compiler unavailable: %s", msg))
 			return fallback, fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 		return TransformResult{}, fmt.Errorf("%w: vue processor failed: %v (%s)", ErrUnavailable, err, strings.TrimSpace(stderr.String()))
@@ -96,6 +108,52 @@ func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (
 		Warnings:              out.Warnings,
 		Transformed:           true,
 	}, nil
+}
+
+func (p *VueProcessor) fallbackWithCompilerWarning(filePath, source, msg string) (TransformResult, error) {
+	fallback, err := p.fallback(filePath, source)
+	if err != nil {
+		out := passthrough(filePath, source)
+		out.Processor = p.Name()
+		out.Warnings = append(out.Warnings, fmt.Sprintf("vue compiler unavailable: %s", msg))
+		return out, fmt.Errorf("%w: vue compiler unavailable", ErrUnavailable)
+	}
+	fallback.Warnings = append(fallback.Warnings, fmt.Sprintf("vue compiler unavailable: %s", msg))
+	return fallback, fmt.Errorf("%w: vue compiler unavailable", ErrUnavailable)
+}
+
+func isMissingVueCompiler(msg string) bool {
+	return strings.Contains(msg, "@vue/compiler-sfc") &&
+		(strings.Contains(msg, "Cannot find package") || strings.Contains(msg, "Cannot resolve @vue/compiler-sfc"))
+}
+
+func normalizeMissingVueCompilerMessage(filePath string) string {
+	return fmt.Sprintf("Cannot resolve @vue/compiler-sfc from %s; install it in the Vue workspace to enable full SFC compilation", pathDir(filePath))
+}
+
+func pathDir(filePath string) string {
+	lastSlash := strings.LastIndexAny(filePath, `/\`)
+	if lastSlash < 0 {
+		return "."
+	}
+	if lastSlash == 0 {
+		return filePath[:1]
+	}
+	return filePath[:lastSlash]
+}
+
+func (p *VueProcessor) missingCompilerMessage() (string, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.missing, p.missing != ""
+}
+
+func (p *VueProcessor) setMissingCompilerMessage(msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.missing == "" {
+		p.missing = msg
+	}
 }
 
 var scriptBlockRE = regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)

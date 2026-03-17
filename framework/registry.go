@@ -73,7 +73,9 @@ func (r *ProcessorRegistry) transform(ctx context.Context, filePath, source stri
 			return TransformResult{}, fmt.Errorf("%s processor failed for %s: %w", p.Name(), filePath, err)
 		}
 		if res.Text != "" {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("%s processor fallback: %v", p.Name(), err))
+			if len(res.Warnings) == 0 {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%s processor fallback: %v", p.Name(), err))
+			}
 			return res, nil
 		}
 		out := passthrough(filePath, source)
