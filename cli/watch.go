@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/framework"
 	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
 	"github.com/yoanbernabeu/grepai/rpg"
@@ -44,6 +46,13 @@ var (
 	watchForegroundUIRunner    = runWatchForegroundUI
 	watchStopDaemonRunner      = stopWatchDaemon
 )
+
+type watchProgressRenderer struct {
+	mu          sync.Mutex
+	currentLine string
+}
+
+var watchProgressOutput watchProgressRenderer
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
@@ -679,7 +688,7 @@ func startRPGRealtimeWorkers(ctx context.Context, projectLabel string, symbolSto
 }
 
 //nolint:unused // Retained for upcoming watch-loop refactor across fg/bg modes.
-func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool) error {
+func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool, processors ...*framework.ProcessorRegistry) error {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -733,12 +742,12 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event, nil, nil)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event, nil, nil, processors...)
 		}
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo)) (*indexer.IndexStats, error) {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), processors ...*framework.ProcessorRegistry) (*indexer.IndexStats, error) {
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -765,8 +774,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 				}
 			},
 		)
-		// Clear progress line
-		fmt.Print("\r" + strings.Repeat(" ", 80) + "\r")
+		watchProgressOutput.clear()
+		fmt.Println()
 	} else {
 		stats, err = idx.IndexAllWithBatchProgress(ctx, func(info indexer.ProgressInfo) {
 			if onScan != nil {
@@ -828,7 +837,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 			continue
 		}
 
-		symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+		symbols, refs, err := extractSymbolsWithFramework(ctx, extractor, fileInfo.Path, fileInfo.Content, processors...)
 		if err != nil {
 			log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, err)
 			continue
@@ -917,6 +926,26 @@ func canonicalPath(path string) string {
 	return filepath.Clean(path)
 }
 
+func buildFrameworkRegistry(cfg *config.Config) *framework.ProcessorRegistry {
+	regCfg := framework.RegistryConfig{
+		Enabled:      cfg.Framework.Enabled,
+		Mode:         cfg.Framework.Mode,
+		NodePath:     cfg.Framework.NodePath,
+		EnableVue:    cfg.Framework.Frameworks.Vue.Enabled,
+		EnableSvelte: cfg.Framework.Frameworks.Svelte.Enabled,
+		EnableAstro:  cfg.Framework.Frameworks.Astro.Enabled,
+		EnableSolid:  cfg.Framework.Frameworks.Solid.Enabled,
+	}
+
+	return framework.NewProcessorRegistry(
+		regCfg,
+		framework.NewVueProcessor(cfg.Framework.NodePath),
+		&framework.SvelteProcessor{},
+		&framework.AstroProcessor{},
+		&framework.SolidProcessor{},
+	)
+}
+
 // watchProject runs the full watch lifecycle for a single project.
 // The embedder is shared across all projects to avoid duplicate connections.
 // If onReady is non-nil, it is called once after initial indexing and watcher start.
@@ -962,9 +991,10 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	// Initialize chunker
 	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
+	processorRegistry := buildFrameworkRegistry(cfg)
 
 	// Initialize indexer
-	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime)
+	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime, processorRegistry)
 
 	// Initialize symbol store and extractor
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
@@ -1016,12 +1046,12 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
 	// Run initial scan and build symbol index.
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild, onScan, onEmbed)
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, cfg.Watch.LastIndexTime, isBackgroundChild, onScan, onEmbed, processorRegistry)
 	if err != nil {
 		return err
 	}
@@ -1069,7 +1099,7 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 
 	// Run watch loop (responds to ctx.Done() for graceful shutdown)
-	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgEncoder, rpgStore, tracedLanguages, projectRoot, cfg, onEvent, onActivity, onStats)
+	return runProjectWatchLoop(ctx, st, symbolStore, w, idx, scanner, extractor, rpgEncoder, rpgStore, tracedLanguages, projectRoot, cfg, onEvent, onActivity, onStats, processorRegistry)
 }
 
 func emitInitialStatsSnapshot(ctx context.Context, vectorStore store.VectorStore, symbolStore trace.SymbolStore, projectRoot string, onStats watchStatsObserver) {
@@ -1107,7 +1137,7 @@ func emitInitialStatsSnapshot(ctx context.Context, vectorStore store.VectorStore
 	}
 }
 
-func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver) error {
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w *watcher.Watcher, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) error {
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
 
@@ -1151,7 +1181,7 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 			if onEvent != nil {
 				onEvent(projectRoot, event)
 			}
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgEncoder, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event, onActivity, onStats)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgEncoder, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event, onActivity, onStats, processors...)
 		}
 	}
 }
@@ -1842,6 +1872,12 @@ func runWatchForeground() error {
 		}
 	}
 
+	var restoreLogs func()
+	if !isBackgroundChild && watchNoUI {
+		restoreLogs = captureWatchPlainLogs()
+		defer restoreLogs()
+	}
+
 	// Initialize shared embedder (reused across all worktrees)
 	emb, err := initializeEmbedder(ctx, cfg)
 	if err != nil {
@@ -1966,7 +2002,51 @@ func runWatchForeground() error {
 	)
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver) {
+func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtractor, filePath, source string, processors ...*framework.ProcessorRegistry) ([]trace.Symbol, []trace.Reference, error) {
+	if len(processors) == 0 || processors[0] == nil {
+		return extractor.ExtractAll(ctx, filePath, source)
+	}
+
+	result, err := processors[0].TransformForTrace(ctx, filePath, source)
+	if err != nil {
+		return nil, nil, err
+	}
+	framework.LogWarningsOnce(result.Warnings)
+
+	inputPath := result.VirtualPath
+	if inputPath == "" {
+		inputPath = filePath
+	}
+	inputText := result.Text
+	if inputText == "" {
+		inputText = source
+	}
+
+	symbols, refs, err := extractor.ExtractAll(ctx, inputPath, inputText)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for i := range symbols {
+		symbols[i].File = filePath
+		symbols[i].Line = framework.RemapLine(result.GeneratedToSourceLine, symbols[i].Line)
+		if symbols[i].EndLine > 0 {
+			symbols[i].EndLine = framework.RemapLine(result.GeneratedToSourceLine, symbols[i].EndLine)
+		}
+	}
+	for i := range refs {
+		refs[i].File = filePath
+		refs[i].CallerFile = filePath
+		refs[i].Line = framework.RemapLine(result.GeneratedToSourceLine, refs[i].Line)
+		if refs[i].CallerLine > 0 {
+			refs[i].CallerLine = framework.RemapLine(result.GeneratedToSourceLine, refs[i].CallerLine)
+		}
+	}
+
+	return symbols, refs, nil
+}
+
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
 	if onActivity != nil {
 		op := "processing"
 		if event.Type == watcher.EventDelete {
@@ -2047,7 +2127,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		// Extract symbols if language is supported
 		ext := strings.ToLower(filepath.Ext(event.Path))
 		if isTracedLanguage(ext, enabledLanguages) {
-			symbols, refs, err := extractor.ExtractAll(ctx, fileInfo.Path, fileInfo.Content)
+			symbols, refs, err := extractSymbolsWithFramework(ctx, extractor, fileInfo.Path, fileInfo.Content, processors...)
 			if err != nil {
 				log.Printf("Failed to extract symbols from %s: %v", event.Path, err)
 			} else if err := symbolStore.SaveFileWithContentHash(ctx, fileInfo.Path, fileInfo.Hash, symbols, refs); err != nil {
@@ -2160,21 +2240,85 @@ func printProgress(current, total int, filePath string) {
 		displayPath = "..." + filePath[len(filePath)-maxPathLen+3:]
 	}
 
-	// Print with carriage return to overwrite previous line
-	fmt.Printf("\rIndexing [%s] %3.0f%% (%d/%d) %s", bar, percent, current, total, displayPath)
+	watchProgressOutput.render(fmt.Sprintf("Indexing [%s] %3.0f%% (%d/%d) %s", bar, percent, current, total, displayPath))
 }
 
 func printBatchProgress(info indexer.BatchProgressInfo) {
 	if info.Retrying {
-		fmt.Printf("\r%s\r", strings.Repeat(" ", 80))
 		reason := describeRetryReason(info.StatusCode)
-		fmt.Printf("%s - Retrying batch %d (attempt %d/5)...\n", reason, info.BatchIndex+1, info.Attempt)
+		watchProgressOutput.println(fmt.Sprintf("%s - Retrying batch %d (attempt %d/5)...", reason, info.BatchIndex+1, info.Attempt))
 	} else if info.TotalChunks > 0 {
 		percentage := float64(info.CompletedChunks) / float64(info.TotalChunks) * 100
 		barWidth := 20
 		filled := int(float64(barWidth) * float64(info.CompletedChunks) / float64(info.TotalChunks))
 		bar := strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", barWidth-filled)
-		fmt.Printf("\rEmbedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks)
+		watchProgressOutput.render(fmt.Sprintf("Embedding [%s] %3.0f%% (%d/%d)", bar, percentage, info.CompletedChunks, info.TotalChunks))
+	}
+}
+
+func (r *watchProgressRenderer) render(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.currentLine = line
+	fmt.Printf("\r%s", line)
+}
+
+func (r *watchProgressRenderer) println(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearLocked()
+	fmt.Println(line)
+	r.redrawLocked()
+}
+
+func (r *watchProgressRenderer) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearLocked()
+}
+
+func (r *watchProgressRenderer) clearLocked() {
+	if r.currentLine == "" {
+		return
+	}
+	fmt.Printf("\r%s\r", strings.Repeat(" ", len(r.currentLine)))
+}
+
+func (r *watchProgressRenderer) redrawLocked() {
+	if r.currentLine == "" {
+		return
+	}
+	fmt.Printf("\r%s", r.currentLine)
+}
+
+type watchPlainLogForwarder struct {
+	writer io.Writer
+}
+
+func (f *watchPlainLogForwarder) Write(p []byte) (int, error) {
+	// Foreground plain mode keeps progress on a single line, so log writes need
+	// to temporarily clear and then redraw that line.
+	watchProgressOutput.mu.Lock()
+	defer watchProgressOutput.mu.Unlock()
+	watchProgressOutput.clearLocked()
+	n, err := f.writer.Write(p)
+	watchProgressOutput.redrawLocked()
+	return n, err
+}
+
+func captureWatchPlainLogs() func() {
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	oldPrefix := log.Prefix()
+
+	log.SetOutput(&watchPlainLogForwarder{writer: oldWriter})
+	log.SetFlags(oldFlags)
+	log.SetPrefix(oldPrefix)
+
+	return func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
 	}
 }
 
@@ -2564,6 +2708,7 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 				event.event,
 				nil,
 				nil,
+				runtime.processor,
 			)
 		}
 	}
@@ -2580,6 +2725,7 @@ type workspaceProjectRuntime struct {
 	idx             *indexer.Indexer
 	scanner         *indexer.Scanner
 	extractor       *trace.RegexExtractor
+	processor       *framework.ProcessorRegistry
 	symbolStore     *trace.GOBSymbolStore
 	rpgEncoder      *rpg.RPGEncoder
 	rpgStore        rpg.RPGStore
@@ -2608,13 +2754,14 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 
 	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
 	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
+	processorRegistry := buildFrameworkRegistry(projectCfg)
 	vectorStore := &projectPrefixStore{
 		store:         sharedStore,
 		workspaceName: ws.Name,
 		projectName:   project.Name,
 		projectPath:   project.Path,
 	}
-	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
+	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime, processorRegistry)
 	extractor := trace.NewRegexExtractor()
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
 	if err := symbolStore.Load(ctx); err != nil {
@@ -2623,10 +2770,10 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 
 	tracedLanguages := projectCfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
 	}
 
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil)
+	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil, processorRegistry)
 	if err != nil {
 		_ = symbolStore.Close()
 		return nil, nil, err
@@ -2705,6 +2852,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		idx:             idx,
 		scanner:         scanner,
 		extractor:       extractor,
+		processor:       processorRegistry,
 		symbolStore:     symbolStore,
 		rpgEncoder:      rpgEncoder,
 		rpgStore:        rpgStore,

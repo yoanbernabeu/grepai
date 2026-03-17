@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +18,59 @@ import (
 	gstats "github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/trace"
 )
+
+func pickBestTargetSymbol(candidates []trace.Symbol, refs []trace.Reference) *trace.Symbol {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return &candidates[0]
+	}
+
+	bestIdx := 0
+	bestScore := -1
+	for i, sym := range candidates {
+		score := 0
+		for _, ref := range refs {
+			// Prefer symbols referenced from their own file first (component-local/private usage).
+			if ref.File == sym.File || ref.CallerFile == sym.File {
+				score++
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+
+	// Deterministic fallback when all scores are equal.
+	if bestScore <= 0 {
+		sorted := append([]trace.Symbol(nil), candidates...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].File == sorted[j].File {
+				return sorted[i].Line < sorted[j].Line
+			}
+			return sorted[i].File < sorted[j].File
+		})
+		return &sorted[0]
+	}
+
+	return &candidates[bestIdx]
+}
+
+func pickBestSymbolForFile(candidates []trace.Symbol, preferredFile string) *trace.Symbol {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if preferredFile != "" {
+		for i := range candidates {
+			if candidates[i].File == preferredFile {
+				return &candidates[i]
+			}
+		}
+	}
+	return &candidates[0]
+}
 
 var (
 	traceMode      string
@@ -121,16 +175,16 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 
 		result := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		for _, ss := range stores {
+			refs, err := ss.LookupCallers(ctx, symbolName)
+			if err != nil {
+				log.Printf("Warning: failed to lookup callers of %q: %v", symbolName, err)
+			}
 			symbols, err := ss.LookupSymbol(ctx, symbolName)
 			if err != nil {
 				log.Printf("Warning: failed to lookup symbol %q: %v", symbolName, err)
 			}
 			if len(symbols) > 0 && result.Symbol == nil {
-				result.Symbol = &symbols[0]
-			}
-			refs, err := ss.LookupCallers(ctx, symbolName)
-			if err != nil {
-				log.Printf("Warning: failed to lookup callers of %q: %v", symbolName, err)
+				result.Symbol = pickBestTargetSymbol(symbols, refs)
 			}
 			for _, ref := range refs {
 				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
@@ -139,7 +193,11 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 				}
 				var callerSym trace.Symbol
 				if len(callerSyms) > 0 {
-					callerSym = callerSyms[0]
+					if picked := pickBestSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+						callerSym = *picked
+					} else {
+						callerSym = callerSyms[0]
+					}
 				} else {
 					callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 				}
@@ -212,10 +270,15 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to lookup callers: %w", err)
 	}
 
+	target := pickBestTargetSymbol(symbols, refs)
+	if target == nil {
+		target = &symbols[0]
+	}
+
 	result := trace.TraceResult{
 		Query:  symbolName,
 		Mode:   traceMode,
-		Symbol: &symbols[0],
+		Symbol: target,
 	}
 
 	// Convert refs to CallerInfo
@@ -226,7 +289,11 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		}
 		var callerSym trace.Symbol
 		if len(callerSyms) > 0 {
-			callerSym = callerSyms[0]
+			if picked := pickBestSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+				callerSym = *picked
+			} else {
+				callerSym = callerSyms[0]
+			}
 		} else {
 			callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 		}

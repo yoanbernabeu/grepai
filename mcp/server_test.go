@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/store"
@@ -389,6 +390,39 @@ func TestRegisterTools_should_include_workspace_param_on_trace_graph(t *testing.
 	}
 }
 
+func TestRegisterTools_should_include_workspace_param_on_refs_readers(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_readers")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_readers schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_readers schema")
+	}
+}
+
+func TestRegisterTools_should_include_workspace_param_on_refs_writers(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_writers")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_writers schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_writers schema")
+	}
+}
+
+func TestRegisterTools_should_include_workspace_param_on_refs_graph(t *testing.T) {
+	props := helperGetToolSchemaProperties(t, "grepai_refs_graph")
+
+	if _, ok := props["workspace"]; !ok {
+		t.Error("expected 'workspace' property in grepai_refs_graph schema")
+	}
+	if _, ok := props["project"]; !ok {
+		t.Error("expected 'project' property in grepai_refs_graph schema")
+	}
+}
+
 // TestRegisterTools_should_include_workspace_param_on_index_status verifies that
 // grepai_index_status has a workspace property in its schema.
 func TestRegisterTools_should_include_workspace_param_on_index_status(t *testing.T) {
@@ -432,6 +466,142 @@ func TestRegisterTools_should_document_search_path_scope_and_examples(t *testing
 	}
 	if !strings.Contains(pathDesc, "not workspace root") {
 		t.Fatalf("path description missing workspace-root clarification: %q", pathDesc)
+	}
+}
+
+func refsTestRequest(args map[string]any) mcp.CallToolRequest {
+	return mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Arguments: args,
+		},
+	}
+}
+
+func textResultPayload(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("expected non-empty MCP content")
+	}
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected text content, got %T", result.Content[0])
+	}
+	return textContent.Text
+}
+
+func seedRefsTestStore(t *testing.T) string {
+	t.Helper()
+
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, config.ConfigDir), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	ctx := context.Background()
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+	if err := symbolStore.SaveFile(ctx, "src/store.ts",
+		[]trace.Symbol{
+			{Name: "uidConsumer", Kind: trace.KindFunction, File: "src/store.ts", Line: 10},
+		},
+		[]trace.Reference{
+			{SymbolName: "uid", Kind: trace.RefKindRead, File: "src/store.ts", Line: 12, Context: "const current = state.uid", CallerName: "uidConsumer", CallerFile: "src/store.ts", CallerLine: 10},
+			{SymbolName: "uid", Kind: trace.RefKindWrite, File: "src/store.ts", Line: 13, Context: "state.uid = next", CallerName: "uidConsumer", CallerFile: "src/store.ts", CallerLine: 10},
+		},
+	); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+	if err := symbolStore.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	return projectRoot
+}
+
+func TestHandleRefsReaders_requires_symbol(t *testing.T) {
+	s := &Server{}
+
+	result, err := s.handleRefsReaders(context.Background(), refsTestRequest(map[string]any{"format": "json"}))
+	if err != nil {
+		t.Fatalf("handleRefsReaders returned error: %v", err)
+	}
+
+	if got := textResultPayload(t, result); !strings.Contains(got, "symbol parameter is required") {
+		t.Fatalf("expected missing symbol error, got %q", got)
+	}
+}
+
+func TestHandleRefsGraph_rejects_invalid_format(t *testing.T) {
+	s := &Server{}
+
+	result, err := s.handleRefsGraph(context.Background(), refsTestRequest(map[string]any{
+		"symbol": "uid",
+		"format": "xml",
+	}))
+	if err != nil {
+		t.Fatalf("handleRefsGraph returned error: %v", err)
+	}
+
+	if got := textResultPayload(t, result); !strings.Contains(got, "format must be 'json' or 'toon'") {
+		t.Fatalf("expected invalid format error, got %q", got)
+	}
+}
+
+func TestHandleRefsTools_return_expected_readers_and_graph(t *testing.T) {
+	projectRoot := seedRefsTestStore(t)
+	s := &Server{projectRoot: projectRoot}
+
+	readersResult, err := s.handleRefsReaders(context.Background(), refsTestRequest(map[string]any{
+		"symbol": "uid",
+		"format": "json",
+	}))
+	if err != nil {
+		t.Fatalf("handleRefsReaders returned error: %v", err)
+	}
+
+	var readersPayload struct {
+		Query   string     `json:"query"`
+		Readers []RefUsage `json:"readers"`
+	}
+	if err := json.Unmarshal([]byte(textResultPayload(t, readersResult)), &readersPayload); err != nil {
+		t.Fatalf("failed to decode readers payload: %v", err)
+	}
+	if readersPayload.Query != "uid" {
+		t.Fatalf("query = %q, want uid", readersPayload.Query)
+	}
+	if len(readersPayload.Readers) != 1 {
+		t.Fatalf("expected 1 reader, got %d", len(readersPayload.Readers))
+	}
+	if readersPayload.Readers[0].Access != trace.RefKindRead {
+		t.Fatalf("reader access = %q, want %q", readersPayload.Readers[0].Access, trace.RefKindRead)
+	}
+	if readersPayload.Readers[0].Symbol.Name != "uidConsumer" {
+		t.Fatalf("reader symbol = %q, want uidConsumer", readersPayload.Readers[0].Symbol.Name)
+	}
+
+	graphResult, err := s.handleRefsGraph(context.Background(), refsTestRequest(map[string]any{
+		"symbol": "uid",
+		"format": "json",
+	}))
+	if err != nil {
+		t.Fatalf("handleRefsGraph returned error: %v", err)
+	}
+
+	var graphPayload struct {
+		Query   string     `json:"query"`
+		Readers []RefUsage `json:"readers"`
+		Writers []RefUsage `json:"writers"`
+	}
+	if err := json.Unmarshal([]byte(textResultPayload(t, graphResult)), &graphPayload); err != nil {
+		t.Fatalf("failed to decode graph payload: %v", err)
+	}
+	if len(graphPayload.Readers) != 1 || len(graphPayload.Writers) != 1 {
+		t.Fatalf("expected 1 reader and 1 writer, got %d/%d", len(graphPayload.Readers), len(graphPayload.Writers))
+	}
+	if graphPayload.Writers[0].Access != trace.RefKindWrite {
+		t.Fatalf("writer access = %q, want %q", graphPayload.Writers[0].Access, trace.RefKindWrite)
 	}
 }
 

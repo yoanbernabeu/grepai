@@ -649,12 +649,12 @@ func (e *TreeSitterExtractor) ExtractReferences(ctx context.Context, filePath st
 	var refs []Reference
 	root := tree.RootNode()
 
-	e.walkNodeForCalls(root, []byte(content), filePath, ext, &refs)
+	e.walkNodeForReferences(root, []byte(content), filePath, ext, &refs)
 
 	return refs, nil
 }
 
-func (e *TreeSitterExtractor) walkNodeForCalls(node *sitter.Node, content []byte, filePath string, ext string, refs *[]Reference) {
+func (e *TreeSitterExtractor) walkNodeForReferences(node *sitter.Node, content []byte, filePath string, ext string, refs *[]Reference) {
 	nodeType := node.Type()
 
 	switch ext {
@@ -676,6 +676,7 @@ func (e *TreeSitterExtractor) walkNodeForCalls(node *sitter.Node, content []byte
 
 				*refs = append(*refs, Reference{
 					SymbolName: name,
+					Kind:       RefKindCall,
 					File:       filePath,
 					Line:       int(node.StartPoint().Row) + 1,
 					Column:     int(node.StartPoint().Column),
@@ -685,11 +686,16 @@ func (e *TreeSitterExtractor) walkNodeForCalls(node *sitter.Node, content []byte
 				})
 			}
 		}
+		if isJSLikeExt(ext) && nodeType == "member_expression" {
+			if ref, ok := e.extractMemberAccessReference(node, content, filePath, ext); ok {
+				*refs = append(*refs, ref)
+			}
+		}
 	}
 
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
-		e.walkNodeForCalls(child, content, filePath, ext, refs)
+		e.walkNodeForReferences(child, content, filePath, ext, refs)
 	}
 }
 
@@ -728,6 +734,7 @@ func (e *TreeSitterExtractor) walkFSharpCalls(node *sitter.Node, nodeType string
 
 	*refs = append(*refs, Reference{
 		SymbolName: name,
+		Kind:       RefKindCall,
 		File:       filePath,
 		Line:       int(node.StartPoint().Row) + 1,
 		Column:     int(node.StartPoint().Column),
@@ -735,6 +742,105 @@ func (e *TreeSitterExtractor) walkFSharpCalls(node *sitter.Node, nodeType string
 		CallerName: caller,
 		CallerFile: filePath,
 	})
+}
+
+func isJSLikeExt(ext string) bool {
+	return ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx"
+}
+
+func (e *TreeSitterExtractor) extractMemberAccessReference(node *sitter.Node, content []byte, filePath string, ext string) (Reference, bool) {
+	propertyNode := node.ChildByFieldName("property")
+	if propertyNode == nil {
+		return Reference{}, false
+	}
+
+	name := normalizeJSPropertyName(propertyNode.Content(content))
+	if name == "" {
+		return Reference{}, false
+	}
+	if strings.HasPrefix(name, "_") || jsVueRuntimeInternalProps[name] {
+		return Reference{}, false
+	}
+	objectNode := node.ChildByFieldName("object")
+	if objectNode != nil {
+		root := extractJSRootFromNodeContent(objectNode.Content(content))
+		if jsBuiltinRoots[root] {
+			return Reference{}, false
+		}
+	}
+
+	kind := RefKindRead
+	parent := node.Parent()
+	if parent != nil {
+		switch parent.Type() {
+		case "assignment_expression":
+			left := parent.ChildByFieldName("left")
+			if left != nil && left.ID() == node.ID() {
+				kind = RefKindWrite
+			}
+		case "update_expression":
+			arg := parent.ChildByFieldName("argument")
+			if arg != nil && arg.ID() == node.ID() {
+				kind = RefKindWrite
+			}
+		}
+	}
+
+	caller := e.findContainingFunction(node, content, ext)
+	return Reference{
+		SymbolName: name,
+		Kind:       kind,
+		File:       filePath,
+		Line:       int(node.StartPoint().Row) + 1,
+		Column:     int(node.StartPoint().Column),
+		Context:    truncateContext(string(content[node.StartByte():node.EndByte()])),
+		CallerName: caller,
+		CallerFile: filePath,
+	}, true
+}
+
+func extractJSRootFromNodeContent(objExpr string) string {
+	objExpr = strings.TrimSpace(objExpr)
+	if objExpr == "" {
+		return ""
+	}
+	if strings.HasPrefix(objExpr, "this.") {
+		objExpr = objExpr[len("this."):]
+	}
+	for i, r := range objExpr {
+		if r == '.' || r == '[' || r == '(' || r == ' ' || r == '\t' || r == '\n' {
+			if i == 0 {
+				return ""
+			}
+			return objExpr[:i]
+		}
+	}
+	return objExpr
+}
+
+func normalizeJSPropertyName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
+	}
+
+	// Handle computed string members such as obj["uid"] or obj['uid'].
+	if len(name) >= 2 && ((name[0] == '"' && name[len(name)-1] == '"') || (name[0] == '\'' && name[len(name)-1] == '\'')) {
+		name = name[1 : len(name)-1]
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	for _, r := range name {
+		if !(r == '$' || r == '_' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return ""
+		}
+	}
+
+	return name
 }
 
 func extractFSharpCallName(node *sitter.Node, content []byte) string {

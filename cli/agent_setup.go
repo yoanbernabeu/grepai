@@ -73,12 +73,25 @@ grepai trace callees "ProcessOrder" --json
 grepai trace graph "ValidateToken" --depth 3 --json
 ` + "```" + `
 
+### Property/Data Usage Tracing
+
+Use ` + "`grepai refs`" + ` to find non-call property/state usage (reads/writes):
+
+` + "```bash" + `
+# Find where a property is read
+grepai refs readers "uid" --json
+
+# Find where a property is written
+grepai refs writers "uid" --json
+` + "```" + `
+
 ### Workflow
 
 1. Start with ` + "`grepai search`" + ` to find relevant code
 2. Use ` + "`grepai trace`" + ` to understand function relationships
-3. Use ` + "`Read`" + ` tool to examine files from results
-4. Only use Grep for exact string searches if needed
+3. Use ` + "`grepai refs`" + ` for property/state readers and writers
+4. Use ` + "`Read`" + ` tool to examine files from results
+5. Only use Grep for exact string searches if needed
 
 `
 
@@ -123,6 +136,18 @@ grepai trace callees "ProcessOrder" --json
 grepai trace graph "ValidateToken" --depth 3 --json
 ` + "```" + `
 
+#### 3. Property/Data Usage Tracing: ` + "`grepai refs`" + `
+
+Use this when the target is a property/state key rather than a function call:
+
+` + "```bash" + `
+# Find readers of a property
+grepai refs readers "uid" --json
+
+# Find writers of a property
+grepai refs writers "uid" --json
+` + "```" + `
+
 Use ` + "`grepai trace`" + ` when you need to:
 - Find all callers of a function
 - Understand the call hierarchy
@@ -140,9 +165,10 @@ Only fall back to Grep/Glob when:
 
 1. Start with ` + "`grepai search`" + ` to find relevant code semantically
 2. Use ` + "`grepai trace`" + ` to understand function relationships and call graphs
-3. Use ` + "`Read`" + ` to examine promising files in detail
-4. Use Grep only for exact string searches if needed
-5. Synthesize findings into a clear summary
+3. Use ` + "`grepai refs`" + ` for property/state readers and writers
+4. Use ` + "`Read`" + ` to examine promising files in detail
+5. Use Grep only for exact string searches if needed
+6. Synthesize findings into a clear summary
 `
 
 const subagentMarker = "name: deep-explore"

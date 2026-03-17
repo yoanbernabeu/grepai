@@ -133,3 +133,64 @@ func TestCompleteProjectNames_should_return_project_names(t *testing.T) {
 		t.Fatalf("expected frontend and backend, got: %v", names)
 	}
 }
+
+func TestRefsCompletion_should_suggest_subcommands(t *testing.T) {
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetArgs([]string{"__complete", "refs", ""})
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("__complete refs failed: %v", err)
+	}
+
+	output := buf.String()
+	for _, sub := range []string{"readers", "writers", "graph"} {
+		if !strings.Contains(output, sub) {
+			t.Fatalf("expected completion output to contain %q, got: %s", sub, output)
+		}
+	}
+}
+
+func TestRefsProjectCompletion_should_return_workspace_projects(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	wsCfg := &config.WorkspaceConfig{
+		Version: 1,
+		Workspaces: map[string]config.Workspace{
+			"test-ws": {
+				Name: "test-ws",
+				Projects: []config.ProjectEntry{
+					{Name: "frontend", Path: "/tmp/frontend"},
+					{Name: "backend", Path: "/tmp/backend"},
+				},
+			},
+		},
+	}
+	if err := config.SaveWorkspaceConfig(wsCfg); err != nil {
+		t.Fatalf("failed to save test workspace config: %v", err)
+	}
+
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetArgs([]string{"__complete", "refs", "readers", "--workspace", "test-ws", "--project", ""})
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("__complete refs readers --project failed: %v", err)
+	}
+
+	output := buf.String()
+	for _, project := range []string{"frontend", "backend"} {
+		if !strings.Contains(output, project) {
+			t.Fatalf("expected project completion output to contain %q, got: %s", project, output)
+		}
+	}
+}

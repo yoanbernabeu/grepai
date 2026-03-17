@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -276,4 +278,42 @@ func TestPrintProgressAndBatchProgress(t *testing.T) {
 		TotalChunks:     10,
 		CompletedChunks: 5,
 	})
+}
+
+func TestPrintProgressAndBatchProgress_NoUIModeUsesNewlines(t *testing.T) {
+	oldNoUI := watchNoUI
+	watchNoUI = true
+	defer func() {
+		watchNoUI = oldNoUI
+	}()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() failed: %v", err)
+	}
+	os.Stdout = w
+
+	printProgress(1, 2, filepath.Join("very", "long", "path", "to", "file.go"))
+	printBatchProgress(indexer.BatchProgressInfo{
+		Retrying:        false,
+		TotalChunks:     10,
+		CompletedChunks: 5,
+	})
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("io.Copy() failed: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "\r") {
+		t.Fatalf("expected carriage returns in no-ui mode, got %q", out)
+	}
+	if !strings.Contains(out, "Indexing [") || !strings.Contains(out, "Embedding [") {
+		t.Fatalf("expected inline progress output, got %q", out)
+	}
 }

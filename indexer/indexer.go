@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/framework"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -16,6 +17,7 @@ type Indexer struct {
 	embedder      embedder.Embedder
 	chunker       *Chunker
 	scanner       *Scanner
+	processor     *framework.ProcessorRegistry
 	lastIndexTime time.Time
 }
 
@@ -59,13 +61,20 @@ func NewIndexer(
 	chunker *Chunker,
 	scanner *Scanner,
 	lastIndexTime time.Time,
+	processors ...*framework.ProcessorRegistry,
 ) *Indexer {
+	var processor *framework.ProcessorRegistry
+	if len(processors) > 0 {
+		processor = processors[0]
+	}
+
 	return &Indexer{
 		root:          root,
 		store:         st,
 		embedder:      emb,
 		chunker:       chunker,
 		scanner:       scanner,
+		processor:     processor,
 		lastIndexTime: lastIndexTime,
 	}
 }
@@ -214,6 +223,8 @@ type fileChunkData struct {
 	fileIndex  int // Index in the files slice (for result mapping)
 	file       FileInfo
 	chunkInfos []ChunkInfo
+	lineMap    []int
+	source     string
 }
 
 // prepareFileChunks processes files by deleting existing chunks and creating new chunks.
@@ -230,20 +241,23 @@ func (idx *Indexer) prepareFileChunks(
 			return nil, nil, fmt.Errorf("failed to delete existing chunks for %s: %w", file.Path, err)
 		}
 
-		chunkInfos := idx.chunker.ChunkWithContext(file.Path, file.Content)
+		embedContent, lineMap := idx.embeddingContent(ctx, file)
+		chunkInfos := idx.chunker.ChunkWithContext(file.Path, embedContent)
 		if len(chunkInfos) == 0 {
 			continue
 		}
 
 		contents := make([]string, len(chunkInfos))
 		for j, c := range chunkInfos {
-			contents[j] = c.Content
+			contents[j] = c.EmbedContent
 		}
 
 		fileData = append(fileData, fileChunkData{
 			fileIndex:  i,
 			file:       file,
 			chunkInfos: chunkInfos,
+			lineMap:    lineMap,
+			source:     file.Content,
 		})
 
 		fileChunks = append(fileChunks, embedder.FileChunks{
@@ -393,6 +407,7 @@ func (idx *Indexer) indexFilesBatched(
 	now := time.Now()
 	for _, pf := range preFilledFiles {
 		fd := fileData[pf.fdIndex]
+		idx.remapChunksToSource(fd.chunkInfos, fd.file.Path, fd.source, fd.lineMap)
 		chunks, chunkIDs := createStoreChunks(fd.chunkInfos, pf.vectors, now)
 		if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
 			return filesIndexed, chunksCreated, err
@@ -418,6 +433,7 @@ func (idx *Indexer) indexFilesBatched(
 					fd.file.Path, len(embeddings), len(fd.chunkInfos))
 				continue
 			}
+			idx.remapChunksToSource(fd.chunkInfos, fd.file.Path, fd.source, fd.lineMap)
 			chunks, chunkIDs := createStoreChunks(fd.chunkInfos, embeddings, now)
 			if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
 				return filesIndexed, chunksCreated, err
@@ -441,8 +457,10 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
 		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
+	embedContent, lineMap := idx.embeddingContent(ctx, file)
+
 	// Chunk the file
-	chunkInfos := idx.chunker.ChunkWithContext(file.Path, file.Content)
+	chunkInfos := idx.chunker.ChunkWithContext(file.Path, embedContent)
 	if len(chunkInfos) == 0 {
 		return 0, nil
 	}
@@ -517,6 +535,8 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
 		}
 	}
 
+	idx.remapChunksToSource(finalChunks, file.Path, file.Content, lineMap)
+
 	// Create store chunks
 	now := time.Now()
 	chunks := make([]store.Chunk, len(finalChunks))
@@ -567,7 +587,11 @@ func (idx *Indexer) embedWithReChunking(ctx context.Context, chunks []ChunkInfo)
 	for attempt := 0; attempt < maxReChunkAttempts; attempt++ {
 		contents := make([]string, len(currentChunks))
 		for i, c := range currentChunks {
-			contents[i] = c.Content
+			if c.EmbedContent != "" {
+				contents[i] = c.EmbedContent
+			} else {
+				contents[i] = c.Content
+			}
 		}
 
 		vectors, err := idx.embedder.EmbedBatch(ctx, contents)
@@ -599,7 +623,11 @@ func (idx *Indexer) embedWithReChunking(ctx context.Context, chunks []ChunkInfo)
 		if failedIndex > 0 {
 			beforeContents := make([]string, failedIndex)
 			for i := 0; i < failedIndex; i++ {
-				beforeContents[i] = currentChunks[i].Content
+				if currentChunks[i].EmbedContent != "" {
+					beforeContents[i] = currentChunks[i].EmbedContent
+				} else {
+					beforeContents[i] = currentChunks[i].Content
+				}
 			}
 			beforeVectors, err := idx.embedder.EmbedBatch(ctx, beforeContents)
 			if err != nil {
@@ -622,6 +650,36 @@ func (idx *Indexer) embedWithReChunking(ctx context.Context, chunks []ChunkInfo)
 	}
 
 	return nil, nil, fmt.Errorf("exceeded maximum re-chunk attempts (%d) for file", maxReChunkAttempts)
+}
+
+func (idx *Indexer) embeddingContent(ctx context.Context, file FileInfo) (string, []int) {
+	if idx.processor == nil {
+		return file.Content, nil
+	}
+
+	res, err := idx.processor.TransformForEmbedding(ctx, file.Path, file.Content)
+	if err != nil {
+		log.Printf("Warning: framework embedding transform failed for %s: %v", file.Path, err)
+		return file.Content, nil
+	}
+	framework.LogWarningsOnce(res.Warnings)
+	if res.Text == "" {
+		return file.Content, nil
+	}
+	return res.Text, res.GeneratedToSourceLine
+}
+
+func (idx *Indexer) remapChunksToSource(chunks []ChunkInfo, filePath, source string, lineMap []int) {
+	for i := range chunks {
+		startLine, endLine := framework.RemapLineRange(lineMap, chunks[i].StartLine, chunks[i].EndLine)
+		snippet := framework.SourceSnippet(source, startLine, endLine)
+		if snippet == "" {
+			continue
+		}
+		chunks[i].StartLine = startLine
+		chunks[i].EndLine = endLine
+		chunks[i].Content = fmt.Sprintf("File: %s\n\n%s", filePath, snippet)
+	}
 }
 
 // lookupCachedEmbeddings checks if the store implements EmbeddingCache and returns

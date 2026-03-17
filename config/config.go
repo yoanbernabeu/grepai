@@ -59,17 +59,18 @@ const (
 )
 
 type Config struct {
-	Version           int            `yaml:"version"`
-	Embedder          EmbedderConfig `yaml:"embedder"`
-	Store             StoreConfig    `yaml:"store"`
-	Chunking          ChunkingConfig `yaml:"chunking"`
-	Watch             WatchConfig    `yaml:"watch"`
-	Search            SearchConfig   `yaml:"search"`
-	Trace             TraceConfig    `yaml:"trace"`
-	RPG               RPGConfig      `yaml:"rpg"`
-	Update            UpdateConfig   `yaml:"update"`
-	Ignore            []string       `yaml:"ignore"`
-	ExternalGitignore string         `yaml:"external_gitignore,omitempty"`
+	Version           int             `yaml:"version"`
+	Embedder          EmbedderConfig  `yaml:"embedder"`
+	Store             StoreConfig     `yaml:"store"`
+	Chunking          ChunkingConfig  `yaml:"chunking"`
+	Framework         FrameworkConfig `yaml:"framework_processing"`
+	Watch             WatchConfig     `yaml:"watch"`
+	Search            SearchConfig    `yaml:"search"`
+	Trace             TraceConfig     `yaml:"trace"`
+	RPG               RPGConfig       `yaml:"rpg"`
+	Update            UpdateConfig    `yaml:"update"`
+	Ignore            []string        `yaml:"ignore"`
+	ExternalGitignore string          `yaml:"external_gitignore,omitempty"`
 }
 
 // UpdateConfig holds auto-update settings
@@ -214,6 +215,62 @@ func DefaultStoreForBackend(backend string) StoreConfig {
 	return cfg
 }
 
+type FrameworkConfig struct {
+	Enabled    bool                  `yaml:"enabled"`
+	Mode       string                `yaml:"mode"` // auto | require | off
+	NodePath   string                `yaml:"node_path,omitempty"`
+	Frameworks FrameworkFeatureFlags `yaml:"frameworks"`
+	isSet      bool                  `yaml:"-"`
+	enabledSet bool                  `yaml:"-"`
+}
+
+type FrameworkFeatureFlags struct {
+	Vue    FrameworkFeatureConfig `yaml:"vue"`
+	Svelte FrameworkFeatureConfig `yaml:"svelte"`
+	Astro  FrameworkFeatureConfig `yaml:"astro"`
+	Solid  FrameworkFeatureConfig `yaml:"solid"`
+}
+
+type FrameworkFeatureConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	isSet      bool `yaml:"-"`
+	enabledSet bool `yaml:"-"`
+}
+
+func (c *FrameworkConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FrameworkConfig
+	var aux raw
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*c = FrameworkConfig(aux)
+	c.isSet = true
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "enabled" {
+			c.enabledSet = true
+			break
+		}
+	}
+	return nil
+}
+
+func (c *FrameworkFeatureConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FrameworkFeatureConfig
+	var aux raw
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*c = FrameworkFeatureConfig(aux)
+	c.isSet = true
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "enabled" {
+			c.enabledSet = true
+			break
+		}
+	}
+	return nil
+}
+
 type WatchConfig struct {
 	DebounceMs                  int       `yaml:"debounce_ms"`
 	LastIndexTime               time.Time `yaml:"last_index_time,omitempty"`
@@ -292,6 +349,17 @@ func DefaultConfig() *Config {
 			Size:    512,
 			Overlap: 50,
 		},
+		Framework: FrameworkConfig{
+			Enabled:  true,
+			Mode:     "auto",
+			NodePath: "node",
+			Frameworks: FrameworkFeatureFlags{
+				Vue:    FrameworkFeatureConfig{Enabled: true},
+				Svelte: FrameworkFeatureConfig{Enabled: false},
+				Astro:  FrameworkFeatureConfig{Enabled: false},
+				Solid:  FrameworkFeatureConfig{Enabled: false},
+			},
+		},
 		Watch: WatchConfig{
 			DebounceMs:                  500,
 			RPGPersistIntervalMs:        DefaultWatchRPGPersistIntervalMs,
@@ -341,7 +409,7 @@ func DefaultConfig() *Config {
 		Trace: TraceConfig{
 			Mode: "fast",
 			EnabledLanguages: []string{
-				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
+				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
@@ -474,6 +542,34 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Chunking.Overlap == 0 {
 		c.Chunking.Overlap = defaults.Chunking.Overlap
+	}
+
+	// Framework processing defaults
+	hasFrameworkConfig := c.Framework.isSet
+	if !hasFrameworkConfig {
+		c.Framework = defaults.Framework
+	} else {
+		if !c.Framework.enabledSet {
+			c.Framework.Enabled = defaults.Framework.Enabled
+		}
+		if c.Framework.Mode == "" {
+			c.Framework.Mode = defaults.Framework.Mode
+		}
+		if c.Framework.NodePath == "" {
+			c.Framework.NodePath = defaults.Framework.NodePath
+		}
+		if !c.Framework.Frameworks.Vue.enabledSet {
+			c.Framework.Frameworks.Vue.Enabled = defaults.Framework.Frameworks.Vue.Enabled
+		}
+		if !c.Framework.Frameworks.Svelte.enabledSet {
+			c.Framework.Frameworks.Svelte.Enabled = defaults.Framework.Frameworks.Svelte.Enabled
+		}
+		if !c.Framework.Frameworks.Astro.enabledSet {
+			c.Framework.Frameworks.Astro.Enabled = defaults.Framework.Frameworks.Astro.Enabled
+		}
+		if !c.Framework.Frameworks.Solid.enabledSet {
+			c.Framework.Frameworks.Solid.Enabled = defaults.Framework.Frameworks.Solid.Enabled
+		}
 	}
 
 	// Watch defaults

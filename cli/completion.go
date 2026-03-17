@@ -143,18 +143,21 @@ func registerCompletions() {
 	_ = searchCmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
 	_ = watchCmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
 	_ = mcpServeCmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
-	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd} {
+	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd, refsReadersCmd, refsWritersCmd, refsGraphCmd} {
 		_ = cmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
 	}
 
-	// Dynamic project completion for searchCmd --project (depends on --workspace value)
-	_ = searchCmd.RegisterFlagCompletionFunc("project", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	projectCompleter := func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		wsName, _ := cmd.Flags().GetString("workspace")
 		if wsName == "" {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 		return completeProjectNames(wsName), cobra.ShellCompDirectiveNoFileComp
-	})
+	}
+	_ = searchCmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd, refsGraphCmd} {
+		_ = cmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	}
 
 	// Dynamic ValidArgsFunction for workspace subcommands
 	workspaceShowCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

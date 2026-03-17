@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"runtime"
 	"testing"
 )
@@ -41,6 +42,19 @@ func TestDefaultConfig(t *testing.T) {
 
 	if cfg.Chunking.Overlap != 50 {
 		t.Errorf("expected chunk overlap 50, got %d", cfg.Chunking.Overlap)
+	}
+
+	if !cfg.Framework.Enabled {
+		t.Error("expected framework_processing.enabled=true by default")
+	}
+	if cfg.Framework.Mode != "auto" {
+		t.Errorf("expected framework_processing.mode=auto, got %s", cfg.Framework.Mode)
+	}
+	if !cfg.Framework.Frameworks.Vue.Enabled {
+		t.Error("expected framework_processing.frameworks.vue.enabled=true by default")
+	}
+	if cfg.Framework.Frameworks.Svelte.Enabled || cfg.Framework.Frameworks.Astro.Enabled || cfg.Framework.Frameworks.Solid.Enabled {
+		t.Error("expected non-vue framework scaffolds disabled by default")
 	}
 
 	if cfg.Watch.DebounceMs != 500 {
@@ -101,6 +115,65 @@ func TestDefaultStoreForBackend(t *testing.T) {
 	}
 	if qdrant.Qdrant.Endpoint != DefaultQdrantEndpoint || qdrant.Qdrant.Port != DefaultQdrantPort {
 		t.Fatalf("unexpected qdrant defaults: %+v", qdrant.Qdrant)
+	}
+}
+
+func TestConfigLoad_FrameworkProcessingDefaultsRespectExplicitFalseAndNestedDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ConfigDir), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := GetConfigPath(tmpDir)
+
+	tests := []struct {
+		name              string
+		yaml              string
+		wantEnabled       bool
+		wantVueEnabled    bool
+		wantSvelteEnabled bool
+	}{
+		{
+			name:              "explicit framework disabled",
+			yaml:              "framework_processing:\n  enabled: false\n",
+			wantEnabled:       false,
+			wantVueEnabled:    true,
+			wantSvelteEnabled: false,
+		},
+		{
+			name:              "framework section present without nested flags keeps vue default",
+			yaml:              "framework_processing:\n  mode: auto\n",
+			wantEnabled:       true,
+			wantVueEnabled:    true,
+			wantSvelteEnabled: false,
+		},
+		{
+			name:              "explicit vue disabled preserved",
+			yaml:              "framework_processing:\n  frameworks:\n    vue:\n      enabled: false\n",
+			wantEnabled:       true,
+			wantVueEnabled:    false,
+			wantSvelteEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(cfgPath, []byte(strings.TrimSpace(tt.yaml)+"\n"), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := Load(tmpDir)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+			if cfg.Framework.Enabled != tt.wantEnabled {
+				t.Fatalf("framework enabled = %v, want %v", cfg.Framework.Enabled, tt.wantEnabled)
+			}
+			if cfg.Framework.Frameworks.Vue.Enabled != tt.wantVueEnabled {
+				t.Fatalf("framework vue enabled = %v, want %v", cfg.Framework.Frameworks.Vue.Enabled, tt.wantVueEnabled)
+			}
+			if cfg.Framework.Frameworks.Svelte.Enabled != tt.wantSvelteEnabled {
+				t.Fatalf("framework svelte enabled = %v, want %v", cfg.Framework.Frameworks.Svelte.Enabled, tt.wantSvelteEnabled)
+			}
+		})
 	}
 }
 

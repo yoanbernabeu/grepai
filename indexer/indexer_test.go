@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/framework"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -166,6 +167,7 @@ func (m *mockStore) GetAllChunks(ctx context.Context) ([]store.Chunk, error) {
 // mockEmbedder implements embedder.Embedder for testing
 type mockEmbedder struct {
 	embedCalled bool
+	lastBatch   []string
 }
 
 func newMockEmbedder() *mockEmbedder {
@@ -179,6 +181,7 @@ func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error
 
 func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	m.embedCalled = true
+	m.lastBatch = append([]string(nil), texts...)
 	vectors := make([][]float32, len(texts))
 	for i := range texts {
 		vectors[i] = []float32{0.1, 0.2, 0.3}
@@ -1111,8 +1114,8 @@ func TestEmbedWithReChunking_Success(t *testing.T) {
 	}
 
 	chunks := []ChunkInfo{
-		{ID: "chunk1", FilePath: "test.go", Content: "small content", StartLine: 1, EndLine: 5},
-		{ID: "chunk2", FilePath: "test.go", Content: "more content", StartLine: 6, EndLine: 10},
+		{ID: "chunk1", FilePath: "test.go", Content: "small content", EmbedContent: "small content", StartLine: 1, EndLine: 5},
+		{ID: "chunk2", FilePath: "test.go", Content: "more content", EmbedContent: "more content", StartLine: 6, EndLine: 10},
 	}
 
 	vectors, finalChunks, err := indexer.embedWithReChunking(context.Background(), chunks)
@@ -1147,7 +1150,7 @@ func TestEmbedWithReChunking_ReChunksOnError(t *testing.T) {
 	// Create one large chunk that will exceed the limit
 	largeContent := strings.Repeat("x", 1000)
 	chunks := []ChunkInfo{
-		{ID: "test.go_0", FilePath: "test.go", Content: largeContent, StartLine: 1, EndLine: 50},
+		{ID: "test.go_0", FilePath: "test.go", Content: largeContent, EmbedContent: largeContent, StartLine: 1, EndLine: 50},
 	}
 
 	vectors, finalChunks, err := indexer.embedWithReChunking(context.Background(), chunks)
@@ -1163,5 +1166,67 @@ func TestEmbedWithReChunking_ReChunksOnError(t *testing.T) {
 	// Should have same number of vectors as chunks
 	if len(vectors) != len(finalChunks) {
 		t.Errorf("vectors count %d != chunks count %d", len(vectors), len(finalChunks))
+	}
+}
+
+type testTransformProcessor struct{}
+
+func (p *testTransformProcessor) Name() string { return "vue" }
+func (p *testTransformProcessor) Supports(filePath string) bool {
+	return strings.HasSuffix(filePath, ".vue")
+}
+func (p *testTransformProcessor) Capabilities() framework.ProcessorCapabilities {
+	return framework.ProcessorCapabilities{Embedding: true, Trace: true}
+}
+func (p *testTransformProcessor) TransformForEmbedding(ctx context.Context, filePath, source string) (framework.TransformResult, error) {
+	return framework.TransformResult{
+		Processor:             "vue",
+		FilePath:              filePath,
+		VirtualPath:           filePath,
+		Text:                  "const transformed = true\nconsole.log(transformed)",
+		GeneratedToSourceLine: []int{2, 3},
+		Transformed:           true,
+	}, nil
+}
+func (p *testTransformProcessor) TransformForTrace(ctx context.Context, filePath, source string) (framework.TransformResult, error) {
+	return p.TransformForEmbedding(ctx, filePath, source)
+}
+
+func TestIndexFile_UsesTransformedContentAndStoresSourceSnippet(t *testing.T) {
+	mockEmb := newMockEmbedder()
+	mockStore := newMockStore()
+	chunker := NewChunker(512, 50)
+	reg := framework.NewProcessorRegistry(
+		framework.RegistryConfig{Enabled: true, Mode: framework.ModeAuto, EnableVue: true},
+		&testTransformProcessor{},
+	)
+
+	idx := NewIndexer("/tmp", mockStore, mockEmb, chunker, nil, time.Time{}, reg)
+	file := FileInfo{
+		Path:    "Component.vue",
+		Hash:    "h1",
+		ModTime: time.Now().Unix(),
+		Content: "<template><div/></template>\nconst fromSource = 1\nexport default {}",
+	}
+
+	_, err := idx.IndexFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("IndexFile failed: %v", err)
+	}
+	chunks, err := mockStore.GetChunksForFile(context.Background(), "Component.vue")
+	if err != nil {
+		t.Fatalf("GetChunksForFile failed: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk")
+	}
+	if len(mockEmb.lastBatch) == 0 || !strings.Contains(mockEmb.lastBatch[0], "transformed") {
+		t.Fatalf("expected transformed embedding content, got batch: %#v", mockEmb.lastBatch)
+	}
+	if !strings.Contains(chunks[0].Content, "fromSource") {
+		t.Fatalf("expected stored source snippet, got: %q", chunks[0].Content)
+	}
+	if chunks[0].StartLine != 2 {
+		t.Fatalf("expected remapped start line 2, got %d", chunks[0].StartLine)
 	}
 }
