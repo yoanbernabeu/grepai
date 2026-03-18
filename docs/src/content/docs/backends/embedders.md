@@ -9,9 +9,69 @@ Embedders convert text (code chunks) into vector representations that enable sem
 
 | Provider | Type | Pros | Cons |
 |----------|------|------|------|
+| llama.cpp (managed) | Local | Privacy, no separate service to install, cross-platform managed assets | Larger local downloads, managed runtime still needs compatible platform binaries |
 | Ollama | Local | Privacy, free, no internet | Requires local resources |
 | LM Studio | Local | Privacy, OpenAI-compatible API, GUI | Requires local resources |
 | OpenAI | Cloud | High quality, fast | Costs money, sends code to cloud |
+
+## llama.cpp (Managed Local)
+
+grepai can manage a local `llama.cpp` embedding runtime for you. Model files and runtime binaries are stored globally under `~/.grepai`, while each project keeps only its local selection in `.grepai/config.yaml`.
+
+### Setup
+
+1. Initialize with the managed provider:
+
+```bash
+grepai init --provider llamacpp
+```
+
+2. Install the recommended default model:
+
+```bash
+grepai model install
+```
+
+3. Start indexing normally:
+
+```bash
+grepai watch
+```
+
+### Configuration
+
+```yaml
+embedder:
+  provider: llamacpp
+  model: bge-small-en-v1.5-q8_0
+  endpoint: http://127.0.0.1:12434
+  dimensions: 384
+```
+
+Advanced override with an explicit model path:
+
+```yaml
+embedder:
+  provider: llamacpp
+  model: bge-small-en-v1.5-q8_0
+  model_path: /absolute/path/to/custom-model.gguf
+  endpoint: http://127.0.0.1:12434
+```
+
+### Managed Assets
+
+- Models: `~/.grepai/models`
+- Runtime binaries: `~/.grepai/bin`
+- Runtime metadata/state: `~/.grepai/state`
+
+### Model Commands
+
+```bash
+grepai model install              # Install the recommended default model
+grepai model install <model-id>   # Install a specific managed model
+grepai model list                 # Show installed managed models
+grepai model remove <model-id>    # Remove an installed managed model
+```
 
 ## Ollama (Local)
 

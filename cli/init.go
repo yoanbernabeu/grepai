@@ -39,7 +39,7 @@ This command will:
 }
 
 func init() {
-	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, or openrouter)")
+	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, llamacpp, lmstudio, openai, synthetic, or openrouter)")
 	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openai/openrouter: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
@@ -119,17 +119,24 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initProvider == "" {
 			fmt.Println("\nSelect embedding provider:")
 			fmt.Println("  1) ollama (local, privacy-first, requires Ollama running)")
-			fmt.Println("  2) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
-			fmt.Println("  3) openai (cloud, requires API key)")
-			fmt.Println("  4) synthetic (cloud, free embedding API)")
-			fmt.Println("  5) openrouter (cloud, multi-provider gateway)")
+			fmt.Println("  2) llamacpp (local, managed runtime + managed model)")
+			fmt.Println("  3) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
+			fmt.Println("  4) openai (cloud, requires API key)")
+			fmt.Println("  5) synthetic (cloud, free embedding API)")
+			fmt.Println("  6) openrouter (cloud, multi-provider gateway)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
 			input = strings.TrimSpace(input)
 
 			switch input {
-			case "2", "lmstudio":
+			case "2", "llamacpp":
+				cfg.Embedder.Provider = "llamacpp"
+				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
+				dim := config.DefaultLlamaCPPDimensions
+				cfg.Embedder.Dimensions = &dim
+			case "3", "lmstudio":
 				cfg.Embedder.Provider = "lmstudio"
 				fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")
 				endpoint, _ := reader.ReadString('\n')
@@ -141,19 +148,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
-			case "3", "openai":
+			case "4", "openai":
 				cfg.Embedder.Provider = "openai"
 				cfg.Embedder.Model = config.DefaultOpenAIEmbeddingModel
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
 				// OpenAI: leave Dimensions nil to use model's native dimensions
-			case "4", "synthetic":
+			case "5", "synthetic":
 				cfg.Embedder.Provider = "synthetic"
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
 				dim := 768
 				cfg.Embedder.Dimensions = &dim
-			case "5", "openrouter":
+			case "6", "openrouter":
 				cfg.Embedder.Provider = "openrouter"
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
 				// OpenRouter: leave Dimensions nil to use model's native dimensions
@@ -189,6 +196,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			cfg.Embedder.Provider = initProvider
 			switch initProvider {
+			case "llamacpp":
+				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
+				dim := config.DefaultLlamaCPPDimensions
+				cfg.Embedder.Dimensions = &dim
 			case "lmstudio":
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
@@ -276,6 +288,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 			cfg.Embedder.Provider = initProvider
 			// Apply provider-specific settings
 			switch initProvider {
+			case "llamacpp":
+				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
+				dim := config.DefaultLlamaCPPDimensions
+				cfg.Embedder.Dimensions = &dim
 			case "lmstudio":
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
@@ -328,6 +345,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	case "ollama":
 		fmt.Println("\nMake sure Ollama is running with the nomic-embed-text model:")
 		fmt.Println("  ollama pull nomic-embed-text")
+	case "llamacpp":
+		fmt.Println("\nInstall the managed local model before starting watch:")
+		fmt.Println("  grepai model install")
 	case "lmstudio":
 		fmt.Println("\nMake sure LM Studio is running with an embedding model loaded.")
 		fmt.Printf("  Model: %s\n", cfg.Embedder.Model)

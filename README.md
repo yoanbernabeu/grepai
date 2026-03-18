@@ -50,11 +50,17 @@ curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh 
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
-Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI.
+Requires an embedding provider — [Ollama](https://ollama.ai) (default), managed local `llama.cpp`, [LM Studio](https://lmstudio.ai), or OpenAI.
 
 **Ollama (recommended):**
 ```bash
 ollama pull nomic-embed-text
+```
+
+**Managed local `llama.cpp`:**
+```bash
+grepai init --provider llamacpp
+grepai model install
 ```
 
 ## Quick Start

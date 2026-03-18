@@ -133,3 +133,18 @@ func TestCompleteProjectNames_should_return_project_names(t *testing.T) {
 		t.Fatalf("expected frontend and backend, got: %v", names)
 	}
 }
+
+func TestCompletionScriptIncludesLlamaCPPProvider(t *testing.T) {
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"__complete", "init", "--provider", ""})
+	defer rootCmd.SetOut(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("provider completion failed: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "llamacpp") {
+		t.Fatalf("expected llamacpp in completion output, got: %s", buf.String())
+	}
+}

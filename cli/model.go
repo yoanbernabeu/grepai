@@ -1,0 +1,92 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+	"github.com/yoanbernabeu/grepai/internal/managedassets"
+)
+
+var modelCmd = &cobra.Command{
+	Use:   "model",
+	Short: "Manage locally installed llama.cpp embedding models",
+}
+
+var modelInstallCmd = &cobra.Command{
+	Use:   "install [model]",
+	Short: "Install a managed local embedding model",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		modelID := managedassets.DefaultModelID
+		if len(args) == 1 && args[0] != "" {
+			modelID = args[0]
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Installing managed model %s...\n", modelID)
+		model, err := managedassets.InstallModel(context.Background(), modelID, func(downloaded, total int64) {
+			renderDownloadProgress("Model", downloaded, total)
+		})
+		fmt.Fprint(cmd.OutOrStdout(), "\r"+progressPadding()+"\r")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Installed model %s at %s\n", model.ID, model.Path)
+		return nil
+	},
+}
+
+var modelListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List installed managed local models",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		models, err := managedassets.LoadInstalledModels()
+		if err != nil {
+			return err
+		}
+		if len(models) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No managed local models installed")
+			return nil
+		}
+		tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "MODEL\tDIMENSIONS\tPATH")
+		for _, model := range models {
+			fmt.Fprintf(tw, "%s\t%d\t%s\n", model.ID, model.Dimensions, model.Path)
+		}
+		return tw.Flush()
+	},
+}
+
+var modelRemoveCmd = &cobra.Command{
+	Use:   "remove <model>",
+	Short: "Remove an installed managed local model",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := managedassets.RemoveInstalledModel(args[0]); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed model %s\n", args[0])
+		return nil
+	},
+}
+
+func init() {
+	modelCmd.AddCommand(modelInstallCmd)
+	modelCmd.AddCommand(modelListCmd)
+	modelCmd.AddCommand(modelRemoveCmd)
+	rootCmd.AddCommand(modelCmd)
+}
+
+func renderDownloadProgress(label string, downloaded, total int64) {
+	if total > 0 {
+		percent := float64(downloaded) / float64(total) * 100
+		fmt.Printf("\r%s [%s] %.0f%%", label, progressBar(int(percent), 30), percent)
+		return
+	}
+	fmt.Printf("\r%s %d bytes", label, downloaded)
+}
+
+func progressPadding() string {
+	return fmt.Sprintf("%60s", "")
+}

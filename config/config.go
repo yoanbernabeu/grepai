@@ -20,6 +20,7 @@ const (
 
 	DefaultEmbedderProvider         = "ollama"
 	DefaultOllamaEmbeddingModel     = "nomic-embed-text"
+	DefaultLlamaCPPEmbeddingModel   = "bge-small-en-v1.5-q8_0"
 	DefaultLMStudioEmbeddingModel   = "text-embedding-nomic-embed-text-v1.5"
 	DefaultOpenAIEmbeddingModel     = "text-embedding-3-small"
 	DefaultSyntheticEmbeddingModel  = "hf:nomic-ai/nomic-embed-text-v1.5"
@@ -29,12 +30,14 @@ const (
 	OpenRouterEmbeddingModelQwen8B  = "qwen/qwen3-embedding-8b"
 
 	DefaultOllamaEndpoint     = "http://localhost:11434"
+	DefaultLlamaCPPEndpoint   = "http://127.0.0.1:12434"
 	DefaultLMStudioEndpoint   = "http://127.0.0.1:1234"
 	DefaultOpenAIEndpoint     = "https://api.openai.com/v1"
 	DefaultSyntheticEndpoint  = "https://api.synthetic.new/openai/v1"
 	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/v1"
 
 	DefaultLocalEmbeddingDimensions = 768
+	DefaultLlamaCPPDimensions       = 384
 	DefaultOpenAIDimensions         = 1536
 	DefaultOpenAILargeDimensions    = 3072
 	DefaultQwen8BDimensions         = 4096
@@ -99,8 +102,9 @@ type BoostRule struct {
 }
 
 type EmbedderConfig struct {
-	Provider    string `yaml:"provider"` // ollama | lmstudio | openai | synthetic | openrouter
+	Provider    string `yaml:"provider"` // ollama | llamacpp | lmstudio | openai | synthetic | openrouter
 	Model       string `yaml:"model"`
+	ModelPath   string `yaml:"model_path,omitempty"`
 	Endpoint    string `yaml:"endpoint,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
 	Dimensions  *int   `yaml:"dimensions,omitempty"`
@@ -152,6 +156,14 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 			Provider:   "lmstudio",
 			Model:      DefaultLMStudioEmbeddingModel,
 			Endpoint:   DefaultLMStudioEndpoint,
+			Dimensions: &dim,
+		}
+	case "llamacpp":
+		dim := DefaultLlamaCPPDimensions
+		return EmbedderConfig{
+			Provider:   "llamacpp",
+			Model:      DefaultLlamaCPPEmbeddingModel,
+			Endpoint:   DefaultLlamaCPPEndpoint,
 			Dimensions: &dim,
 		}
 	case "openai":
@@ -451,6 +463,9 @@ func (c *Config) applyDefaults() {
 	// Embedder defaults
 	if c.Embedder.Endpoint == "" {
 		c.Embedder.Endpoint = DefaultEmbedderForProvider(c.Embedder.Provider).Endpoint
+	}
+	if c.Embedder.Model == "" {
+		c.Embedder.Model = DefaultEmbedderForProvider(c.Embedder.Provider).Model
 	}
 
 	// Only set default dimensions for local embedders.

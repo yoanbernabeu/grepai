@@ -94,6 +94,7 @@ func registerCompletions() {
 	_ = initCmd.RegisterFlagCompletionFunc("provider", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{
 			"ollama\tLocal embedding with Ollama",
+			"llamacpp\tManaged local embedding with llama.cpp",
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",
@@ -118,6 +119,7 @@ func registerCompletions() {
 	_ = workspaceCreateCmd.RegisterFlagCompletionFunc("provider", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{
 			"ollama\tLocal embedding with Ollama",
+			"llamacpp\tManaged local embedding with llama.cpp",
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",

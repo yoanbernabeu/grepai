@@ -95,3 +95,30 @@ func TestRunInit_OpenAIDefaultsToOpenAISmallModel(t *testing.T) {
 		t.Fatalf("parallelism = %d, want %d", cfg.Embedder.Parallelism, config.DefaultOpenAIParallelism)
 	}
 }
+
+func TestRunInit_LlamaCPPDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	withInitTestState(t, tmpDir, func() {
+		initProvider = "llamacpp"
+		initBackend = "gob"
+		initNonInteractive = true
+	})
+
+	if err := runInit(nil, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	cfg, err := config.Load(tmpDir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if cfg.Embedder.Provider != "llamacpp" {
+		t.Fatalf("provider = %q, want llamacpp", cfg.Embedder.Provider)
+	}
+	if cfg.Embedder.Model != config.DefaultLlamaCPPEmbeddingModel {
+		t.Fatalf("model = %q, want %q", cfg.Embedder.Model, config.DefaultLlamaCPPEmbeddingModel)
+	}
+	if cfg.Embedder.Endpoint != config.DefaultLlamaCPPEndpoint {
+		t.Fatalf("endpoint = %q, want %q", cfg.Embedder.Endpoint, config.DefaultLlamaCPPEndpoint)
+	}
+}

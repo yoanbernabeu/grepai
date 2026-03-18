@@ -99,7 +99,7 @@ func init() {
 
 	// Non-interactive workspace create flags
 	workspaceCreateCmd.Flags().String("backend", "", "Storage backend: postgres, qdrant")
-	workspaceCreateCmd.Flags().String("provider", "", "Embedding provider: ollama, openai, lmstudio")
+	workspaceCreateCmd.Flags().String("provider", "", "Embedding provider: ollama, llamacpp, openai, lmstudio")
 	workspaceCreateCmd.Flags().String("model", "", "Embedding model name")
 	workspaceCreateCmd.Flags().String("endpoint", "", "Embedder endpoint URL")
 	workspaceCreateCmd.Flags().String("dsn", "", "PostgreSQL DSN (when backend=postgres)")
@@ -258,6 +258,8 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 		switch provider {
 		case "openai":
 			model = config.DefaultOpenAIEmbeddingModel
+		case "llamacpp":
+			model = config.DefaultLlamaCPPEmbeddingModel
 		default:
 			model = config.DefaultOllamaEmbeddingModel
 		}
@@ -298,6 +300,13 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 		embedderConfig.Endpoint = endpoint
 		dim := config.DefaultLocalEmbeddingDimensions
 		embedderConfig.Dimensions = &dim
+	case "llamacpp":
+		if endpoint == "" {
+			endpoint = config.DefaultLlamaCPPEndpoint
+		}
+		embedderConfig.Endpoint = endpoint
+		dim := config.DefaultLlamaCPPDimensions
+		embedderConfig.Dimensions = &dim
 	case "lmstudio":
 		if endpoint == "" {
 			endpoint = config.DefaultLMStudioEndpoint
@@ -312,7 +321,7 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 		embedderConfig.Endpoint = endpoint
 		embedderConfig.Parallelism = workspaceCreateOpenAIParallelism
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s (use ollama, openai, or lmstudio)", provider)
+		return nil, fmt.Errorf("unsupported provider: %s (use ollama, llamacpp, openai, or lmstudio)", provider)
 	}
 
 	return &config.Workspace{
@@ -504,8 +513,9 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 
 	fmt.Println("\nSelect embedding provider:")
 	fmt.Println("  1. Ollama (local, default)")
-	fmt.Println("  2. OpenAI")
-	fmt.Println("  3. LM Studio (local)")
+	fmt.Println("  2. llama.cpp (managed local)")
+	fmt.Println("  3. OpenAI")
+	fmt.Println("  4. LM Studio (local)")
 	fmt.Print("Choice [1]: ")
 	embedderChoice, _ := reader.ReadString('\n')
 	embedderChoice = strings.TrimSpace(embedderChoice)
@@ -534,6 +544,18 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 		dim := 768
 		embedderConfig.Dimensions = &dim
 	case "2":
+		embedderConfig.Provider = "llamacpp"
+		embedderConfig.Endpoint = config.DefaultLlamaCPPEndpoint
+		fmt.Printf("Managed model [%s]: ", config.DefaultLlamaCPPEmbeddingModel)
+		model, _ := reader.ReadString('\n')
+		model = strings.TrimSpace(model)
+		if model == "" {
+			model = config.DefaultLlamaCPPEmbeddingModel
+		}
+		embedderConfig.Model = model
+		dim := config.DefaultLlamaCPPDimensions
+		embedderConfig.Dimensions = &dim
+	case "3":
 		embedderConfig.Provider = "openai"
 		fmt.Print("OpenAI API Key: ")
 		apiKey, _ := reader.ReadString('\n')
@@ -547,7 +569,7 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 		embedderConfig.Model = model
 		embedderConfig.Endpoint = config.DefaultOpenAIEndpoint
 		embedderConfig.Parallelism = workspaceCreateOpenAIParallelism
-	case "3":
+	case "4":
 		embedderConfig.Provider = "lmstudio"
 		fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")
 		endpoint, _ := reader.ReadString('\n')

@@ -62,13 +62,13 @@ func (m workspaceCreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == workspaceStepBackend {
 				m.backendIdx = wrapIndex(m.backendIdx-1, 2)
 			} else if m.step == workspaceStepProvider {
-				m.providerIdx = wrapIndex(m.providerIdx-1, 3)
+				m.providerIdx = wrapIndex(m.providerIdx-1, 4)
 			}
 		case "down", "j":
 			if m.step == workspaceStepBackend {
 				m.backendIdx = wrapIndex(m.backendIdx+1, 2)
 			} else if m.step == workspaceStepProvider {
-				m.providerIdx = wrapIndex(m.providerIdx+1, 3)
+				m.providerIdx = wrapIndex(m.providerIdx+1, 4)
 			}
 		case "b":
 			if m.step > workspaceStepBackend {
@@ -118,7 +118,7 @@ func (m workspaceCreateModel) renderStep() string {
 		}
 		return strings.Join(lines, "\n")
 	case workspaceStepProvider:
-		options := []string{"ollama", "openai", "lmstudio"}
+		options := []string{"ollama", "llamacpp", "openai", "lmstudio"}
 		lines := []string{m.theme.subtitle.Render("Select embedding provider"), ""}
 		for i, opt := range options {
 			prefix := "  "
@@ -164,8 +164,10 @@ func buildWorkspaceFromSelection(name string, backendIdx, providerIdx int) *conf
 	provider := "ollama"
 	switch providerIdx {
 	case 1:
-		provider = "openai"
+		provider = "llamacpp"
 	case 2:
+		provider = "openai"
+	case 3:
 		provider = "lmstudio"
 	}
 

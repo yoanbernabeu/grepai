@@ -424,6 +424,12 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 				return nil, fmt.Errorf("cannot connect to Ollama: %w\nMake sure Ollama is running and has the %s model", err, cfg.Embedder.Model)
 			}
 		}
+	case "llamacpp":
+		if p, ok := emb.(pinger); ok {
+			if err := p.Ping(ctx); err != nil {
+				return nil, fmt.Errorf("cannot connect to managed llama.cpp runtime: %w\nInstall the managed model with 'grepai model install' and ensure the runtime can be downloaded for this platform", err)
+			}
+		}
 	case "lmstudio":
 		if p, ok := emb.(pinger); ok {
 			if err := p.Ping(ctx); err != nil {
