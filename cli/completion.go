@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/managedassets"
 )
 
 var completionCmd = &cobra.Command{
@@ -108,6 +109,26 @@ func registerCompletions() {
 			"qdrant\tQdrant vector database",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = initCmd.RegisterFlagCompletionFunc("model", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		provider, _ := cmd.Flags().GetString("provider")
+		switch provider {
+		case "llamacpp":
+			return completeAvailableManagedModels(), cobra.ShellCompDirectiveNoFileComp
+		case "openai":
+			return []string{
+				"text-embedding-3-small\tOpenAI small embedding model",
+				"text-embedding-3-large\tOpenAI large embedding model",
+			}, cobra.ShellCompDirectiveNoFileComp
+		case "openrouter":
+			return []string{
+				"openai/text-embedding-3-small\tOpenRouter small embedding model",
+				"openai/text-embedding-3-large\tOpenRouter large embedding model",
+				"qwen/qwen3-embedding-8b\tOpenRouter Qwen code-focused embedding model",
+			}, cobra.ShellCompDirectiveNoFileComp
+		default:
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	})
 
 	// Static flag completions for workspaceCreateCmd
 	_ = workspaceCreateCmd.RegisterFlagCompletionFunc("backend", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -126,6 +147,25 @@ func registerCompletions() {
 			"openrouter\tCloud multi-provider gateway",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
+
+	modelUseCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return completeInstalledManagedModels(), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	modelRemoveCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return completeInstalledManagedModels(), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	modelInstallCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return completeAvailableManagedModels(), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 
 	// Static flag completions for trace commands (mode)
 	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd} {
@@ -219,4 +259,25 @@ func completeProjectNames(workspaceName string) []string {
 		names[i] = p.Name
 	}
 	return names
+}
+
+func completeAvailableManagedModels() []string {
+	models := managedassets.ListAvailableModels()
+	completions := make([]string, 0, len(models))
+	for _, model := range models {
+		completions = append(completions, model.ID+"\t"+model.Display)
+	}
+	return completions
+}
+
+func completeInstalledManagedModels() []string {
+	models, err := managedassets.LoadInstalledModels()
+	if err != nil {
+		return nil
+	}
+	completions := make([]string, 0, len(models))
+	for _, model := range models {
+		completions = append(completions, model.ID+"\tinstalled managed model")
+	}
+	return completions
 }

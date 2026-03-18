@@ -8,9 +8,17 @@ import (
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/managedassets"
 )
 
 func TestCompletionZsh_should_output_compdef(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{"completion", "zsh"})
@@ -30,6 +38,13 @@ func TestCompletionZsh_should_output_compdef(t *testing.T) {
 }
 
 func TestCompletionBash_should_output_valid_script(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{"completion", "bash"})
@@ -45,6 +60,13 @@ func TestCompletionBash_should_output_valid_script(t *testing.T) {
 }
 
 func TestCompletionFish_should_output_valid_script(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{"completion", "fish"})
@@ -60,6 +82,13 @@ func TestCompletionFish_should_output_valid_script(t *testing.T) {
 }
 
 func TestCompletionPowershell_should_output_valid_script(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{"completion", "powershell"})
@@ -135,6 +164,13 @@ func TestCompleteProjectNames_should_return_project_names(t *testing.T) {
 }
 
 func TestCompletionScriptIncludesLlamaCPPProvider(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{"__complete", "init", "--provider", ""})
@@ -146,5 +182,73 @@ func TestCompletionScriptIncludesLlamaCPPProvider(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "llamacpp") {
 		t.Fatalf("expected llamacpp in completion output, got: %s", buf.String())
+	}
+}
+
+func TestCompletionInitModelIncludesManagedModelsForLlamaCPP(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"__complete", "init", "--provider", "llamacpp", "--model", ""})
+	defer rootCmd.SetOut(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("model completion failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "bge-small-en-v1.5-q8_0") {
+		t.Fatalf("expected default managed model in completion output, got: %s", output)
+	}
+	if !strings.Contains(output, "nomic-embed-text-v1.5-q8_0") {
+		t.Fatalf("expected Nomic managed model in completion output, got: %s", output)
+	}
+}
+
+func TestCompletionModelUseIncludesInstalledModels(t *testing.T) {
+	prevProvider := initProvider
+	prevModel := initModel
+	defer func() {
+		initProvider = prevProvider
+		initModel = prevModel
+	}()
+
+	tmpDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	_ = os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", oldHome)
+
+	modelDef, err := managedassets.LookupModel("nomic-embed-text-v1.5-q8_0")
+	if err != nil {
+		t.Fatalf("LookupModel failed: %v", err)
+	}
+	if err := managedassets.SaveInstalledModels([]managedassets.InstalledModel{{
+		ID:         modelDef.ID,
+		FileName:   modelDef.FileName,
+		Path:       filepath.Join(tmpDir, modelDef.FileName),
+		SourceURL:  modelDef.URL,
+		SizeBytes:  modelDef.SizeBytes,
+		Dimensions: modelDef.Dimensions,
+	}}); err != nil {
+		t.Fatalf("SaveInstalledModels failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"__complete", "model", "use", ""})
+	defer rootCmd.SetOut(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("model use completion failed: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), modelDef.ID) {
+		t.Fatalf("expected installed model in completion output, got: %s", buf.String())
 	}
 }

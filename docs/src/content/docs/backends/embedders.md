@@ -32,7 +32,15 @@ grepai init --provider llamacpp
 grepai model install
 ```
 
-3. Start indexing normally:
+3. Select which installed managed model this project should use:
+
+```bash
+grepai model use bge-small-en-v1.5-q8_0
+```
+
+If you already have one or more managed models installed, plain `grepai init` will prompt you to choose one when you select the `llamacpp` provider.
+
+4. Start indexing normally:
 
 ```bash
 grepai watch
@@ -71,6 +79,7 @@ grepai model install              # Install the recommended default model
 grepai model list-available       # Show managed model options with file sizes
 grepai model install <model-id>   # Install a specific managed model
 grepai model list                 # Show installed managed models
+grepai model use <model-id>       # Use an installed managed model for this project
 grepai model remove <model-id>    # Remove an installed managed model
 ```
 

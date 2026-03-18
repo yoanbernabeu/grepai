@@ -61,7 +61,10 @@ ollama pull nomic-embed-text
 ```bash
 grepai init --provider llamacpp
 grepai model install
+grepai model use bge-small-en-v1.5-q8_0
 ```
+
+If you already have managed local models installed, plain `grepai init` will ask which installed `llamacpp` model to use when you choose the `llamacpp` provider.
 
 ## Quick Start
 
@@ -74,7 +77,7 @@ grepai trace callers "Login"       # Find who calls a function
 
 ## Shell Completion
 
-grepai supports autocompletion for commands, flags, and dynamic values (workspace names, project names, providers, backends).
+grepai supports autocompletion for commands, flags, and dynamic values (workspace names, project names, providers, backends, and managed model ids for `llamacpp`).
 
 **Zsh (add to `~/.zshrc`):**
 ```bash
