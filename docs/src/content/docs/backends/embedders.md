@@ -74,6 +74,8 @@ grepai model list                 # Show installed managed models
 grepai model remove <model-id>    # Remove an installed managed model
 ```
 
+Managed models can carry model-specific embedding behavior. For example, Nomic models use `search_document:` for indexed chunks and `search_query:` for user queries automatically when selected via the managed `llama.cpp` provider.
+
 ## Ollama (Local)
 
 ### Setup

@@ -194,6 +194,21 @@ func (m *mockEmbedder) Close() error {
 	return nil
 }
 
+type roleAwareMockEmbedder struct {
+	mockEmbedder
+	lastRole embedder.InputRole
+}
+
+func (m *roleAwareMockEmbedder) EmbedWithRole(ctx context.Context, text string, role embedder.InputRole) ([]float32, error) {
+	m.lastRole = role
+	return m.Embed(ctx, text)
+}
+
+func (m *roleAwareMockEmbedder) EmbedBatchWithRole(ctx context.Context, texts []string, role embedder.InputRole) ([][]float32, error) {
+	m.lastRole = role
+	return m.EmbedBatch(ctx, texts)
+}
+
 // TestIndexAllWithProgress_UnchangedFilesSkipped tests that files with matching ModTimes are skipped
 func TestIndexAllWithProgress_UnchangedFilesSkipped(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1163,5 +1178,16 @@ func TestEmbedWithReChunking_ReChunksOnError(t *testing.T) {
 	// Should have same number of vectors as chunks
 	if len(vectors) != len(finalChunks) {
 		t.Errorf("vectors count %d != chunks count %d", len(vectors), len(finalChunks))
+	}
+}
+
+func TestEmbedContentsUsesDocumentRoleWhenSupported(t *testing.T) {
+	mockEmb := &roleAwareMockEmbedder{}
+	_, err := embedContents(context.Background(), mockEmb, []string{"hello"})
+	if err != nil {
+		t.Fatalf("embedContents failed: %v", err)
+	}
+	if mockEmb.lastRole != embedder.RoleDocument {
+		t.Fatalf("expected document role, got %s", mockEmb.lastRole)
 	}
 }

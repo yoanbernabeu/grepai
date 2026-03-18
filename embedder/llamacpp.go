@@ -29,6 +29,8 @@ type LlamaCPPEmbedder struct {
 	endpoint    string
 	dimensions  int
 	runtimePath string
+	queryPrefix string
+	docPrefix   string
 	client      *http.Client
 }
 
@@ -95,6 +97,11 @@ func NewLlamaCPPEmbedder(opts ...LlamaCPPOption) (*LlamaCPPEmbedder, error) {
 	if err != nil {
 		return nil, err
 	}
+	modelDef, err := managedassets.LookupModel(e.model)
+	if err == nil {
+		e.queryPrefix = modelDef.QueryPrefix
+		e.docPrefix = modelDef.DocPrefix
+	}
 	e.modelPath = modelPath
 	if e.dimensions == 384 && dims > 0 {
 		e.dimensions = dims
@@ -114,9 +121,14 @@ func NewLlamaCPPEmbedder(opts ...LlamaCPPOption) (*LlamaCPPEmbedder, error) {
 }
 
 func (e *LlamaCPPEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return e.EmbedWithRole(ctx, text, RoleGeneric)
+}
+
+func (e *LlamaCPPEmbedder) EmbedWithRole(ctx context.Context, text string, role InputRole) ([]float32, error) {
 	if err := e.ensureRunning(ctx); err != nil {
 		return nil, err
 	}
+	text = e.applyRolePrefix(text, role)
 	body, err := json.Marshal(llamaCPPEmbedRequest{
 		Content: text,
 		Input:   text,
@@ -156,15 +168,33 @@ func (e *LlamaCPPEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 }
 
 func (e *LlamaCPPEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.EmbedBatchWithRole(ctx, texts, RoleGeneric)
+}
+
+func (e *LlamaCPPEmbedder) EmbedBatchWithRole(ctx context.Context, texts []string, role InputRole) ([][]float32, error) {
 	results := make([][]float32, len(texts))
 	for i, text := range texts {
-		embedding, err := e.Embed(ctx, text)
+		embedding, err := e.EmbedWithRole(ctx, text, role)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
 		}
 		results[i] = embedding
 	}
 	return results, nil
+}
+
+func (e *LlamaCPPEmbedder) applyRolePrefix(text string, role InputRole) string {
+	switch role {
+	case RoleQuery:
+		if e.queryPrefix != "" && !strings.HasPrefix(text, e.queryPrefix) {
+			return e.queryPrefix + text
+		}
+	case RoleDocument:
+		if e.docPrefix != "" && !strings.HasPrefix(text, e.docPrefix) {
+			return e.docPrefix + text
+		}
+	}
+	return text
 }
 
 func (e *LlamaCPPEmbedder) Dimensions() int {

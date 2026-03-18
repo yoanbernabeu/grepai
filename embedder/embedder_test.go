@@ -1,6 +1,7 @@
 package embedder
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -110,6 +111,42 @@ func TestNewLMStudioEmbedder_WithOptions(t *testing.T) {
 
 	if e.dimensions != customDimensions {
 		t.Errorf("expected dimensions %d, got %d", customDimensions, e.dimensions)
+	}
+}
+
+func TestLlamaCPPEmbedder_AppliesRolePrefixes(t *testing.T) {
+	e := &LlamaCPPEmbedder{
+		model:       "nomic-embed-text-v1.5-q8_0",
+		queryPrefix: "search_query: ",
+		docPrefix:   "search_document: ",
+	}
+
+	if got := e.applyRolePrefix("hello", RoleQuery); got != "search_query: hello" {
+		t.Fatalf("query prefix = %q", got)
+	}
+	if got := e.applyRolePrefix("chunk", RoleDocument); got != "search_document: chunk" {
+		t.Fatalf("document prefix = %q", got)
+	}
+	if got := e.applyRolePrefix("search_query: hello", RoleQuery); got != "search_query: hello" {
+		t.Fatalf("query prefix duplicated: %q", got)
+	}
+}
+
+func TestNewLlamaCPPEmbedder_LoadsNomicModelMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelPath := filepath.Join(tmpDir, "nomic.gguf")
+	e, err := NewLlamaCPPEmbedder(
+		WithLlamaCPPModel("nomic-embed-text-v1.5-q8_0"),
+		WithLlamaCPPModelPath(modelPath),
+	)
+	if err != nil {
+		t.Fatalf("NewLlamaCPPEmbedder failed: %v", err)
+	}
+	if e.queryPrefix != "search_query: " {
+		t.Fatalf("query prefix = %q", e.queryPrefix)
+	}
+	if e.docPrefix != "search_document: " {
+		t.Fatalf("doc prefix = %q", e.docPrefix)
 	}
 }
 

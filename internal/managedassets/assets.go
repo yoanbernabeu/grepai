@@ -33,13 +33,15 @@ const (
 )
 
 type ModelDefinition struct {
-	ID         string `json:"id"`
-	Display    string `json:"display"`
-	SizeBytes  int64  `json:"size_bytes"`
-	FileName   string `json:"file_name"`
-	URL        string `json:"url"`
-	SHA256     string `json:"sha256,omitempty"`
-	Dimensions int    `json:"dimensions"`
+	ID          string `json:"id"`
+	Display     string `json:"display"`
+	SizeBytes   int64  `json:"size_bytes"`
+	FileName    string `json:"file_name"`
+	URL         string `json:"url"`
+	SHA256      string `json:"sha256,omitempty"`
+	Dimensions  int    `json:"dimensions"`
+	QueryPrefix string `json:"query_prefix,omitempty"`
+	DocPrefix   string `json:"doc_prefix,omitempty"`
 }
 
 type RuntimeDefinition struct {
@@ -80,6 +82,26 @@ var defaultModels = map[string]ModelDefinition{
 		FileName:   "bge-small-en-v1.5-q8_0.gguf",
 		URL:        "https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/main/bge-small-en-v1.5-q8_0.gguf?download=1",
 		Dimensions: 384,
+	},
+	"nomic-embed-text-v1.5-q8_0": {
+		ID:          "nomic-embed-text-v1.5-q8_0",
+		Display:     "Nomic Embed Text v1.5 Q8_0",
+		SizeBytes:   153092096,
+		FileName:    "nomic-embed-text-v1.5.Q8_0.gguf",
+		URL:         "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf?download=1",
+		Dimensions:  768,
+		QueryPrefix: "search_query: ",
+		DocPrefix:   "search_document: ",
+	},
+	"nomic-embed-text-v1.5-q4_k_m": {
+		ID:          "nomic-embed-text-v1.5-q4_k_m",
+		Display:     "Nomic Embed Text v1.5 Q4_K_M",
+		SizeBytes:   88185242,
+		FileName:    "nomic-embed-text-v1.5.Q4_K_M.gguf",
+		URL:         "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=1",
+		Dimensions:  768,
+		QueryPrefix: "search_query: ",
+		DocPrefix:   "search_document: ",
 	},
 }
 

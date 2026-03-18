@@ -10,6 +10,7 @@ import (
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
+	"github.com/yoanbernabeu/grepai/internal/managedassets"
 )
 
 var (
@@ -40,7 +41,7 @@ This command will:
 
 func init() {
 	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, llamacpp, lmstudio, openai, synthetic, or openrouter)")
-	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openai/openrouter: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
+	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for llamacpp: managed model id from 'grepai model list-available'; for openai/openrouter: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
@@ -132,9 +133,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			switch input {
 			case "2", "llamacpp":
 				cfg.Embedder.Provider = "llamacpp"
-				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Model = resolveInitModel("llamacpp", initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
-				dim := config.DefaultLlamaCPPDimensions
+				dim := resolveLocalModelDimensions(cfg.Embedder.Model)
 				cfg.Embedder.Dimensions = &dim
 			case "3", "lmstudio":
 				cfg.Embedder.Provider = "lmstudio"
@@ -197,9 +198,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			cfg.Embedder.Provider = initProvider
 			switch initProvider {
 			case "llamacpp":
-				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
-				dim := config.DefaultLlamaCPPDimensions
+				dim := resolveLocalModelDimensions(cfg.Embedder.Model)
 				cfg.Embedder.Dimensions = &dim
 			case "lmstudio":
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
@@ -289,9 +290,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			// Apply provider-specific settings
 			switch initProvider {
 			case "llamacpp":
-				cfg.Embedder.Model = config.DefaultLlamaCPPEmbeddingModel
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
-				dim := config.DefaultLlamaCPPDimensions
+				dim := resolveLocalModelDimensions(cfg.Embedder.Model)
 				cfg.Embedder.Dimensions = &dim
 			case "lmstudio":
 				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
@@ -372,6 +373,14 @@ func shouldPromptInheritChoice(shouldInherit, nonInteractive, uiMode bool) bool 
 func resolveInitModel(provider, requestedModel string) string {
 	requestedModel = strings.TrimSpace(requestedModel)
 	switch provider {
+	case "llamacpp":
+		if requestedModel != "" {
+			if def, err := managedassets.LookupModel(requestedModel); err == nil {
+				return def.ID
+			}
+			return requestedModel
+		}
+		return config.DefaultLlamaCPPEmbeddingModel
 	case "openai":
 		if requestedModel != "" {
 			return requestedModel
@@ -391,4 +400,11 @@ func resolveInitModel(provider, requestedModel string) string {
 	default:
 		return requestedModel
 	}
+}
+
+func resolveLocalModelDimensions(model string) int {
+	if def, err := managedassets.LookupModel(model); err == nil && def.Dimensions > 0 {
+		return def.Dimensions
+	}
+	return config.DefaultLlamaCPPDimensions
 }

@@ -2,6 +2,14 @@ package embedder
 
 import "context"
 
+type InputRole string
+
+const (
+	RoleGeneric  InputRole = "generic"
+	RoleDocument InputRole = "document"
+	RoleQuery    InputRole = "query"
+)
+
 // Embedder defines the interface for text embedding providers
 type Embedder interface {
 	// Embed converts text into a vector embedding
@@ -15,6 +23,15 @@ type Embedder interface {
 
 	// Close cleanly shuts down the embedder
 	Close() error
+}
+
+// RoleAwareEmbedder optionally supports model-specific input formatting for
+// different embedding tasks such as indexing documents vs embedding queries.
+type RoleAwareEmbedder interface {
+	Embedder
+
+	EmbedWithRole(ctx context.Context, text string, role InputRole) ([]float32, error)
+	EmbedBatchWithRole(ctx context.Context, texts []string, role InputRole) ([][]float32, error)
 }
 
 // BatchProgress is a callback for reporting batch embedding progress.

@@ -278,6 +278,13 @@ func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.
 	return chunks, chunkIDs
 }
 
+func embedContents(ctx context.Context, emb embedder.Embedder, contents []string) ([][]float32, error) {
+	if roleAware, ok := emb.(embedder.RoleAwareEmbedder); ok {
+		return roleAware.EmbedBatchWithRole(ctx, contents, embedder.RoleDocument)
+	}
+	return emb.EmbedBatch(ctx, contents)
+}
+
 // saveFileData saves chunks and document metadata for a single file.
 func (idx *Indexer) saveFileData(ctx context.Context, fd fileChunkData, chunks []store.Chunk, chunkIDs []string) error {
 	if err := idx.store.SaveChunks(ctx, chunks); err != nil {
@@ -570,7 +577,7 @@ func (idx *Indexer) embedWithReChunking(ctx context.Context, chunks []ChunkInfo)
 			contents[i] = c.Content
 		}
 
-		vectors, err := idx.embedder.EmbedBatch(ctx, contents)
+		vectors, err := embedContents(ctx, idx.embedder, contents)
 		if err == nil {
 			// Success! Append all results
 			allVectors = append(allVectors, vectors...)
@@ -601,7 +608,7 @@ func (idx *Indexer) embedWithReChunking(ctx context.Context, chunks []ChunkInfo)
 			for i := 0; i < failedIndex; i++ {
 				beforeContents[i] = currentChunks[i].Content
 			}
-			beforeVectors, err := idx.embedder.EmbedBatch(ctx, beforeContents)
+			beforeVectors, err := embedContents(ctx, idx.embedder, beforeContents)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to embed chunks before failed index: %w", err)
 			}

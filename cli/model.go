@@ -6,6 +6,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/internal/managedassets"
 )
 
@@ -77,6 +78,57 @@ var modelListAvailableCmd = &cobra.Command{
 	},
 }
 
+var modelUseCmd = &cobra.Command{
+	Use:   "use <model>",
+	Short: "Use an installed managed local model for the current project",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		modelDef, err := managedassets.LookupModel(args[0])
+		if err != nil {
+			return err
+		}
+
+		installedModels, err := managedassets.LoadInstalledModels()
+		if err != nil {
+			return err
+		}
+		installed := false
+		for _, model := range installedModels {
+			if model.ID == modelDef.ID {
+				installed = true
+				break
+			}
+		}
+		if !installed {
+			return fmt.Errorf("managed model %q is not installed; run 'grepai model install %s'", modelDef.ID, modelDef.ID)
+		}
+
+		projectRoot, err := config.FindProjectRoot()
+		if err != nil {
+			return err
+		}
+		cfg, err := config.Load(projectRoot)
+		if err != nil {
+			return err
+		}
+
+		cfg.Embedder.Provider = "llamacpp"
+		cfg.Embedder.Model = modelDef.ID
+		cfg.Embedder.ModelPath = ""
+		cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
+		cfg.Embedder.Parallelism = 0
+		dim := modelDef.Dimensions
+		cfg.Embedder.Dimensions = &dim
+
+		if err := cfg.Save(projectRoot); err != nil {
+			return err
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Configured %s to use model %s\n", projectRoot, modelDef.ID)
+		return nil
+	},
+}
+
 var modelRemoveCmd = &cobra.Command{
 	Use:   "remove <model>",
 	Short: "Remove an installed managed local model",
@@ -94,6 +146,7 @@ func init() {
 	modelCmd.AddCommand(modelInstallCmd)
 	modelCmd.AddCommand(modelListCmd)
 	modelCmd.AddCommand(modelListAvailableCmd)
+	modelCmd.AddCommand(modelUseCmd)
 	modelCmd.AddCommand(modelRemoveCmd)
 	rootCmd.AddCommand(modelCmd)
 }
