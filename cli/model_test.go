@@ -33,6 +33,7 @@ func TestModelListCommand(t *testing.T) {
 		FileName:   "embedding.gguf",
 		Path:       filepath.Join(tmpDir, "embedding.gguf"),
 		SourceURL:  "https://example.com/embedding.gguf",
+		SizeBytes:  123456,
 		Dimensions: 768,
 	}}
 	if err := managedassets.SaveInstalledModels(models); err != nil {
@@ -50,6 +51,9 @@ func TestModelListCommand(t *testing.T) {
 	if !strings.Contains(buf.String(), managedassets.DefaultModelID) {
 		t.Fatalf("expected model list output to mention %s, got %q", managedassets.DefaultModelID, buf.String())
 	}
+	if !strings.Contains(buf.String(), "121 KB") {
+		t.Fatalf("expected model list output to include formatted size, got %q", buf.String())
+	}
 }
 
 func TestModelRemoveCommand(t *testing.T) {
@@ -66,6 +70,7 @@ func TestModelRemoveCommand(t *testing.T) {
 		FileName:   "embedding.gguf",
 		Path:       modelPath,
 		SourceURL:  "https://example.com/embedding.gguf",
+		SizeBytes:  4,
 		Dimensions: 768,
 	}}); err != nil {
 		t.Fatalf("SaveInstalledModels failed: %v", err)
@@ -83,5 +88,22 @@ func TestModelRemoveCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(modelPath); !os.IsNotExist(err) {
 		t.Fatalf("expected model file to be removed, stat err=%v", err)
+	}
+}
+
+func TestModelListAvailableCommand(t *testing.T) {
+	var buf bytes.Buffer
+	modelListAvailableCmd.SetOut(&buf)
+	modelListAvailableCmd.SetArgs(nil)
+	defer modelListAvailableCmd.SetOut(nil)
+
+	if err := modelListAvailableCmd.RunE(modelListAvailableCmd, nil); err != nil {
+		t.Fatalf("model list-available failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), managedassets.DefaultModelID) {
+		t.Fatalf("expected available model output to mention %s, got %q", managedassets.DefaultModelID, buf.String())
+	}
+	if !strings.Contains(buf.String(), "35.0 MB") {
+		t.Fatalf("expected available model output to include formatted size, got %q", buf.String())
 	}
 }

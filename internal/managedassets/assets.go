@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ const (
 type ModelDefinition struct {
 	ID         string `json:"id"`
 	Display    string `json:"display"`
+	SizeBytes  int64  `json:"size_bytes"`
 	FileName   string `json:"file_name"`
 	URL        string `json:"url"`
 	SHA256     string `json:"sha256,omitempty"`
@@ -56,6 +58,7 @@ type InstalledModel struct {
 	Path       string    `json:"path"`
 	SourceURL  string    `json:"source_url"`
 	Installed  time.Time `json:"installed_at"`
+	SizeBytes  int64     `json:"size_bytes"`
 	Dimensions int       `json:"dimensions"`
 }
 
@@ -73,6 +76,7 @@ var defaultModels = map[string]ModelDefinition{
 	DefaultModelID: {
 		ID:         DefaultModelID,
 		Display:    "BGE Small English v1.5 Q8_0",
+		SizeBytes:  36685152,
 		FileName:   "bge-small-en-v1.5-q8_0.gguf",
 		URL:        "https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/main/bge-small-en-v1.5-q8_0.gguf?download=1",
 		Dimensions: 384,
@@ -167,6 +171,17 @@ func LookupModel(id string) (ModelDefinition, error) {
 		return ModelDefinition{}, fmt.Errorf("unknown managed model: %s", id)
 	}
 	return def, nil
+}
+
+func ListAvailableModels() []ModelDefinition {
+	models := make([]ModelDefinition, 0, len(defaultModels))
+	for _, model := range defaultModels {
+		models = append(models, model)
+	}
+	slices.SortFunc(models, func(a, b ModelDefinition) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return models
 }
 
 func LookupRuntime(goos, goarch string) (RuntimeDefinition, error) {
@@ -281,6 +296,7 @@ func InstallModel(ctx context.Context, id string, progress func(downloaded, tota
 		Path:       modelPath,
 		SourceURL:  def.URL,
 		Installed:  time.Now().UTC(),
+		SizeBytes:  def.SizeBytes,
 		Dimensions: def.Dimensions,
 	}
 	models, err := LoadInstalledModels()

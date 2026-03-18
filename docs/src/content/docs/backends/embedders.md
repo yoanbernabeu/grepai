@@ -68,6 +68,7 @@ embedder:
 
 ```bash
 grepai model install              # Install the recommended default model
+grepai model list-available       # Show managed model options with file sizes
 grepai model install <model-id>   # Install a specific managed model
 grepai model list                 # Show installed managed models
 grepai model remove <model-id>    # Remove an installed managed model

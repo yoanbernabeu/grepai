@@ -50,9 +50,28 @@ var modelListCmd = &cobra.Command{
 			return nil
 		}
 		tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "MODEL\tDIMENSIONS\tPATH")
+		fmt.Fprintln(tw, "MODEL\tSIZE\tDIMENSIONS\tPATH")
 		for _, model := range models {
-			fmt.Fprintf(tw, "%s\t%d\t%s\n", model.ID, model.Dimensions, model.Path)
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", model.ID, formatSize(model.SizeBytes), model.Dimensions, model.Path)
+		}
+		return tw.Flush()
+	},
+}
+
+var modelListAvailableCmd = &cobra.Command{
+	Use:   "list-available",
+	Short: "List available managed local models",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		models := managedassets.ListAvailableModels()
+		if len(models) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No managed local models available")
+			return nil
+		}
+		tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "MODEL\tSIZE\tDIMENSIONS\tNAME")
+		for _, model := range models {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", model.ID, formatSize(model.SizeBytes), model.Dimensions, model.Display)
 		}
 		return tw.Flush()
 	},
@@ -74,6 +93,7 @@ var modelRemoveCmd = &cobra.Command{
 func init() {
 	modelCmd.AddCommand(modelInstallCmd)
 	modelCmd.AddCommand(modelListCmd)
+	modelCmd.AddCommand(modelListAvailableCmd)
 	modelCmd.AddCommand(modelRemoveCmd)
 	rootCmd.AddCommand(modelCmd)
 }
@@ -89,4 +109,17 @@ func renderDownloadProgress(label string, downloaded, total int64) {
 
 func progressPadding() string {
 	return fmt.Sprintf("%60s", "")
+}
+
+func formatSize(sizeBytes int64) string {
+	switch {
+	case sizeBytes <= 0:
+		return "-"
+	case sizeBytes < 1024*1024:
+		return fmt.Sprintf("%.0f KB", float64(sizeBytes)/1024)
+	case sizeBytes < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(sizeBytes)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.2f GB", float64(sizeBytes)/(1024*1024*1024))
+	}
 }
