@@ -77,6 +77,14 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 		t.Fatalf("unexpected lmstudio dimensions: %v", lmstudio.Dimensions)
 	}
 
+	llamacpp := DefaultEmbedderForProvider("llamacpp")
+	if llamacpp.Endpoint != DefaultLlamaCPPEndpoint || llamacpp.Model != DefaultLlamaCPPEmbeddingModel {
+		t.Fatalf("unexpected llamacpp defaults: %+v", llamacpp)
+	}
+	if llamacpp.Dimensions == nil || *llamacpp.Dimensions != DefaultLlamaCPPDimensions {
+		t.Fatalf("unexpected llamacpp dimensions: %v", llamacpp.Dimensions)
+	}
+
 	openai := DefaultEmbedderForProvider("openai")
 	if openai.Endpoint != DefaultOpenAIEndpoint || openai.Model != DefaultOpenAIEmbeddingModel {
 		t.Fatalf("unexpected openai defaults: %+v", openai)

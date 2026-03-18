@@ -33,6 +33,17 @@ func NewFromConfig(cfg *config.Config) (Embedder, error) {
 		}
 		return NewOpenAIEmbedder(opts...)
 
+	case "llamacpp":
+		opts := []LlamaCPPOption{
+			WithLlamaCPPModel(cfg.Embedder.Model),
+			WithLlamaCPPModelPath(cfg.Embedder.ModelPath),
+			WithLlamaCPPEndpoint(cfg.Embedder.Endpoint),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, WithLlamaCPPDimensions(*cfg.Embedder.Dimensions))
+		}
+		return NewLlamaCPPEmbedder(opts...)
+
 	case "lmstudio":
 		opts := []LMStudioOption{
 			WithLMStudioEndpoint(cfg.Embedder.Endpoint),

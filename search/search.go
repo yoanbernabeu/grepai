@@ -26,7 +26,7 @@ func NewSearcher(st store.VectorStore, emb embedder.Embedder, searchCfg config.S
 
 func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPrefix string) ([]store.SearchResult, error) {
 	// Embed the query
-	queryVector, err := s.embedder.Embed(ctx, query)
+	queryVector, err := embedQuery(ctx, s.embedder, query)
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +57,13 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPref
 	}
 
 	return results, nil
+}
+
+func embedQuery(ctx context.Context, emb embedder.Embedder, query string) ([]float32, error) {
+	if roleAware, ok := emb.(embedder.RoleAwareEmbedder); ok {
+		return roleAware.EmbedWithRole(ctx, query, embedder.RoleQuery)
+	}
+	return emb.Embed(ctx, query)
 }
 
 // hybridSearch combines vector search and text search using RRF.

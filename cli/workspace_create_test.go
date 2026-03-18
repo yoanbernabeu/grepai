@@ -76,6 +76,27 @@ func TestCreateWorkspaceNonInteractive(t *testing.T) {
 		}
 	})
 
+	t.Run("flags_qdrant_llamacpp", func(t *testing.T) {
+		tmpDir, _ := os.MkdirTemp("", "grepai-test-cli")
+		defer os.RemoveAll(tmpDir)
+		cleanup := setTestHomeDirCLI(t, tmpDir)
+		defer cleanup()
+
+		ws, err := buildWorkspaceFromFlags("test-ws", "qdrant", "llamacpp", "", "", "", "http://localhost", 6334, "", false)
+		if err != nil {
+			t.Fatalf("buildWorkspaceFromFlags error: %v", err)
+		}
+		if ws.Embedder.Provider != "llamacpp" {
+			t.Errorf("expected llamacpp provider, got %s", ws.Embedder.Provider)
+		}
+		if ws.Embedder.Model != config.DefaultLlamaCPPEmbeddingModel {
+			t.Errorf("expected default llamacpp model %s, got %s", config.DefaultLlamaCPPEmbeddingModel, ws.Embedder.Model)
+		}
+		if ws.Embedder.Endpoint != config.DefaultLlamaCPPEndpoint {
+			t.Errorf("expected endpoint %s, got %s", config.DefaultLlamaCPPEndpoint, ws.Embedder.Endpoint)
+		}
+	})
+
 	t.Run("flags_postgres_openai_default_model_and_parallelism", func(t *testing.T) {
 		tmpDir, _ := os.MkdirTemp("", "grepai-test-cli")
 		defer os.RemoveAll(tmpDir)

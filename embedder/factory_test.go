@@ -1,6 +1,7 @@
 package embedder
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
@@ -73,6 +74,33 @@ func TestNewFromConfig_LMStudio(t *testing.T) {
 	_, ok := emb.(*LMStudioEmbedder)
 	if !ok {
 		t.Errorf("expected *LMStudioEmbedder, got %T", emb)
+	}
+}
+
+func TestNewFromConfig_LlamaCPP(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelPath := filepath.Join(tmpDir, "embedding.gguf")
+	cfg := &config.Config{
+		Embedder: config.EmbedderConfig{
+			Provider:  "llamacpp",
+			Model:     config.DefaultLlamaCPPEmbeddingModel,
+			ModelPath: modelPath,
+			Endpoint:  config.DefaultLlamaCPPEndpoint,
+		},
+	}
+
+	emb, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	defer emb.Close()
+
+	llamaEmb, ok := emb.(*LlamaCPPEmbedder)
+	if !ok {
+		t.Errorf("expected *LlamaCPPEmbedder, got %T", emb)
+	}
+	if llamaEmb.modelPath != modelPath {
+		t.Errorf("expected model path %s, got %s", modelPath, llamaEmb.modelPath)
 	}
 }
 

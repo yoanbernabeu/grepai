@@ -9,9 +9,87 @@ Embedders convert text (code chunks) into vector representations that enable sem
 
 | Provider | Type | Pros | Cons |
 |----------|------|------|------|
+| llama.cpp (managed) | Local | Privacy, no separate service to install, cross-platform managed assets | Larger local downloads, managed runtime still needs compatible platform binaries |
 | Ollama | Local | Privacy, free, no internet | Requires local resources |
 | LM Studio | Local | Privacy, OpenAI-compatible API, GUI | Requires local resources |
 | OpenAI | Cloud | High quality, fast | Costs money, sends code to cloud |
+
+## llama.cpp (Managed Local)
+
+grepai can manage a local `llama.cpp` embedding runtime for you. Model files and runtime binaries are stored globally under `~/.grepai`, while each project keeps only its local selection in `.grepai/config.yaml`.
+
+Current managed runtime support:
+- macOS `arm64`
+- macOS `amd64`
+- Linux `amd64`
+- Windows `amd64`
+
+### Setup
+
+1. Initialize with the managed provider:
+
+```bash
+grepai init --provider llamacpp
+```
+
+2. Install the recommended default model:
+
+```bash
+grepai model install
+```
+
+3. Select which installed managed model this project should use:
+
+```bash
+grepai model use bge-small-en-v1.5-q8_0
+```
+
+If you already have one or more managed models installed, plain `grepai init` will prompt you to choose one when you select the `llamacpp` provider.
+
+4. Start indexing normally:
+
+```bash
+grepai watch
+```
+
+### Configuration
+
+```yaml
+embedder:
+  provider: llamacpp
+  model: bge-small-en-v1.5-q8_0
+  endpoint: http://127.0.0.1:12434
+  dimensions: 384
+```
+
+Advanced override with an explicit model path:
+
+```yaml
+embedder:
+  provider: llamacpp
+  model: bge-small-en-v1.5-q8_0
+  model_path: /absolute/path/to/custom-model.gguf
+  endpoint: http://127.0.0.1:12434
+```
+
+### Managed Assets
+
+- Models: `~/.grepai/models`
+- Runtime binaries: `~/.grepai/bin`
+- Runtime metadata/state: `~/.grepai/state`
+
+### Model Commands
+
+```bash
+grepai model install              # Install the recommended default model
+grepai model list-available       # Show managed model options with file sizes
+grepai model install <model-id>   # Install a specific managed model
+grepai model list                 # Show installed managed models
+grepai model use <model-id>       # Use an installed managed model for this project
+grepai model remove <model-id>    # Remove an installed managed model
+```
+
+Managed models can carry model-specific embedding behavior. For example, Nomic models use `search_document:` for indexed chunks and `search_query:` for user queries automatically when selected via the managed `llama.cpp` provider.
 
 ## Ollama (Local)
 

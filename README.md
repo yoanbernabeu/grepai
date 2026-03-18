@@ -50,12 +50,22 @@ curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh 
 irm https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.ps1 | iex
 ```
 
-Requires an embedding provider — [Ollama](https://ollama.ai) (default), [LM Studio](https://lmstudio.ai), or OpenAI.
+Requires an embedding provider — [Ollama](https://ollama.ai) (default), managed local `llama.cpp`, [LM Studio](https://lmstudio.ai), or OpenAI.
 
 **Ollama (recommended):**
 ```bash
 ollama pull nomic-embed-text
 ```
+
+**Managed local `llama.cpp`:**
+```bash
+grepai init --provider llamacpp
+grepai model install
+grepai model use bge-small-en-v1.5-q8_0
+```
+
+If you already have managed local models installed, plain `grepai init` will ask which installed `llamacpp` model to use when you choose the `llamacpp` provider.
+Managed `llama.cpp` runtime support is currently limited to macOS (`arm64`, `amd64`), Linux (`amd64`), and Windows (`amd64`).
 
 ## Quick Start
 
@@ -68,7 +78,7 @@ grepai trace callers "Login"       # Find who calls a function
 
 ## Shell Completion
 
-grepai supports autocompletion for commands, flags, and dynamic values (workspace names, project names, providers, backends).
+grepai supports autocompletion for commands, flags, and dynamic values (workspace names, project names, providers, backends, and managed model ids for `llamacpp`).
 
 **Zsh (add to `~/.zshrc`):**
 ```bash
