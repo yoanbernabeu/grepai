@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -133,7 +134,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			switch input {
 			case "2", "llamacpp":
 				cfg.Embedder.Provider = "llamacpp"
-				cfg.Embedder.Model = resolveInitModel("llamacpp", initModel)
+				cfg.Embedder.Model = resolveInteractiveLlamaCPPModel(reader, cmd.OutOrStdout(), initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
 				dim := resolveLocalModelDimensions(cfg.Embedder.Model)
 				cfg.Embedder.Dimensions = &dim
@@ -347,8 +348,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nMake sure Ollama is running with the nomic-embed-text model:")
 		fmt.Println("  ollama pull nomic-embed-text")
 	case "llamacpp":
-		fmt.Println("\nInstall the managed local model before starting watch:")
-		fmt.Println("  grepai model install")
+		if hasInstalledManagedModel(cfg.Embedder.Model) {
+			fmt.Printf("\nUsing managed local model: %s\n", cfg.Embedder.Model)
+			fmt.Println("Switch models later with:")
+			fmt.Println("  grepai model use <model-id>")
+		} else {
+			fmt.Println("\nInstall the managed local model before starting watch:")
+			fmt.Println("  grepai model install")
+		}
 	case "lmstudio":
 		fmt.Println("\nMake sure LM Studio is running with an embedding model loaded.")
 		fmt.Printf("  Model: %s\n", cfg.Embedder.Model)
@@ -407,4 +414,50 @@ func resolveLocalModelDimensions(model string) int {
 		return def.Dimensions
 	}
 	return config.DefaultLlamaCPPDimensions
+}
+
+func resolveInteractiveLlamaCPPModel(reader *bufio.Reader, out io.Writer, requestedModel string) string {
+	if model := strings.TrimSpace(requestedModel); model != "" {
+		return resolveInitModel("llamacpp", model)
+	}
+
+	installedModels, err := managedassets.LoadInstalledModels()
+	if err != nil || len(installedModels) == 0 {
+		return config.DefaultLlamaCPPEmbeddingModel
+	}
+
+	fmt.Fprintln(out, "\nSelect managed local model:")
+	defaultChoice := 1
+	for i, model := range installedModels {
+		fmt.Fprintf(out, "  %d) %s (%s, %d dims)\n", i+1, model.ID, formatSize(model.SizeBytes), model.Dimensions)
+		if model.ID == config.DefaultLlamaCPPEmbeddingModel {
+			defaultChoice = i + 1
+		}
+	}
+	fmt.Fprintf(out, "Choice [%d]: ", defaultChoice)
+
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return installedModels[defaultChoice-1].ID
+	}
+	for i, model := range installedModels {
+		if input == fmt.Sprintf("%d", i+1) || input == model.ID {
+			return model.ID
+		}
+	}
+	return installedModels[defaultChoice-1].ID
+}
+
+func hasInstalledManagedModel(modelID string) bool {
+	models, err := managedassets.LoadInstalledModels()
+	if err != nil {
+		return false
+	}
+	for _, model := range models {
+		if model.ID == modelID {
+			return true
+		}
+	}
+	return false
 }
