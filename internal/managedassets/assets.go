@@ -242,6 +242,20 @@ func LoadInstalledModels() ([]InstalledModel, error) {
 	if err := json.Unmarshal(data, &models); err != nil {
 		return nil, fmt.Errorf("failed to parse model manifest: %w", err)
 	}
+	for i := range models {
+		if models[i].SizeBytes <= 0 {
+			if st, err := os.Stat(models[i].Path); err == nil {
+				models[i].SizeBytes = st.Size()
+			} else if def, ok := defaultModels[models[i].ID]; ok && def.SizeBytes > 0 {
+				models[i].SizeBytes = def.SizeBytes
+			}
+		}
+		if models[i].Dimensions <= 0 {
+			if def, ok := defaultModels[models[i].ID]; ok && def.Dimensions > 0 {
+				models[i].Dimensions = def.Dimensions
+			}
+		}
+	}
 	return models, nil
 }
 
