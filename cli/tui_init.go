@@ -26,7 +26,7 @@ const (
 	initStepReview
 )
 
-var initProviderOptions = []string{"ollama", "llamacpp", "lmstudio", "openai"}
+var initProviderOptions = availableInitProviders()
 var initBackendOptions = []string{"gob", "postgres", "qdrant"}
 
 type initUIModel struct {

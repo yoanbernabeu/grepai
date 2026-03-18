@@ -18,6 +18,12 @@ Embedders convert text (code chunks) into vector representations that enable sem
 
 grepai can manage a local `llama.cpp` embedding runtime for you. Model files and runtime binaries are stored globally under `~/.grepai`, while each project keeps only its local selection in `.grepai/config.yaml`.
 
+Current managed runtime support:
+- macOS `arm64`
+- macOS `amd64`
+- Linux `amd64`
+- Windows `amd64`
+
 ### Setup
 
 1. Initialize with the managed provider:

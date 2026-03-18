@@ -93,14 +93,17 @@ func init() {
 func registerCompletions() {
 	// Static flag completions for initCmd
 	_ = initCmd.RegisterFlagCompletionFunc("provider", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{
+		completions := []string{
 			"ollama\tLocal embedding with Ollama",
-			"llamacpp\tManaged local embedding with llama.cpp",
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",
 			"openrouter\tCloud multi-provider gateway",
-		}, cobra.ShellCompDirectiveNoFileComp
+		}
+		if managedLlamaCPPSupported() {
+			completions = append(completions, "llamacpp\tManaged local embedding with llama.cpp")
+		}
+		return completions, cobra.ShellCompDirectiveNoFileComp
 	})
 	_ = initCmd.RegisterFlagCompletionFunc("backend", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{
@@ -138,14 +141,17 @@ func registerCompletions() {
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
 	_ = workspaceCreateCmd.RegisterFlagCompletionFunc("provider", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{
+		completions := []string{
 			"ollama\tLocal embedding with Ollama",
-			"llamacpp\tManaged local embedding with llama.cpp",
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",
 			"openrouter\tCloud multi-provider gateway",
-		}, cobra.ShellCompDirectiveNoFileComp
+		}
+		if managedLlamaCPPSupported() {
+			completions = append(completions, "llamacpp\tManaged local embedding with llama.cpp")
+		}
+		return completions, cobra.ShellCompDirectiveNoFileComp
 	})
 
 	modelUseCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

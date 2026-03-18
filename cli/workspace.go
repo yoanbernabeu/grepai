@@ -254,6 +254,9 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 	if provider == "" {
 		provider = "ollama"
 	}
+	if provider == "llamacpp" && !managedLlamaCPPSupported() {
+		return nil, managedLlamaCPPUnsupportedError()
+	}
 	if model == "" {
 		switch provider {
 		case "openai":
@@ -513,7 +516,9 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 
 	fmt.Println("\nSelect embedding provider:")
 	fmt.Println("  1. Ollama (local, default)")
-	fmt.Println("  2. llama.cpp (managed local)")
+	if managedLlamaCPPSupported() {
+		fmt.Println("  2. llama.cpp (managed local)")
+	}
 	fmt.Println("  3. OpenAI")
 	fmt.Println("  4. LM Studio (local)")
 	fmt.Print("Choice [1]: ")
@@ -544,6 +549,9 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 		dim := 768
 		embedderConfig.Dimensions = &dim
 	case "2":
+		if !managedLlamaCPPSupported() {
+			return nil, managedLlamaCPPUnsupportedError()
+		}
 		embedderConfig.Provider = "llamacpp"
 		embedderConfig.Endpoint = config.DefaultLlamaCPPEndpoint
 		fmt.Printf("Managed model [%s]: ", config.DefaultLlamaCPPEmbeddingModel)

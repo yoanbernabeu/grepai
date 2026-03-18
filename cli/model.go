@@ -13,6 +13,12 @@ import (
 var modelCmd = &cobra.Command{
 	Use:   "model",
 	Short: "Manage locally installed llama.cpp embedding models",
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if !managedLlamaCPPSupported() {
+			return managedLlamaCPPUnsupportedError()
+		}
+		return nil
+	},
 }
 
 var modelInstallCmd = &cobra.Command{

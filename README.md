@@ -65,6 +65,7 @@ grepai model use bge-small-en-v1.5-q8_0
 ```
 
 If you already have managed local models installed, plain `grepai init` will ask which installed `llamacpp` model to use when you choose the `llamacpp` provider.
+Managed `llama.cpp` runtime support is currently limited to macOS (`arm64`, `amd64`), Linux (`amd64`), and Windows (`amd64`).
 
 ## Quick Start
 

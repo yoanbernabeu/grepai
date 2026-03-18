@@ -121,7 +121,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initProvider == "" {
 			fmt.Println("\nSelect embedding provider:")
 			fmt.Println("  1) ollama (local, privacy-first, requires Ollama running)")
-			fmt.Println("  2) llamacpp (local, managed runtime + managed model)")
+			if managedLlamaCPPSupported() {
+				fmt.Println("  2) llamacpp (local, managed runtime + managed model)")
+			}
 			fmt.Println("  3) lmstudio (local, OpenAI-compatible, requires LM Studio running)")
 			fmt.Println("  4) openai (cloud, requires API key)")
 			fmt.Println("  5) synthetic (cloud, free embedding API)")
@@ -133,6 +135,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 			switch input {
 			case "2", "llamacpp":
+				if !managedLlamaCPPSupported() {
+					return managedLlamaCPPUnsupportedError()
+				}
 				cfg.Embedder.Provider = "llamacpp"
 				cfg.Embedder.Model = resolveInteractiveLlamaCPPModel(reader, cmd.OutOrStdout(), initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
@@ -199,6 +204,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			cfg.Embedder.Provider = initProvider
 			switch initProvider {
 			case "llamacpp":
+				if !managedLlamaCPPSupported() {
+					return managedLlamaCPPUnsupportedError()
+				}
 				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
 				dim := resolveLocalModelDimensions(cfg.Embedder.Model)
@@ -291,6 +299,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			// Apply provider-specific settings
 			switch initProvider {
 			case "llamacpp":
+				if !managedLlamaCPPSupported() {
+					return managedLlamaCPPUnsupportedError()
+				}
 				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = config.DefaultLlamaCPPEndpoint
 				dim := resolveLocalModelDimensions(cfg.Embedder.Model)

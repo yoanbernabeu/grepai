@@ -35,6 +35,8 @@ type workspaceCreateModel struct {
 	result   *config.Workspace
 }
 
+var workspaceProviderOptions = availableWorkspaceProviders()
+
 func newWorkspaceCreateModel(workspaceName string) workspaceCreateModel {
 	return workspaceCreateModel{
 		theme:         newTUITheme(),
@@ -62,13 +64,13 @@ func (m workspaceCreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == workspaceStepBackend {
 				m.backendIdx = wrapIndex(m.backendIdx-1, 2)
 			} else if m.step == workspaceStepProvider {
-				m.providerIdx = wrapIndex(m.providerIdx-1, 4)
+				m.providerIdx = wrapIndex(m.providerIdx-1, len(workspaceProviderOptions))
 			}
 		case "down", "j":
 			if m.step == workspaceStepBackend {
 				m.backendIdx = wrapIndex(m.backendIdx+1, 2)
 			} else if m.step == workspaceStepProvider {
-				m.providerIdx = wrapIndex(m.providerIdx+1, 4)
+				m.providerIdx = wrapIndex(m.providerIdx+1, len(workspaceProviderOptions))
 			}
 		case "b":
 			if m.step > workspaceStepBackend {
@@ -118,7 +120,7 @@ func (m workspaceCreateModel) renderStep() string {
 		}
 		return strings.Join(lines, "\n")
 	case workspaceStepProvider:
-		options := []string{"ollama", "llamacpp", "openai", "lmstudio"}
+		options := workspaceProviderOptions
 		lines := []string{m.theme.subtitle.Render("Select embedding provider"), ""}
 		for i, opt := range options {
 			prefix := "  "
@@ -162,12 +164,12 @@ func buildWorkspaceFromSelection(name string, backendIdx, providerIdx int) *conf
 	}
 
 	provider := "ollama"
-	switch providerIdx {
-	case 1:
+	switch workspaceProviderOptions[providerIdx] {
+	case "llamacpp":
 		provider = "llamacpp"
-	case 2:
+	case "openai":
 		provider = "openai"
-	case 3:
+	case "lmstudio":
 		provider = "lmstudio"
 	}
 
