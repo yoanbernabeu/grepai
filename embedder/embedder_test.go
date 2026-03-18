@@ -1,9 +1,29 @@
 package embedder
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
+
+	"github.com/yoanbernabeu/grepai/internal/managedassets"
 )
+
+func setEmbedderTestHome(t *testing.T, dir string) func() {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		original := os.Getenv("USERPROFILE")
+		_ = os.Setenv("USERPROFILE", dir)
+		return func() { _ = os.Setenv("USERPROFILE", original) }
+	}
+	original := os.Getenv("HOME")
+	_ = os.Setenv("HOME", dir)
+	return func() { _ = os.Setenv("HOME", original) }
+}
 
 // Test OllamaEmbedder options
 func TestNewOllamaEmbedder_Defaults(t *testing.T) {
@@ -147,6 +167,45 @@ func TestNewLlamaCPPEmbedder_LoadsNomicModelMetadata(t *testing.T) {
 	}
 	if e.docPrefix != "search_document: " {
 		t.Fatalf("doc prefix = %q", e.docPrefix)
+	}
+}
+
+func TestLlamaCPPEmbedder_EnsureRunningReusesHealthyEndpointWithoutPIDProbe(t *testing.T) {
+	tmpDir := t.TempDir()
+	cleanup := setEmbedderTestHome(t, tmpDir)
+	defer cleanup()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	state := managedassets.RuntimeState{
+		Version:  managedassets.DefaultRuntimeVersion,
+		Platform: runtime.GOOS,
+		Arch:     runtime.GOARCH,
+		Binary:   "/tmp/fake-llama-server",
+		Endpoint: server.URL,
+		PID:      999999,
+	}
+	if err := managedassets.SaveRuntimeState(state); err != nil {
+		t.Fatalf("SaveRuntimeState failed: %v", err)
+	}
+
+	e := &LlamaCPPEmbedder{
+		runtimePath: "/tmp/fake-llama-server",
+		endpoint:    server.URL,
+		client:      server.Client(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := e.ensureRunning(ctx); err != nil {
+		t.Fatalf("ensureRunning failed: %v", err)
 	}
 }
 

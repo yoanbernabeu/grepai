@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/yoanbernabeu/grepai/internal/managedassets"
@@ -225,11 +224,15 @@ func (e *LlamaCPPEmbedder) Ping(ctx context.Context) error {
 }
 
 func (e *LlamaCPPEmbedder) ensureRunning(ctx context.Context) error {
+	if ok := waitForHealth(ctx, e.client, e.endpoint, 250*time.Millisecond); ok {
+		return nil
+	}
+
 	state, err := managedassets.LoadRuntimeState()
 	if err != nil {
 		return err
 	}
-	if state != nil && state.Binary == e.runtimePath && state.Endpoint == e.endpoint && processRunning(state.PID) {
+	if state != nil && state.Binary == e.runtimePath && state.Endpoint == e.endpoint {
 		if ok := waitForHealth(ctx, e.client, e.endpoint, 250*time.Millisecond); ok {
 			return nil
 		}
@@ -278,8 +281,9 @@ func (e *LlamaCPPEmbedder) startSidecar(ctx context.Context) error {
 		logFile.Close()
 		return fmt.Errorf("failed to start managed llama.cpp runtime: %w", err)
 	}
+	done := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
+		done <- cmd.Wait()
 		_ = logFile.Close()
 	}()
 	state := managedassets.RuntimeState{
@@ -296,8 +300,9 @@ func (e *LlamaCPPEmbedder) startSidecar(ctx context.Context) error {
 	}
 	healthCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if !waitForHealth(healthCtx, e.client, e.endpoint, 500*time.Millisecond) {
-		return fmt.Errorf("managed llama.cpp runtime did not become ready at %s", e.endpoint)
+	if err := waitForRuntimeReady(healthCtx, e.client, e.endpoint, done); err != nil {
+		_ = managedassets.ClearRuntimeState()
+		return err
 	}
 	return nil
 }
@@ -322,14 +327,41 @@ func waitForHealth(ctx context.Context, client *http.Client, endpoint string, in
 	}
 }
 
-func processRunning(pid int) bool {
-	if pid <= 0 {
-		return false
+func waitForRuntimeReady(ctx context.Context, client *http.Client, endpoint string, done <-chan error) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if checkHealth(client, endpoint) {
+			return nil
+		}
+		select {
+		case err := <-done:
+			if checkHealth(client, endpoint) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("managed llama.cpp runtime exited before becoming ready: %w", err)
+			}
+			return fmt.Errorf("managed llama.cpp runtime exited before becoming ready")
+		case <-ctx.Done():
+			if checkHealth(client, endpoint) {
+				return nil
+			}
+			return fmt.Errorf("managed llama.cpp runtime did not become ready at %s", endpoint)
+		case <-ticker.C:
+		}
 	}
-	p, err := os.FindProcess(pid)
+}
+
+func checkHealth(client *http.Client, endpoint string) bool {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(endpoint, "/")+"/health", nil)
 	if err != nil {
 		return false
 	}
-	err = p.Signal(syscall.Signal(0))
-	return err == nil
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
