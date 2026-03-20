@@ -44,6 +44,10 @@ var (
 	watchForegroundRunner      = runWatchForeground
 	watchForegroundUIRunner    = runWatchForegroundUI
 	watchStopDaemonRunner      = stopWatchDaemon
+	watchSpawnBackgroundRunner = daemon.SpawnBackground
+	watchSpawnWorktreeRunner   = daemon.SpawnWorktreeBackground
+	watchReadyChecker          = daemon.IsReady
+	watchWorktreeReadyChecker  = daemon.IsWorktreeReady
 )
 
 var watchCmd = &cobra.Command{
@@ -369,9 +373,9 @@ func startBackgroundWatch(logDir, worktreeID string) error {
 	var childPID int
 	var exitCh <-chan struct{}
 	if worktreeID != "" {
-		childPID, exitCh, err = daemon.SpawnWorktreeBackground(logDir, worktreeID, args)
+		childPID, exitCh, err = watchSpawnWorktreeRunner(logDir, worktreeID, args)
 	} else {
-		childPID, exitCh, err = daemon.SpawnBackground(logDir, args)
+		childPID, exitCh, err = watchSpawnBackgroundRunner(logDir, args)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to start background process: %w", err)
@@ -387,9 +391,9 @@ func startBackgroundWatch(logDir, worktreeID string) error {
 		// Check if ready file exists (initialization succeeded)
 		var isReady bool
 		if worktreeID != "" {
-			isReady = daemon.IsWorktreeReady(logDir, worktreeID)
+			isReady = watchWorktreeReadyChecker(logDir, worktreeID)
 		} else {
-			isReady = daemon.IsReady(logDir)
+			isReady = watchReadyChecker(logDir)
 		}
 
 		if isReady {

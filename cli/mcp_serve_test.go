@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/mcp"
 )
 
 func TestResolveMCPWorkspace(t *testing.T) {
@@ -169,4 +173,122 @@ func TestResolveMCPWorkspace(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestRunMCPServe_RefreshesWorkspaceProjectBeforeServe(t *testing.T) {
+	oldResolve := mcpResolveTargetRunner
+	oldRefresh := mcpRefreshStartupRunner
+	oldNewServer := mcpNewServerRunner
+	oldNewServerWithWorkspace := mcpNewServerWithWorkspaceRunner
+	oldServe := mcpServeRunner
+	defer func() {
+		mcpResolveTargetRunner = oldResolve
+		mcpRefreshStartupRunner = oldRefresh
+		mcpNewServerRunner = oldNewServer
+		mcpNewServerWithWorkspaceRunner = oldNewServerWithWorkspace
+		mcpServeRunner = oldServe
+	}()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("workspace", "", "")
+	if err := cmd.Flags().Set("workspace", "test"); err != nil {
+		t.Fatalf("failed to set workspace flag: %v", err)
+	}
+
+	var resolvedExplicitPath, resolvedWorkspace string
+	mcpResolveTargetRunner = func(explicitPath, workspaceFlag string) (string, string, error) {
+		resolvedExplicitPath = explicitPath
+		resolvedWorkspace = workspaceFlag
+		return "/tmp/project", "test", nil
+	}
+
+	var refreshProjectRoot, refreshWorkspace string
+	mcpRefreshStartupRunner = func(_ context.Context, projectRoot, workspaceName string) error {
+		refreshProjectRoot = projectRoot
+		refreshWorkspace = workspaceName
+		return nil
+	}
+
+	var serverProjectRoot, serverWorkspace string
+	mcpNewServerWithWorkspaceRunner = func(projectRoot, workspaceName string) (*mcp.Server, error) {
+		serverProjectRoot = projectRoot
+		serverWorkspace = workspaceName
+		return &mcp.Server{}, nil
+	}
+	mcpNewServerRunner = func(projectRoot string) (*mcp.Server, error) {
+		t.Fatalf("unexpected non-workspace server creation for projectRoot %q", projectRoot)
+		return nil, nil
+	}
+
+	served := false
+	mcpServeRunner = func(_ *mcp.Server) error {
+		served = true
+		return nil
+	}
+
+	if err := runMCPServe(cmd, nil); err != nil {
+		t.Fatalf("runMCPServe failed: %v", err)
+	}
+	if resolvedExplicitPath != "" || resolvedWorkspace != "test" {
+		t.Fatalf("resolve args = (%q, %q), want (\"\", \"test\")", resolvedExplicitPath, resolvedWorkspace)
+	}
+	if refreshProjectRoot != "/tmp/project" || refreshWorkspace != "test" {
+		t.Fatalf("refresh args = (%q, %q), want (%q, %q)", refreshProjectRoot, refreshWorkspace, "/tmp/project", "test")
+	}
+	if serverProjectRoot != "/tmp/project" || serverWorkspace != "test" {
+		t.Fatalf("workspace server args = (%q, %q), want (%q, %q)", serverProjectRoot, serverWorkspace, "/tmp/project", "test")
+	}
+	if !served {
+		t.Fatal("expected MCP server to be served")
+	}
+}
+
+func TestRunMCPServe_ContinuesWhenRefreshFails(t *testing.T) {
+	oldResolve := mcpResolveTargetRunner
+	oldRefresh := mcpRefreshStartupRunner
+	oldNewServer := mcpNewServerRunner
+	oldNewServerWithWorkspace := mcpNewServerWithWorkspaceRunner
+	oldServe := mcpServeRunner
+	defer func() {
+		mcpResolveTargetRunner = oldResolve
+		mcpRefreshStartupRunner = oldRefresh
+		mcpNewServerRunner = oldNewServer
+		mcpNewServerWithWorkspaceRunner = oldNewServerWithWorkspace
+		mcpServeRunner = oldServe
+	}()
+
+	cmd := &cobra.Command{}
+
+	mcpResolveTargetRunner = func(explicitPath, workspaceFlag string) (string, string, error) {
+		return "/tmp/project", "", nil
+	}
+	mcpRefreshStartupRunner = func(_ context.Context, projectRoot, workspaceName string) error {
+		if projectRoot != "/tmp/project" || workspaceName != "" {
+			t.Fatalf("refresh args = (%q, %q), want (%q, %q)", projectRoot, workspaceName, "/tmp/project", "")
+		}
+		return errors.New("refresh failed")
+	}
+	mcpNewServerRunner = func(projectRoot string) (*mcp.Server, error) {
+		if projectRoot != "/tmp/project" {
+			t.Fatalf("project server root = %q, want %q", projectRoot, "/tmp/project")
+		}
+		return &mcp.Server{}, nil
+	}
+	mcpNewServerWithWorkspaceRunner = func(projectRoot, workspaceName string) (*mcp.Server, error) {
+		t.Fatalf("unexpected workspace server creation for (%q, %q)", projectRoot, workspaceName)
+		return nil, nil
+	}
+
+	served := false
+	mcpServeRunner = func(_ *mcp.Server) error {
+		served = true
+		return nil
+	}
+
+	if err := runMCPServe(cmd, nil); err != nil {
+		t.Fatalf("runMCPServe failed: %v", err)
+	}
+	if !served {
+		t.Fatal("expected MCP server to be served even when refresh fails")
+	}
 }

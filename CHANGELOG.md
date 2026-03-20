@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP workspace startup refresh**: `grepai mcp-serve --workspace <name>` now keeps full-workspace indexing explicit while refreshing only the local project context when started inside a workspace project.
 - **Linked worktree auto-init detection**: linked worktree watch discovery now treats missing `.grepai/config.yaml` as uninitialized, even when a partial `.grepai/` directory already exists.
-- **Qdrant file counts**: `status` and MCP index status now report file counts correctly for Qdrant-backed indexes instead of always showing `0`.
+- **Qdrant file counts**: `status` and MCP index status now report file counts correctly for Qdrant-backed indexes, including collections that span multiple scroll pages, instead of always showing `0` or truncating counts to one page.
 
 ### Documentation
 

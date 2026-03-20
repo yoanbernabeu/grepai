@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,70 @@ func mustCreateValue(t *testing.T, value interface{}) *qdrant.Value {
 		t.Fatalf("failed to create qdrant value: %v", err)
 	}
 	return val
+}
+
+type mockQdrantClient struct {
+	collectionInfo       *qdrant.CollectionInfo
+	getCollectionInfoErr error
+	scrollPages          [][]*qdrant.RetrievedPoint
+	scrollOffsets        []*qdrant.PointId
+	scrollAndOffsetErr   error
+	scrollRequests       []*qdrant.ScrollPoints
+}
+
+func (m *mockQdrantClient) CollectionExists(ctx context.Context, collectionName string) (bool, error) {
+	panic("unexpected CollectionExists call")
+}
+
+func (m *mockQdrantClient) CreateCollection(ctx context.Context, request *qdrant.CreateCollection) error {
+	panic("unexpected CreateCollection call")
+}
+
+func (m *mockQdrantClient) CreateFieldIndex(ctx context.Context, request *qdrant.CreateFieldIndexCollection) (*qdrant.UpdateResult, error) {
+	panic("unexpected CreateFieldIndex call")
+}
+
+func (m *mockQdrantClient) Upsert(ctx context.Context, request *qdrant.UpsertPoints) (*qdrant.UpdateResult, error) {
+	panic("unexpected Upsert call")
+}
+
+func (m *mockQdrantClient) Delete(ctx context.Context, request *qdrant.DeletePoints) (*qdrant.UpdateResult, error) {
+	panic("unexpected Delete call")
+}
+
+func (m *mockQdrantClient) Query(ctx context.Context, request *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error) {
+	panic("unexpected Query call")
+}
+
+func (m *mockQdrantClient) Scroll(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error) {
+	panic("unexpected Scroll call")
+}
+
+func (m *mockQdrantClient) ScrollAndOffset(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, *qdrant.PointId, error) {
+	m.scrollRequests = append(m.scrollRequests, cloneScrollPointsRequest(request))
+
+	if m.scrollAndOffsetErr != nil {
+		return nil, nil, m.scrollAndOffsetErr
+	}
+
+	pageIndex := len(m.scrollRequests) - 1
+	if pageIndex >= len(m.scrollPages) {
+		return nil, nil, nil
+	}
+
+	var nextOffset *qdrant.PointId
+	if pageIndex < len(m.scrollOffsets) {
+		nextOffset = m.scrollOffsets[pageIndex]
+	}
+
+	return m.scrollPages[pageIndex], nextOffset, nil
+}
+
+func (m *mockQdrantClient) GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error) {
+	if m.getCollectionInfoErr != nil {
+		return nil, m.getCollectionInfoErr
+	}
+	return m.collectionInfo, nil
 }
 
 // TestSanitizeCollectionName tests the exported SanitizeCollectionName function
@@ -489,5 +554,111 @@ func TestFileStatsFromRetrievedPoints(t *testing.T) {
 	}
 	if counts["b.go"] != 1 {
 		t.Fatalf("b.go chunk count = %d, want 1", counts["b.go"])
+	}
+}
+
+func TestQdrantStore_GetStats_PaginatesScrollResults(t *testing.T) {
+	pointsCount := uint64(3)
+	client := &mockQdrantClient{
+		collectionInfo: &qdrant.CollectionInfo{PointsCount: &pointsCount},
+		scrollPages: [][]*qdrant.RetrievedPoint{
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+			},
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "b.go")}},
+			},
+		},
+		scrollOffsets: []*qdrant.PointId{
+			qdrant.NewID("next-page"),
+			nil,
+		},
+	}
+	store := &QdrantStore{
+		client:         client,
+		collectionName: "test-collection",
+	}
+
+	stats, err := store.GetStats(context.Background())
+	if err != nil {
+		t.Fatalf("GetStats failed: %v", err)
+	}
+
+	if stats.TotalChunks != 3 {
+		t.Fatalf("TotalChunks = %d, want 3", stats.TotalChunks)
+	}
+	if stats.TotalFiles != 2 {
+		t.Fatalf("TotalFiles = %d, want 2", stats.TotalFiles)
+	}
+	if len(client.scrollRequests) != 2 {
+		t.Fatalf("scroll request count = %d, want 2", len(client.scrollRequests))
+	}
+	if client.scrollRequests[0].Offset != nil {
+		t.Fatal("expected first scroll request to have no offset")
+	}
+	if client.scrollRequests[1].Offset == nil {
+		t.Fatal("expected second scroll request to carry pagination offset")
+	}
+}
+
+func TestQdrantStore_ListFilesWithStats_PaginatesScrollResults(t *testing.T) {
+	client := &mockQdrantClient{
+		scrollPages: [][]*qdrant.RetrievedPoint{
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+			},
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "b.go")}},
+			},
+		},
+		scrollOffsets: []*qdrant.PointId{
+			qdrant.NewID("next-page"),
+			nil,
+		},
+	}
+	store := &QdrantStore{
+		client:         client,
+		collectionName: "test-collection",
+	}
+
+	files, err := store.ListFilesWithStats(context.Background())
+	if err != nil {
+		t.Fatalf("ListFilesWithStats failed: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf("file count = %d, want 2", len(files))
+	}
+
+	counts := map[string]int{}
+	for _, file := range files {
+		counts[file.Path] = file.ChunkCount
+	}
+	if counts["a.go"] != 2 {
+		t.Fatalf("a.go chunk count = %d, want 2", counts["a.go"])
+	}
+	if counts["b.go"] != 1 {
+		t.Fatalf("b.go chunk count = %d, want 1", counts["b.go"])
+	}
+	if len(client.scrollRequests) != 2 {
+		t.Fatalf("scroll request count = %d, want 2", len(client.scrollRequests))
+	}
+}
+
+func TestQdrantStore_GetStats_PropagatesScrollError(t *testing.T) {
+	pointsCount := uint64(1)
+	store := &QdrantStore{
+		client: &mockQdrantClient{
+			collectionInfo:     &qdrant.CollectionInfo{PointsCount: &pointsCount},
+			scrollAndOffsetErr: errors.New("scroll failed"),
+		},
+		collectionName: "test-collection",
+	}
+
+	_, err := store.GetStats(context.Background())
+	if err == nil || err.Error() != "failed to list files for stats: scroll failed" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

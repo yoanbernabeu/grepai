@@ -6,33 +6,41 @@ import (
 	"github.com/yoanbernabeu/grepai/config"
 )
 
+var (
+	mcpFindWorkspaceProjectForPathRunner = config.FindWorkspaceProjectForPath
+	mcpValidateWorkspaceBackendRunner    = config.ValidateWorkspaceBackend
+	mcpInitializeEmbedderRunner          = initializeEmbedder
+	mcpInitializeWorkspaceStoreRunner    = initializeWorkspaceStore
+	mcpStartupRefreshRunner              = runWorkspaceProjectStartupRefresh
+)
+
 func refreshMCPStartup(ctx context.Context, projectRoot, workspaceName string) error {
 	if workspaceName == "" || projectRoot == "" {
 		return nil
 	}
 
-	resolvedWorkspaceName, ws, project, err := config.FindWorkspaceProjectForPath(projectRoot)
+	resolvedWorkspaceName, ws, project, err := mcpFindWorkspaceProjectForPathRunner(projectRoot)
 	if err != nil {
 		return err
 	}
 	if ws == nil || project == nil || resolvedWorkspaceName != workspaceName {
 		return nil
 	}
-	if err := config.ValidateWorkspaceBackend(ws); err != nil {
+	if err := mcpValidateWorkspaceBackendRunner(ws); err != nil {
 		return err
 	}
 
-	emb, err := initializeEmbedder(ctx, &config.Config{Embedder: ws.Embedder})
+	emb, err := mcpInitializeEmbedderRunner(ctx, &config.Config{Embedder: ws.Embedder})
 	if err != nil {
 		return err
 	}
 	defer emb.Close()
 
-	sharedStore, err := initializeWorkspaceStore(ctx, ws)
+	sharedStore, err := mcpInitializeWorkspaceStoreRunner(ctx, ws)
 	if err != nil {
 		return err
 	}
 	defer sharedStore.Close()
 
-	return runWorkspaceProjectStartupRefresh(ctx, ws, *project, emb, sharedStore, true)
+	return mcpStartupRefreshRunner(ctx, ws, *project, emb, sharedStore, true)
 }
