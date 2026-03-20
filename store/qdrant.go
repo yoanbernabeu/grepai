@@ -389,8 +389,17 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 		return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
 	}
 
+	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		Limit:          qdrant.PtrOf(uint32(10000)),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files for stats: %w", err)
+	}
+
 	stats := &IndexStats{
-		TotalFiles:  0,
+		TotalFiles:  countFilesFromRetrievedPoints(scrollResult),
 		TotalChunks: int(pointsCount),
 		IndexSize:   0,
 		LastUpdated: time.Now(),
@@ -409,8 +418,16 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 
+	return fileStatsFromRetrievedPoints(scrollResult), nil
+}
+
+func countFilesFromRetrievedPoints(points []*qdrant.RetrievedPoint) int {
+	return len(fileStatsFromRetrievedPoints(points))
+}
+
+func fileStatsFromRetrievedPoints(points []*qdrant.RetrievedPoint) []FileStats {
 	fileStats := make(map[string]*FileStats)
-	for _, point := range scrollResult {
+	for _, point := range points {
 		filePath := ""
 		if val, ok := point.Payload["file_path"]; ok {
 			filePath = val.GetStringValue()
@@ -434,8 +451,7 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 	for _, stat := range fileStats {
 		result = append(result, *stat)
 	}
-
-	return result, nil
+	return result
 }
 
 func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]Chunk, error) {

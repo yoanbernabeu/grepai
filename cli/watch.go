@@ -29,12 +29,13 @@ import (
 )
 
 var (
-	watchBackground bool
-	watchLogDir     string
-	watchStatus     bool
-	watchStop       bool
-	watchWorkspace  string
-	watchNoUI       bool
+	watchBackground   bool
+	watchLogDir       string
+	watchStatus       bool
+	watchStop         bool
+	watchWorkspace    string
+	watchAllWorktrees bool
+	watchNoUI         bool
 )
 
 var (
@@ -64,6 +65,9 @@ Background mode:
   grepai watch --status                  Check if background watcher is running
   grepai watch --stop                    Stop the background watcher
 
+Linked worktrees:
+  grepai watch --all-worktrees           Also watch linked git worktrees from the main worktree
+
 Default log directories:
   Linux:   ~/.local/state/grepai/logs/grepai-watch.log (or $XDG_STATE_HOME)
   macOS:   ~/Library/Logs/grepai/grepai-watch.log
@@ -83,6 +87,7 @@ func init() {
 	watchCmd.Flags().BoolVar(&watchStatus, "status", false, "Show background watcher status")
 	watchCmd.Flags().BoolVar(&watchStop, "stop", false, "Stop the background watcher")
 	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
+	watchCmd.Flags().BoolVar(&watchAllWorktrees, "all-worktrees", false, "Also watch linked git worktrees from the main worktree")
 	watchCmd.Flags().BoolVar(&watchNoUI, "no-ui", false, "Disable interactive UI in foreground mode")
 }
 
@@ -100,6 +105,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	}
 	if activeFlags > 1 {
 		return fmt.Errorf("flags --background, --status, and --stop are mutually exclusive")
+	}
+	if watchWorkspace != "" && watchAllWorktrees {
+		return fmt.Errorf("--all-worktrees cannot be used with --workspace")
 	}
 
 	// Determine log directory
@@ -352,6 +360,9 @@ func startBackgroundWatch(logDir, worktreeID string) error {
 	args := []string{"watch"}
 	if watchLogDir != "" {
 		args = append(args, "--log-dir", watchLogDir)
+	}
+	if watchAllWorktrees {
+		args = append(args, "--all-worktrees")
 	}
 
 	// Spawn background process
@@ -892,8 +903,7 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 			seen[wtPathCanonical] = true
 			// Auto-init .grepai/ if needed (FindProjectRoot does this when called
 			// from within the worktree, but we're not in it, so init manually)
-			localGrepai := filepath.Join(wtPathCanonical, ".grepai")
-			if _, statErr := os.Stat(localGrepai); os.IsNotExist(statErr) {
+			if !config.Exists(wtPathCanonical) {
 				// Auto-init from main
 				if initErr := config.AutoInitWorktree(wtPathCanonical, projectRootCanonical); initErr != nil {
 					log.Printf("Warning: failed to auto-init worktree %s: %v", wtPathCanonical, initErr)
@@ -905,6 +915,13 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 		}
 	}
 	return worktrees
+}
+
+func linkedWorktreesForCurrentWatch(projectRoot string) []string {
+	if !watchAllWorktrees {
+		return nil
+	}
+	return discoverWorktreesForWatch(projectRoot)
 }
 
 func canonicalPath(path string) string {
@@ -1849,17 +1866,17 @@ func runWatchForeground() error {
 	}
 	defer emb.Close()
 
-	// Discover linked worktrees (only from main worktree) for initial ready semantics.
-	linkedWorktrees := discoverWorktreesForWatch(projectRoot)
+	// Discover linked worktrees only when explicitly requested.
+	linkedWorktrees := linkedWorktreesForCurrentWatch(projectRoot)
 	initialTotalProjects := 1 + len(linkedWorktrees)
 	if len(linkedWorktrees) > 0 {
 		if !isBackgroundChild {
-			fmt.Printf("Detected %d linked worktree(s), watching all:\n", len(linkedWorktrees))
+			fmt.Printf("Detected %d linked worktree(s), watching with --all-worktrees:\n", len(linkedWorktrees))
 			for _, wt := range linkedWorktrees {
 				fmt.Printf("  - %s\n", wt)
 			}
 		} else {
-			log.Printf("Detected %d linked worktree(s), watching all", len(linkedWorktrees))
+			log.Printf("Detected %d linked worktree(s), watching with --all-worktrees", len(linkedWorktrees))
 			for _, wt := range linkedWorktrees {
 				log.Printf("  - %s", wt)
 			}
@@ -2578,6 +2595,7 @@ type workspaceProjectRuntime struct {
 	project         config.ProjectEntry
 	cfg             *config.Config
 	idx             *indexer.Indexer
+	ignoreMatcher   *indexer.IgnoreMatcher
 	scanner         *indexer.Scanner
 	extractor       *trace.RegexExtractor
 	symbolStore     *trace.GOBSymbolStore
@@ -2591,75 +2609,37 @@ type workspaceProjectRuntime struct {
 }
 
 func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, project config.ProjectEntry, emb embedder.Embedder, sharedStore store.VectorStore, isBackgroundChild bool) (*workspaceProjectRuntime, *watcher.Watcher, error) {
-	projectCfg := config.DefaultConfig()
-	if config.Exists(project.Path) {
-		loadedCfg, err := config.Load(project.Path)
-		if err != nil {
-			log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
-		} else {
-			projectCfg = loadedCfg
-		}
-	}
-
-	ignoreMatcher, err := indexer.NewIgnoreMatcher(project.Path, projectCfg.Ignore, projectCfg.ExternalGitignore)
+	runtime, err := newWorkspaceProjectRuntime(ctx, ws, project, emb, sharedStore)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize ignore matcher: %w", err)
-	}
-
-	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
-	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
-	vectorStore := &projectPrefixStore{
-		store:         sharedStore,
-		workspaceName: ws.Name,
-		projectName:   project.Name,
-		projectPath:   project.Path,
-	}
-	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime)
-	extractor := trace.NewRegexExtractor()
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
-	if err := symbolStore.Load(ctx); err != nil {
-		log.Printf("Warning: failed to load symbol index for %s: %v", project.Path, err)
-	}
-
-	tracedLanguages := projectCfg.Trace.EnabledLanguages
-	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
-	}
-
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil)
-	if err != nil {
-		_ = symbolStore.Close()
 		return nil, nil, err
 	}
-	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
-		projectCfg.Watch.LastIndexTime = time.Now()
-		if err := projectCfg.Save(project.Path); err != nil {
-			log.Printf("Warning: failed to save config for %s: %v", project.Name, err)
-		}
+	if err := runWorkspaceProjectInitialScan(ctx, runtime, isBackgroundChild); err != nil {
+		_ = runtime.symbolStore.Close()
+		return nil, nil, err
 	}
 
 	var rpgStore rpg.RPGStore
 	var rpgEncoder *rpg.RPGEncoder
 	var manager *rpgRealtimeManager
-	if projectCfg.RPG.Enabled {
+	if runtime.cfg.RPG.Enabled {
 		rpgStore = rpg.NewGOBRPGStore(config.GetRPGIndexPath(project.Path))
 		if err := rpgStore.Load(ctx); err != nil {
 			log.Printf("Warning: failed to load RPG index for %s: %v", project.Path, err)
 		}
 
 		var featureExtractor rpg.FeatureExtractor
-		switch projectCfg.RPG.FeatureMode {
+		switch runtime.cfg.RPG.FeatureMode {
 		case "llm", "hybrid":
-			if projectCfg.RPG.LLMEndpoint == "" || projectCfg.RPG.LLMModel == "" {
-				log.Printf("Warning: RPG feature_mode=%q but llm_endpoint or llm_model is empty for %s, falling back to local extractor", projectCfg.RPG.FeatureMode, project.Path)
+			if runtime.cfg.RPG.LLMEndpoint == "" || runtime.cfg.RPG.LLMModel == "" {
+				log.Printf("Warning: RPG feature_mode=%q but llm_endpoint or llm_model is empty for %s, falling back to local extractor", runtime.cfg.RPG.FeatureMode, project.Path)
 				featureExtractor = rpg.NewLocalExtractor()
 			} else {
 				featureExtractor = rpg.NewLLMExtractor(rpg.LLMExtractorConfig{
-					Provider: projectCfg.RPG.LLMProvider,
-					Model:    projectCfg.RPG.LLMModel,
-					Endpoint: projectCfg.RPG.LLMEndpoint,
-					APIKey:   projectCfg.RPG.LLMAPIKey,
-					Timeout:  time.Duration(projectCfg.RPG.LLMTimeoutMs) * time.Millisecond,
+					Provider: runtime.cfg.RPG.LLMProvider,
+					Model:    runtime.cfg.RPG.LLMModel,
+					Endpoint: runtime.cfg.RPG.LLMEndpoint,
+					APIKey:   runtime.cfg.RPG.LLMAPIKey,
+					Timeout:  time.Duration(runtime.cfg.RPG.LLMTimeoutMs) * time.Millisecond,
 				})
 			}
 		default:
@@ -2667,27 +2647,27 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		}
 
 		rpgEncoder = rpg.NewRPGEncoder(rpgStore, featureExtractor, project.Path, rpg.RPGEncoderConfig{
-			DriftThreshold:       projectCfg.RPG.DriftThreshold,
-			MaxTraversalDepth:    projectCfg.RPG.MaxTraversalDepth,
-			FeatureGroupStrategy: projectCfg.RPG.FeatureGroupStrategy,
+			DriftThreshold:       runtime.cfg.RPG.DriftThreshold,
+			MaxTraversalDepth:    runtime.cfg.RPG.MaxTraversalDepth,
+			FeatureGroupStrategy: runtime.cfg.RPG.FeatureGroupStrategy,
 		})
-		if err := rpgEncoder.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
+		if err := rpgEncoder.BuildFull(ctx, runtime.symbolStore, runtime.vectorStore, nil); err != nil {
 			log.Printf("Warning: failed to build RPG graph for %s: %v", project.Path, err)
 		}
 		if err := rpgStore.Persist(ctx); err != nil {
 			log.Printf("Warning: failed to persist RPG graph for %s: %v", project.Path, err)
 		}
 
-		manager = newRPGRealtimeManager(projectCfg.Watch.RPGMaxDirtyFilesPerBatch)
-		startRPGRealtimeWorkers(ctx, fmt.Sprintf("workspace:%s/%s", ws.Name, project.Name), symbolStore, rpgEncoder, rpgStore, projectCfg.Watch, manager)
+		manager = newRPGRealtimeManager(runtime.cfg.Watch.RPGMaxDirtyFilesPerBatch)
+		startRPGRealtimeWorkers(ctx, fmt.Sprintf("workspace:%s/%s", ws.Name, project.Name), runtime.symbolStore, rpgEncoder, rpgStore, runtime.cfg.Watch, manager)
 	}
 
-	w, err := watcher.NewWatcher(project.Path, ignoreMatcher, projectCfg.Watch.DebounceMs)
+	w, err := watcher.NewWatcher(project.Path, runtime.ignoreMatcher, runtime.cfg.Watch.DebounceMs)
 	if err != nil {
 		if rpgStore != nil {
 			_ = rpgStore.Close()
 		}
-		_ = symbolStore.Close()
+		_ = runtime.symbolStore.Close()
 		return nil, nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 	if err := w.Start(ctx); err != nil {
@@ -2695,24 +2675,14 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		if rpgStore != nil {
 			_ = rpgStore.Close()
 		}
-		_ = symbolStore.Close()
+		_ = runtime.symbolStore.Close()
 		return nil, nil, fmt.Errorf("failed to start watcher: %w", err)
 	}
 
-	runtime := &workspaceProjectRuntime{
-		project:         project,
-		cfg:             projectCfg,
-		idx:             idx,
-		scanner:         scanner,
-		extractor:       extractor,
-		symbolStore:     symbolStore,
-		rpgEncoder:      rpgEncoder,
-		rpgStore:        rpgStore,
-		vectorStore:     vectorStore,
-		tracedLanguages: tracedLanguages,
-		manager:         manager,
-		watcher:         w,
-	}
+	runtime.rpgEncoder = rpgEncoder
+	runtime.rpgStore = rpgStore
+	runtime.manager = manager
+	runtime.watcher = w
 	return runtime, w, nil
 }
 

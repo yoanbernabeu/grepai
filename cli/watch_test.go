@@ -447,6 +447,41 @@ func TestRunWatch_MultiWorktreeUsesUIForeground(t *testing.T) {
 	}
 }
 
+func TestRunWatch_AllWorktreesCannotBeCombinedWithWorkspace(t *testing.T) {
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldAllWorktrees := watchAllWorktrees
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchAllWorktrees = oldAllWorktrees
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	watchBackground = false
+	watchStatus = false
+	watchStop = false
+	watchWorkspace = "test-ws"
+	watchAllWorktrees = true
+	watchLogDir = ""
+	watchNoUI = false
+
+	err := runWatch(nil, nil)
+	if err == nil {
+		t.Fatal("expected validation error when combining --workspace and --all-worktrees")
+	}
+	if !strings.Contains(err.Error(), "--all-worktrees cannot be used with --workspace") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLogDirectoryDefaults(t *testing.T) {
 	// Test that default log directory can be determined
 	logDir, err := daemon.GetDefaultLogDir()

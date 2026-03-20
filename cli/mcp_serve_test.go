@@ -30,6 +30,18 @@ func TestResolveMCPWorkspace(t *testing.T) {
 		})
 		config.SaveWorkspaceConfig(cfg)
 
+		if err := os.MkdirAll(filepath.Join(tmpDir, "pipeline", "src"), 0o755); err != nil {
+			t.Fatalf("failed to create pipeline dir: %v", err)
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		defer func() { _ = os.Chdir(wd) }()
+		if err := os.Chdir(filepath.Join(tmpDir, "pipeline", "src")); err != nil {
+			t.Fatalf("failed to chdir into workspace project: %v", err)
+		}
+
 		projectRoot, wsName, err := resolveMCPTarget("", "test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -37,7 +49,9 @@ func TestResolveMCPWorkspace(t *testing.T) {
 		if wsName != "test" {
 			t.Errorf("expected workspace test, got %s", wsName)
 		}
-		_ = projectRoot
+		if projectRoot != filepath.Join(tmpDir, "pipeline") {
+			t.Fatalf("expected projectRoot %q, got %q", filepath.Join(tmpDir, "pipeline"), projectRoot)
+		}
 	})
 
 	t.Run("explicit_workspace_not_found", func(t *testing.T) {

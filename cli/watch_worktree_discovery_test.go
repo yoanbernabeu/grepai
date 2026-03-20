@@ -85,3 +85,46 @@ func TestDiscoverWorktreesForWatch_LinkedWorktreeDoesNotDiscoverSiblings(t *test
 		t.Fatalf("discoverWorktreesForWatch() returned %d worktrees for linked worktree, want 0", len(got))
 	}
 }
+
+func TestDiscoverWorktreesForWatch_ReinitializesWhenConfigMissing(t *testing.T) {
+	mainRepo, worktreePath := setupMainRepoForWorktreeDiscovery(t)
+
+	localGrepai := filepath.Join(worktreePath, ".grepai")
+	if err := os.RemoveAll(localGrepai); err != nil {
+		t.Fatalf("failed to clean worktree .grepai: %v", err)
+	}
+	if err := os.MkdirAll(localGrepai, 0755); err != nil {
+		t.Fatalf("failed to create partial .grepai: %v", err)
+	}
+
+	got := discoverWorktreesForWatch(mainRepo)
+	if len(got) != 1 {
+		t.Fatalf("discoverWorktreesForWatch() returned %d worktrees, want 1", len(got))
+	}
+
+	localConfig := filepath.Join(worktreePath, ".grepai", "config.yaml")
+	if _, err := os.Stat(localConfig); err != nil {
+		t.Fatalf("expected config.yaml to be restored, got: %v", err)
+	}
+}
+
+func TestLinkedWorktreesForCurrentWatch_RequiresOptIn(t *testing.T) {
+	mainRepo, worktreePath := setupMainRepoForWorktreeDiscovery(t)
+
+	oldAllWorktrees := watchAllWorktrees
+	defer func() { watchAllWorktrees = oldAllWorktrees }()
+
+	watchAllWorktrees = false
+	if got := linkedWorktreesForCurrentWatch(mainRepo); len(got) != 0 {
+		t.Fatalf("linkedWorktreesForCurrentWatch() returned %d worktrees without opt-in, want 0", len(got))
+	}
+
+	watchAllWorktrees = true
+	got := linkedWorktreesForCurrentWatch(mainRepo)
+	if len(got) != 1 {
+		t.Fatalf("linkedWorktreesForCurrentWatch() returned %d worktrees with opt-in, want 1", len(got))
+	}
+	if canonicalPath(got[0]) != canonicalPath(worktreePath) {
+		t.Fatalf("linkedWorktreesForCurrentWatch()[0]=%q, want %q", got[0], worktreePath)
+	}
+}

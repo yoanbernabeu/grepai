@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -84,10 +86,11 @@ func resolveMCPTarget(explicitPath, workspaceName string) (string, string, error
 			return "", "", fmt.Errorf("workspace %q not found", workspaceName)
 		}
 
-		// Check if cwd has local config (optional, for trace tools)
 		projectRoot := ""
-		if pr, err := config.FindProjectRoot(); err == nil {
-			projectRoot = pr
+		if cwd, err := os.Getwd(); err == nil {
+			if resolvedName, _, project, projectErr := cfg.FindWorkspaceProjectForPath(cwd); projectErr == nil && project != nil && resolvedName == workspaceName {
+				projectRoot = project.Path
+			}
 		}
 
 		return projectRoot, workspaceName, nil
@@ -155,6 +158,9 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 	projectRoot, wsName, err := resolveMCPTarget(explicitPath, workspaceFlag)
 	if err != nil {
 		return err
+	}
+	if err := refreshMCPStartup(context.Background(), projectRoot, wsName); err != nil {
+		log.Printf("Warning: failed to refresh local project context for MCP startup: %v", err)
 	}
 
 	var srv *mcp.Server

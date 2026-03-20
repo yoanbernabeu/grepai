@@ -447,3 +447,47 @@ func TestQdrantStore_ConfigurationVariants(t *testing.T) {
 		})
 	}
 }
+
+func TestFileStatsFromRetrievedPoints(t *testing.T) {
+	points := []*qdrant.RetrievedPoint{
+		{
+			Payload: map[string]*qdrant.Value{
+				"file_path": mustCreateValue(t, "a.go"),
+			},
+		},
+		{
+			Payload: map[string]*qdrant.Value{
+				"file_path": mustCreateValue(t, "a.go"),
+			},
+		},
+		{
+			Payload: map[string]*qdrant.Value{
+				"file_path": mustCreateValue(t, "b.go"),
+			},
+		},
+		{
+			Payload: map[string]*qdrant.Value{
+				"other": mustCreateValue(t, "ignored"),
+			},
+		},
+	}
+
+	stats := fileStatsFromRetrievedPoints(points)
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(stats))
+	}
+	if countFilesFromRetrievedPoints(points) != 2 {
+		t.Fatalf("countFilesFromRetrievedPoints() = %d, want 2", countFilesFromRetrievedPoints(points))
+	}
+
+	counts := map[string]int{}
+	for _, stat := range stats {
+		counts[stat.Path] = stat.ChunkCount
+	}
+	if counts["a.go"] != 2 {
+		t.Fatalf("a.go chunk count = %d, want 2", counts["a.go"])
+	}
+	if counts["b.go"] != 1 {
+		t.Fatalf("b.go chunk count = %d, want 1", counts["b.go"])
+	}
+}

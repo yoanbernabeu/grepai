@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Explicit linked-worktree watch opt-in**: `grepai watch --all-worktrees` now enables linked worktree fanout only when requested, keeping default watch sessions scoped to the current worktree.
+
+### Fixed
+
+- **MCP workspace startup refresh**: `grepai mcp-serve --workspace <name>` now keeps full-workspace indexing explicit while refreshing only the local project context when started inside a workspace project.
+- **Linked worktree auto-init detection**: linked worktree watch discovery now treats missing `.grepai/config.yaml` as uninitialized, even when a partial `.grepai/` directory already exists.
+- **Qdrant file counts**: `status` and MCP index status now report file counts correctly for Qdrant-backed indexes instead of always showing `0`.
+
+### Documentation
+
+- Update git worktree and workspace/MCP docs to describe the new watch opt-in and MCP startup behavior.
+
 ## [0.35.0] - 2026-03-16
 
 ### Added

@@ -496,6 +496,94 @@ func TestFindWorkspaceForPath(t *testing.T) {
 	})
 }
 
+func TestFindWorkspaceProjectForPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "grepai-test-find-project")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cleanup := setTestHomeDir(t, tmpDir)
+	defer cleanup()
+
+	projectA := filepath.Join(tmpDir, "projects", "projectA")
+	nestedProject := filepath.Join(projectA, "nested")
+	deepPath := filepath.Join(nestedProject, "src", "pkg")
+	projectB := filepath.Join(tmpDir, "projects", "projectB")
+	if err := os.MkdirAll(deepPath, 0755); err != nil {
+		t.Fatalf("failed to create deep path: %v", err)
+	}
+	if err := os.MkdirAll(projectB, 0755); err != nil {
+		t.Fatalf("failed to create projectB: %v", err)
+	}
+
+	cfg := DefaultWorkspaceConfig()
+	cfg.AddWorkspace(Workspace{
+		Name:  "ws1",
+		Store: StoreConfig{Backend: "qdrant"},
+		Projects: []ProjectEntry{
+			{Name: "projectA", Path: projectA},
+			{Name: "nested", Path: nestedProject},
+		},
+	})
+	cfg.AddWorkspace(Workspace{
+		Name:  "ws2",
+		Store: StoreConfig{Backend: "postgres"},
+		Projects: []ProjectEntry{
+			{Name: "projectB", Path: projectB},
+		},
+	})
+	if err := SaveWorkspaceConfig(cfg); err != nil {
+		t.Fatalf("failed to save workspace config: %v", err)
+	}
+
+	t.Run("deepest_match_wins", func(t *testing.T) {
+		name, ws, project, err := FindWorkspaceProjectForPath(deepPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws == nil || project == nil {
+			t.Fatal("expected workspace project match")
+		}
+		if name != "ws1" {
+			t.Fatalf("workspace = %q, want ws1", name)
+		}
+		if project.Name != "nested" {
+			t.Fatalf("project = %q, want nested", project.Name)
+		}
+	})
+
+	t.Run("exact_project_match", func(t *testing.T) {
+		name, ws, project, err := FindWorkspaceProjectForPath(projectB)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ws == nil || project == nil {
+			t.Fatal("expected workspace project match")
+		}
+		if name != "ws2" {
+			t.Fatalf("workspace = %q, want ws2", name)
+		}
+		if project.Name != "projectB" {
+			t.Fatalf("project = %q, want projectB", project.Name)
+		}
+	})
+
+	t.Run("no_match", func(t *testing.T) {
+		unrelated := filepath.Join(tmpDir, "other")
+		if err := os.MkdirAll(unrelated, 0755); err != nil {
+			t.Fatalf("failed to create unrelated path: %v", err)
+		}
+		name, ws, project, err := FindWorkspaceProjectForPath(unrelated)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if name != "" || ws != nil || project != nil {
+			t.Fatalf("expected no match, got (%q, %v, %v)", name, ws, project)
+		}
+	})
+}
+
 func TestGetWorkspaceConfigPath(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "grepai-test")
 	if err != nil {

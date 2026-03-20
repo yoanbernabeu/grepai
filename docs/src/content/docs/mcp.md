@@ -144,6 +144,14 @@ When started with the `--workspace` flag, the MCP server automatically injects t
 grepai mcp-serve --workspace my-fullstack
 ```
 
+Full workspace indexing is still an explicit step:
+
+```bash
+grepai watch --workspace my-fullstack
+```
+
+`grepai mcp-serve --workspace ...` serves from that existing workspace index. When it starts inside a specific workspace project, it also performs a local changed-file refresh for that project only before serving. It does not trigger a full workspace re-index on startup.
+
 **How auto-detection works:**
 
 Without `--workspace`, the MCP server resolves its target in this order:
@@ -152,7 +160,7 @@ Without `--workspace`, the MCP server resolves its target in this order:
 2. Walk upward from current directory looking for `.grepai/config.yaml`
 3. Auto-detect workspace by checking if current directory is within a workspace project
 
-With `--workspace`, the server skips auto-detection and uses the specified workspace directly. The `grepai_search` tool will search across all workspace projects without the agent needing to pass `workspace` or `projects` parameters.
+With `--workspace`, the server skips auto-detection and uses the specified workspace directly. The `grepai_search` tool will search across all workspace projects without the agent needing to pass `workspace` or `projects` parameters. If the current directory is inside one of that workspace's projects, grepai also uses that project as the local startup-refresh context.
 
 If no local `.grepai/` project is found but global workspaces are configured, `grepai mcp-serve` can still start without `--workspace`. In that mode, tools can receive `workspace` dynamically in each request.
 
