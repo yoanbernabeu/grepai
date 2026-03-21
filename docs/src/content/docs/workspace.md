@@ -222,6 +222,14 @@ claude mcp add grepai -- grepai mcp-serve --workspace my-fullstack
 
 When `--workspace` is set, the MCP server **auto-injects** the workspace into every search request. AI agents can call `grepai_search` with just a query — no need to pass `workspace` or `projects` parameters. Cross-project search works by default.
 
+Workspace indexing itself remains explicit:
+
+```bash
+grepai watch --workspace my-fullstack
+```
+
+`grepai mcp-serve --workspace my-fullstack` serves from that existing shared index. When started inside one of the workspace's projects, it performs a local changed-file refresh for that project only before serving, instead of re-indexing the entire workspace on startup.
+
 ### Manual Workspace Parameters
 
 Without the `--workspace` flag, agents can still search workspaces by passing parameters explicitly:

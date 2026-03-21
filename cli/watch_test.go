@@ -205,6 +205,80 @@ func TestStartBackgroundWatch_WorktreeAlreadyRunning(t *testing.T) {
 	}
 }
 
+func TestStartBackgroundWatch_PropagatesAllWorktreesFlag(t *testing.T) {
+	logDir := t.TempDir()
+
+	oldLogDir := watchLogDir
+	oldAllWorktrees := watchAllWorktrees
+	oldSpawnBackground := watchSpawnBackgroundRunner
+	oldReady := watchReadyChecker
+	defer func() {
+		watchLogDir = oldLogDir
+		watchAllWorktrees = oldAllWorktrees
+		watchSpawnBackgroundRunner = oldSpawnBackground
+		watchReadyChecker = oldReady
+	}()
+
+	watchLogDir = ""
+	watchAllWorktrees = true
+
+	var capturedArgs []string
+	watchSpawnBackgroundRunner = func(logDir string, args []string) (int, <-chan struct{}, error) {
+		capturedArgs = append([]string(nil), args...)
+		return 1234, make(chan struct{}), nil
+	}
+	watchReadyChecker = func(logDir string) bool {
+		return true
+	}
+
+	if err := startBackgroundWatch(logDir, ""); err != nil {
+		t.Fatalf("startBackgroundWatch() failed: %v", err)
+	}
+	if got := strings.Join(capturedArgs, " "); got != "watch --all-worktrees" {
+		t.Fatalf("spawn args = %q, want %q", got, "watch --all-worktrees")
+	}
+}
+
+func TestStartBackgroundWatch_PropagatesAllWorktreesFlagForWorktree(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-5"
+
+	oldLogDir := watchLogDir
+	oldAllWorktrees := watchAllWorktrees
+	oldSpawnWorktree := watchSpawnWorktreeRunner
+	oldReady := watchWorktreeReadyChecker
+	defer func() {
+		watchLogDir = oldLogDir
+		watchAllWorktrees = oldAllWorktrees
+		watchSpawnWorktreeRunner = oldSpawnWorktree
+		watchWorktreeReadyChecker = oldReady
+	}()
+
+	watchLogDir = ""
+	watchAllWorktrees = true
+
+	var capturedWorktreeID string
+	var capturedArgs []string
+	watchSpawnWorktreeRunner = func(logDir, gotWorktreeID string, args []string) (int, <-chan struct{}, error) {
+		capturedWorktreeID = gotWorktreeID
+		capturedArgs = append([]string(nil), args...)
+		return 5678, make(chan struct{}), nil
+	}
+	watchWorktreeReadyChecker = func(logDir, gotWorktreeID string) bool {
+		return gotWorktreeID == worktreeID
+	}
+
+	if err := startBackgroundWatch(logDir, worktreeID); err != nil {
+		t.Fatalf("startBackgroundWatch() failed: %v", err)
+	}
+	if capturedWorktreeID != worktreeID {
+		t.Fatalf("spawn worktree ID = %q, want %q", capturedWorktreeID, worktreeID)
+	}
+	if got := strings.Join(capturedArgs, " "); got != "watch --all-worktrees" {
+		t.Fatalf("spawn args = %q, want %q", got, "watch --all-worktrees")
+	}
+}
+
 func TestRunWatch_CheckAlreadyRunning(t *testing.T) {
 	skipIfWindows(t)
 	logDir := t.TempDir()
@@ -444,6 +518,41 @@ func TestRunWatch_MultiWorktreeUsesUIForeground(t *testing.T) {
 	err := runWatch(nil, nil)
 	if !errors.Is(err, uiErr) {
 		t.Fatalf("expected UI path for interactive watch, got: %v", err)
+	}
+}
+
+func TestRunWatch_AllWorktreesCannotBeCombinedWithWorkspace(t *testing.T) {
+	oldBackground := watchBackground
+	oldStatus := watchStatus
+	oldStop := watchStop
+	oldWorkspace := watchWorkspace
+	oldAllWorktrees := watchAllWorktrees
+	oldLogDir := watchLogDir
+	oldNoUI := watchNoUI
+	defer func() {
+		watchBackground = oldBackground
+		watchStatus = oldStatus
+		watchStop = oldStop
+		watchWorkspace = oldWorkspace
+		watchAllWorktrees = oldAllWorktrees
+		watchLogDir = oldLogDir
+		watchNoUI = oldNoUI
+	}()
+
+	watchBackground = false
+	watchStatus = false
+	watchStop = false
+	watchWorkspace = "test-ws"
+	watchAllWorktrees = true
+	watchLogDir = ""
+	watchNoUI = false
+
+	err := runWatch(nil, nil)
+	if err == nil {
+		t.Fatal("expected validation error when combining --workspace and --all-worktrees")
+	}
+	if !strings.Contains(err.Error(), "--all-worktrees cannot be used with --workspace") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -5,7 +5,7 @@ description: Use grepai seamlessly across git worktrees
 
 ## Git Worktree Support
 
-grepai automatically detects [git worktrees](https://git-scm.com/docs/git-worktree) and provides zero-config setup for linked worktrees. If you work on multiple branches in parallel using `git worktree add`, grepai handles everything transparently.
+grepai automatically detects [git worktrees](https://git-scm.com/docs/git-worktree) and provides zero-config setup for linked worktrees. If you work on multiple branches in parallel using `git worktree add`, search and trace work transparently, and watch can be enabled per worktree or explicitly across all linked worktrees.
 
 ### How It Works
 
@@ -92,6 +92,15 @@ grepai watch
 
 This re-indexes only the files that differ from the copied seed index, keeping your worktree's index up to date.
 
+If you intentionally want a single watcher from the main worktree to include linked worktrees too, opt in explicitly:
+
+```bash
+cd /path/to/main-repo
+grepai watch --all-worktrees
+```
+
+`--all-worktrees` is only needed when you want one watch session to manage the main worktree plus its linked worktrees. The default `grepai watch` command now stays scoped to the current worktree to avoid surprise fanout and re-embedding.
+
 ### What Gets Copied
 
 | File | Purpose | Required |
@@ -108,5 +117,6 @@ If `config.yaml` is missing from the main worktree, auto-init will not proceed.
 |---------|----------|
 | Auto-init doesn't trigger | Verify the main worktree has `.grepai/config.yaml`. Run `grepai init` in the main worktree first. |
 | Search returns stale results | Run `grepai watch` in the linked worktree to update the index with worktree-specific changes. |
+| Main worktree watcher misses linked worktree changes | Use `grepai watch --all-worktrees` from the main worktree, or run `grepai watch` inside the linked worktree you are actively editing. |
 | "not a git repository" error | Ensure `git` is installed and the directory is a valid git worktree. |
 | Want shared indexing | Switch to `postgres` or `qdrant` backend for cross-worktree index sharing. |

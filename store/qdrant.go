@@ -21,10 +21,22 @@ func sanitizeUTF8(s string) string {
 }
 
 type QdrantStore struct {
-	client         *qdrant.Client
+	client         qdrantClient
 	collectionName string
 	dimensions     int
 	apiKey         string
+}
+
+type qdrantClient interface {
+	CollectionExists(ctx context.Context, collectionName string) (bool, error)
+	CreateCollection(ctx context.Context, request *qdrant.CreateCollection) error
+	CreateFieldIndex(ctx context.Context, request *qdrant.CreateFieldIndexCollection) (*qdrant.UpdateResult, error)
+	Upsert(ctx context.Context, request *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
+	Delete(ctx context.Context, request *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
+	Query(ctx context.Context, request *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
+	Scroll(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error)
+	ScrollAndOffset(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, *qdrant.PointId, error)
+	GetCollectionInfo(ctx context.Context, collectionName string) (*qdrant.CollectionInfo, error)
 }
 
 func parseHost(endpoint string) string {
@@ -384,13 +396,25 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 		return nil, fmt.Errorf("failed to get collection info: %w", err)
 	}
 
-	pointsCount := *collectionInfo.PointsCount
+	pointsCount := uint64(0)
+	if collectionInfo.PointsCount != nil {
+		pointsCount = *collectionInfo.PointsCount
+	}
 	if pointsCount > uint64(^uint(0)>>1) {
 		return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
 	}
 
+	scrollResult, err := s.scrollAll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		Limit:          qdrant.PtrOf(uint32(10000)),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files for stats: %w", err)
+	}
+
 	stats := &IndexStats{
-		TotalFiles:  0,
+		TotalFiles:  countFilesFromRetrievedPoints(scrollResult),
 		TotalChunks: int(pointsCount),
 		IndexSize:   0,
 		LastUpdated: time.Now(),
@@ -400,7 +424,7 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 }
 
 func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	scrollResult, err := s.scrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Limit:          qdrant.PtrOf(uint32(10000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line"),
@@ -409,8 +433,57 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 
+	return fileStatsFromRetrievedPoints(scrollResult), nil
+}
+
+func (s *QdrantStore) scrollAll(ctx context.Context, req *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error) {
+	var (
+		allPoints []*qdrant.RetrievedPoint
+		offset    *qdrant.PointId
+	)
+
+	for {
+		reqCopy := cloneScrollPointsRequest(req)
+		reqCopy.Offset = offset
+
+		points, nextOffset, err := s.client.ScrollAndOffset(ctx, reqCopy)
+		if err != nil {
+			return nil, err
+		}
+		allPoints = append(allPoints, points...)
+		if nextOffset == nil || len(points) == 0 {
+			return allPoints, nil
+		}
+		offset = nextOffset
+	}
+}
+
+func cloneScrollPointsRequest(req *qdrant.ScrollPoints) *qdrant.ScrollPoints {
+	if req == nil {
+		return nil
+	}
+
+	return &qdrant.ScrollPoints{
+		CollectionName:   req.CollectionName,
+		Filter:           req.Filter,
+		Offset:           req.Offset,
+		Limit:            req.Limit,
+		WithPayload:      req.WithPayload,
+		WithVectors:      req.WithVectors,
+		ReadConsistency:  req.ReadConsistency,
+		ShardKeySelector: req.ShardKeySelector,
+		OrderBy:          req.OrderBy,
+		Timeout:          req.Timeout,
+	}
+}
+
+func countFilesFromRetrievedPoints(points []*qdrant.RetrievedPoint) int {
+	return len(fileStatsFromRetrievedPoints(points))
+}
+
+func fileStatsFromRetrievedPoints(points []*qdrant.RetrievedPoint) []FileStats {
 	fileStats := make(map[string]*FileStats)
-	for _, point := range scrollResult {
+	for _, point := range points {
 		filePath := ""
 		if val, ok := point.Payload["file_path"]; ok {
 			filePath = val.GetStringValue()
@@ -434,8 +507,7 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 	for _, stat := range fileStats {
 		result = append(result, *stat)
 	}
-
-	return result, nil
+	return result
 }
 
 func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]Chunk, error) {

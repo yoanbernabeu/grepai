@@ -1,13 +1,23 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/mcp"
+)
+
+var (
+	mcpResolveTargetRunner          = resolveMCPTarget
+	mcpRefreshStartupRunner         = refreshMCPStartup
+	mcpNewServerRunner              = mcp.NewServer
+	mcpNewServerWithWorkspaceRunner = mcp.NewServerWithWorkspace
+	mcpServeRunner                  = func(srv *mcp.Server) error { return srv.Serve() }
 )
 
 var mcpServeCmd = &cobra.Command{
@@ -84,10 +94,11 @@ func resolveMCPTarget(explicitPath, workspaceName string) (string, string, error
 			return "", "", fmt.Errorf("workspace %q not found", workspaceName)
 		}
 
-		// Check if cwd has local config (optional, for trace tools)
 		projectRoot := ""
-		if pr, err := config.FindProjectRoot(); err == nil {
-			projectRoot = pr
+		if cwd, err := os.Getwd(); err == nil {
+			if resolvedName, _, project, projectErr := cfg.FindWorkspaceProjectForPath(cwd); projectErr == nil && project != nil && resolvedName == workspaceName {
+				projectRoot = project.Path
+			}
 		}
 
 		return projectRoot, workspaceName, nil
@@ -152,20 +163,23 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 		explicitPath = args[0]
 	}
 
-	projectRoot, wsName, err := resolveMCPTarget(explicitPath, workspaceFlag)
+	projectRoot, wsName, err := mcpResolveTargetRunner(explicitPath, workspaceFlag)
 	if err != nil {
 		return err
+	}
+	if err := mcpRefreshStartupRunner(context.Background(), projectRoot, wsName); err != nil {
+		log.Printf("Warning: failed to refresh local project context for MCP startup: %v", err)
 	}
 
 	var srv *mcp.Server
 	if wsName != "" {
-		srv, err = mcp.NewServerWithWorkspace(projectRoot, wsName)
+		srv, err = mcpNewServerWithWorkspaceRunner(projectRoot, wsName)
 	} else {
-		srv, err = mcp.NewServer(projectRoot)
+		srv, err = mcpNewServerRunner(projectRoot)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create MCP server: %w", err)
 	}
 
-	return srv.Serve()
+	return mcpServeRunner(srv)
 }
