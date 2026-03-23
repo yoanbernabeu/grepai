@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/grepai/git"
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -677,9 +678,9 @@ func FindProjectRoot() (string, error) {
 	}
 
 	// Resolve symlinks to handle symlinked directories
-	cwd, err = filepath.EvalSymlinks(cwd)
+	cwd, err = pathutil.ResolveReal(cwd)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+		return "", fmt.Errorf("failed to resolve path: %w", err)
 	}
 
 	dir := cwd
@@ -822,7 +823,7 @@ func FindProjectRootWithGit() (string, *git.DetectInfo, error) {
 	}
 
 	// Resolve symlinks (same as FindProjectRoot does)
-	cwd, err = filepath.EvalSymlinks(cwd)
+	cwd, err = pathutil.ResolveReal(cwd)
 	if err != nil {
 		if findErr == nil {
 			return projectRoot, nil, nil
