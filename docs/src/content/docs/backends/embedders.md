@@ -5,6 +5,13 @@ description: Configure embedding providers for grepai
 
 Embedders convert text (code chunks) into vector representations that enable semantic search.
 
+:::tip[Model Tagging]
+If you plan to switch embedding models, enable `store.multi_model: true` in your config.
+This tags each chunk with its provider/model, so search only returns results from the
+current model. When enabling on an existing index, run `grepai migrate-model <provider/model>`
+first to tag legacy chunks.
+:::
+
 ## Available Embedders
 
 | Provider | Type | Pros | Cons |

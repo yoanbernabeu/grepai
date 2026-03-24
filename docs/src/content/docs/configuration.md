@@ -35,6 +35,12 @@ store:
   # Backend: "gob" (file-based), "postgres" (PostgreSQL with pgvector), or "qdrant"
   backend: gob
 
+  # Multi-model support (default: false)
+  # When true, each chunk is tagged with the provider/model used to embed it.
+  # Search only returns chunks matching the current provider/model.
+  # Enables safe model switching without re-indexing the entire codebase.
+  multi_model: false
+
   # PostgreSQL settings (if using postgres backend)
   postgres:
     dsn: postgres://user:pass@localhost:5432/grepai
