@@ -982,6 +982,15 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 	defer st.Close()
 
+	// Validate multi_model: reject startup if untagged chunks exist
+	if cfg.Store.MultiModel {
+		if count, checkErr := countUntaggedChunks(ctx, st); checkErr != nil {
+			log.Printf("Warning: could not check for untagged chunks: %v", checkErr)
+		} else if count > 0 {
+			return fmt.Errorf("multi_model is enabled but %d chunks have no model tag. Run 'grepai migrate-model <provider/model>' to tag them before proceeding", count)
+		}
+	}
+
 	// Initialize ignore matcher
 	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
 	if err != nil {
