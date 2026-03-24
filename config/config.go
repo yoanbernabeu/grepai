@@ -176,9 +176,10 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 }
 
 type StoreConfig struct {
-	Backend  string         `yaml:"backend"` // gob | postgres | qdrant
-	Postgres PostgresConfig `yaml:"postgres,omitempty"`
-	Qdrant   QdrantConfig   `yaml:"qdrant,omitempty"`
+	Backend    string         `yaml:"backend"` // gob | postgres | qdrant
+	MultiModel bool          `yaml:"multi_model,omitempty"` // When true, tag chunks with provider/model and filter on search
+	Postgres   PostgresConfig `yaml:"postgres,omitempty"`
+	Qdrant     QdrantConfig   `yaml:"qdrant,omitempty"`
 }
 
 type PostgresConfig struct {
@@ -196,6 +197,15 @@ type QdrantConfig struct {
 type ChunkingConfig struct {
 	Size    int `yaml:"size"`
 	Overlap int `yaml:"overlap"`
+}
+
+// EmbedModelTag returns the "provider/model" string used to tag chunks.
+// Returns empty string if either provider or model is empty.
+func (c *Config) EmbedModelTag() string {
+	if c.Embedder.Provider == "" || c.Embedder.Model == "" {
+		return ""
+	}
+	return c.Embedder.Provider + "/" + c.Embedder.Model
 }
 
 func DefaultStoreForBackend(backend string) StoreConfig {

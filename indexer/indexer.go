@@ -17,6 +17,7 @@ type Indexer struct {
 	chunker       *Chunker
 	scanner       *Scanner
 	lastIndexTime time.Time
+	embedModelTag string // "provider/model" tag set on chunks when multi_model is enabled
 }
 
 type IndexStats struct {
@@ -68,6 +69,12 @@ func NewIndexer(
 		scanner:       scanner,
 		lastIndexTime: lastIndexTime,
 	}
+}
+
+// SetEmbedModelTag sets the provider/model tag to stamp on every chunk.
+// When empty (default), no tag is set, preserving backward compatibility.
+func (idx *Indexer) SetEmbedModelTag(tag string) {
+	idx.embedModelTag = tag
 }
 
 // IndexAll performs a full index of the project (no progress reporting)
@@ -256,7 +263,8 @@ func (idx *Indexer) prepareFileChunks(
 }
 
 // createStoreChunks creates store.Chunk objects from chunk info and embeddings.
-func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.Time) ([]store.Chunk, []string) {
+// When embedModelTag is non-empty, it is stamped on every chunk.
+func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.Time, embedModelTag string) ([]store.Chunk, []string) {
 	chunks := make([]store.Chunk, len(chunkInfos))
 	chunkIDs := make([]string, len(chunkInfos))
 
@@ -270,6 +278,7 @@ func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.
 			Vector:      embeddings[i],
 			Hash:        info.Hash,
 			ContentHash: info.ContentHash,
+			EmbedModel:  embedModelTag,
 			UpdatedAt:   now,
 		}
 		chunkIDs[i] = info.ID
@@ -393,7 +402,7 @@ func (idx *Indexer) indexFilesBatched(
 	now := time.Now()
 	for _, pf := range preFilledFiles {
 		fd := fileData[pf.fdIndex]
-		chunks, chunkIDs := createStoreChunks(fd.chunkInfos, pf.vectors, now)
+		chunks, chunkIDs := createStoreChunks(fd.chunkInfos, pf.vectors, now, idx.embedModelTag)
 		if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
 			return filesIndexed, chunksCreated, err
 		}
@@ -418,7 +427,7 @@ func (idx *Indexer) indexFilesBatched(
 					fd.file.Path, len(embeddings), len(fd.chunkInfos))
 				continue
 			}
-			chunks, chunkIDs := createStoreChunks(fd.chunkInfos, embeddings, now)
+			chunks, chunkIDs := createStoreChunks(fd.chunkInfos, embeddings, now, idx.embedModelTag)
 			if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
 				return filesIndexed, chunksCreated, err
 			}
@@ -532,6 +541,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
 			Vector:      vectors[i],
 			Hash:        info.Hash,
 			ContentHash: info.ContentHash,
+			EmbedModel:  idx.embedModelTag,
 			UpdatedAt:   now,
 		}
 		chunkIDs[i] = info.ID

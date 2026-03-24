@@ -417,6 +417,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	// Create searcher and search
 	searcher := search.NewSearcher(st, emb, cfg.Search)
+	if cfg.Store.MultiModel {
+		searcher.SetEmbedModelFilter(cfg.EmbedModelTag())
+	}
 	normalizedPath, err := search.NormalizeProjectPathPrefix(path, s.projectRoot)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid path parameter: %v", err)), nil
