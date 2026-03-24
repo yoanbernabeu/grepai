@@ -849,7 +849,7 @@ func TestCreateStoreChunks(t *testing.T) {
 			{0.4, 0.5, 0.6},
 		}
 
-		chunks, chunkIDs := createStoreChunks(chunkInfos, embeddings, now)
+		chunks, chunkIDs := createStoreChunks(chunkInfos, embeddings, now, "")
 
 		if len(chunks) != 2 {
 			t.Fatalf("expected 2 chunks, got %d", len(chunks))
@@ -888,7 +888,7 @@ func TestCreateStoreChunks(t *testing.T) {
 	})
 
 	t.Run("handles empty input", func(t *testing.T) {
-		chunks, chunkIDs := createStoreChunks([]ChunkInfo{}, [][]float32{}, now)
+		chunks, chunkIDs := createStoreChunks([]ChunkInfo{}, [][]float32{}, now, "")
 
 		if len(chunks) != 0 {
 			t.Errorf("expected 0 chunks, got %d", len(chunks))
