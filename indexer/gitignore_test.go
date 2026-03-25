@@ -1058,3 +1058,80 @@ func TestGrepaiIgnore_NestedOverridesNestedGitignore(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldIgnore_RootDotPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore with .*/ pattern that matches hidden directories
+	gitignore := `.*/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// The root path "." must never be ignored, even though it starts with a dot
+	if matcher.ShouldIgnore(".") {
+		t.Error("ShouldIgnore(\".\") = true, expected false (root directory must never be ignored)")
+	}
+
+	// Hidden directories should still be ignored
+	if !matcher.ShouldIgnore(".hidden") {
+		t.Error("ShouldIgnore(\".hidden\") = false, expected true")
+	}
+
+	// ShouldSkipDir must also not skip the root
+	if matcher.ShouldSkipDir(".") {
+		t.Error("ShouldSkipDir(\".\") = true, expected false (root directory must never be skipped)")
+	}
+}
+
+func TestScanner_DotStarSlashGitignoreDoesNotBlockAll(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// .gitignore with .*/ — should ignore hidden dirs, not everything
+	gitignore := `.*/
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(gitignore), 0644); err != nil {
+		t.Fatalf("failed to create .gitignore: %v", err)
+	}
+
+	// Create a normal file that should be indexed
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatalf("failed to create main.go: %v", err)
+	}
+
+	// Create a hidden directory with a file that should be ignored
+	hiddenDir := filepath.Join(tmpDir, ".hidden")
+	if err := os.MkdirAll(hiddenDir, 0755); err != nil {
+		t.Fatalf("failed to create .hidden dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hiddenDir, "secret.go"), []byte("package secret\n"), 0644); err != nil {
+		t.Fatalf("failed to create .hidden/secret.go: %v", err)
+	}
+
+	matcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, matcher)
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	// Should find main.go but not .hidden/secret.go
+	if len(files) != 1 {
+		t.Errorf("expected 1 file, got %d", len(files))
+		for _, f := range files {
+			t.Logf("  found: %s", f.Path)
+		}
+	} else if files[0].Path != "main.go" {
+		t.Errorf("expected main.go, got %s", files[0].Path)
+	}
+}
