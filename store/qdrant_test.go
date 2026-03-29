@@ -26,6 +26,10 @@ type mockQdrantClient struct {
 	scrollOffsets        []*qdrant.PointId
 	scrollAndOffsetErr   error
 	scrollRequests       []*qdrant.ScrollPoints
+	scrollResult         []*qdrant.RetrievedPoint
+	scrollErr            error
+	setPayloadRequests   []*qdrant.SetPayloadPoints
+	setPayloadErr        error
 }
 
 func (m *mockQdrantClient) CollectionExists(ctx context.Context, collectionName string) (bool, error) {
@@ -44,6 +48,11 @@ func (m *mockQdrantClient) Upsert(ctx context.Context, request *qdrant.UpsertPoi
 	panic("unexpected Upsert call")
 }
 
+func (m *mockQdrantClient) SetPayload(ctx context.Context, request *qdrant.SetPayloadPoints) (*qdrant.UpdateResult, error) {
+	m.setPayloadRequests = append(m.setPayloadRequests, request)
+	return nil, m.setPayloadErr
+}
+
 func (m *mockQdrantClient) Delete(ctx context.Context, request *qdrant.DeletePoints) (*qdrant.UpdateResult, error) {
 	panic("unexpected Delete call")
 }
@@ -53,7 +62,10 @@ func (m *mockQdrantClient) Query(ctx context.Context, request *qdrant.QueryPoint
 }
 
 func (m *mockQdrantClient) Scroll(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error) {
-	panic("unexpected Scroll call")
+	if m.scrollErr != nil {
+		return nil, m.scrollErr
+	}
+	return m.scrollResult, nil
 }
 
 func (m *mockQdrantClient) ScrollAndOffset(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, *qdrant.PointId, error) {
@@ -660,5 +672,147 @@ func TestQdrantStore_GetStats_PropagatesScrollError(t *testing.T) {
 	_, err := store.GetStats(context.Background())
 	if err == nil || err.Error() != "failed to list files for stats: scroll failed" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestQdrantStore_GetDocument_WithDocHash(t *testing.T) {
+	store := &QdrantStore{
+		client: &mockQdrantClient{
+			scrollResult: []*qdrant.RetrievedPoint{
+				{
+					Payload: map[string]*qdrant.Value{
+						"doc_hash": mustCreateValue(t, "deadbeef"),
+					},
+				},
+			},
+		},
+		collectionName: "test-collection",
+	}
+
+	doc, err := store.GetDocument(context.Background(), "main.go")
+	if err != nil {
+		t.Fatalf("GetDocument failed: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected non-nil document")
+	}
+	if doc.Hash != "deadbeef" {
+		t.Fatalf("expected Hash %q, got %q", "deadbeef", doc.Hash)
+	}
+	if len(doc.ChunkIDs) == 0 {
+		t.Fatal("expected non-empty ChunkIDs sentinel")
+	}
+}
+
+func TestQdrantStore_GetDocument_LegacyChunkNoDocHash(t *testing.T) {
+	store := &QdrantStore{
+		client: &mockQdrantClient{
+			scrollResult: []*qdrant.RetrievedPoint{
+				{
+					Payload: map[string]*qdrant.Value{
+						"file_path": mustCreateValue(t, "main.go"),
+					},
+				},
+			},
+		},
+		collectionName: "test-collection",
+	}
+
+	doc, err := store.GetDocument(context.Background(), "main.go")
+	if err != nil {
+		t.Fatalf("GetDocument failed: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected non-nil document (file exists but is legacy)")
+	}
+	if doc.Hash != "" {
+		t.Fatalf("expected empty Hash for legacy chunk, got %q", doc.Hash)
+	}
+	if len(doc.ChunkIDs) != 0 {
+		t.Fatalf("expected empty ChunkIDs for legacy chunk, got %v", doc.ChunkIDs)
+	}
+}
+
+func TestQdrantStore_GetDocument_NotFound(t *testing.T) {
+	store := &QdrantStore{
+		client:         &mockQdrantClient{},
+		collectionName: "test-collection",
+	}
+
+	doc, err := store.GetDocument(context.Background(), "missing.go")
+	if err != nil {
+		t.Fatalf("GetDocument failed: %v", err)
+	}
+	if doc != nil {
+		t.Fatalf("expected nil document for missing file, got %+v", doc)
+	}
+}
+
+func TestQdrantStore_SaveDocument_SetsPayload(t *testing.T) {
+	client := &mockQdrantClient{}
+	store := &QdrantStore{
+		client:         client,
+		collectionName: "test-collection",
+	}
+
+	err := store.SaveDocument(context.Background(), Document{Path: "main.go", Hash: "abc123"})
+	if err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+	if len(client.setPayloadRequests) != 1 {
+		t.Fatalf("expected 1 SetPayload call, got %d", len(client.setPayloadRequests))
+	}
+	req := client.setPayloadRequests[0]
+	if val, ok := req.Payload["doc_hash"]; !ok || val.GetStringValue() != "abc123" {
+		t.Fatalf("expected doc_hash=abc123 in payload, got %v", req.Payload)
+	}
+}
+
+func TestQdrantStore_SaveDocument_EmptyHashIsNoop(t *testing.T) {
+	client := &mockQdrantClient{}
+	store := &QdrantStore{
+		client:         client,
+		collectionName: "test-collection",
+	}
+
+	err := store.SaveDocument(context.Background(), Document{Path: "main.go", Hash: ""})
+	if err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+	if len(client.setPayloadRequests) != 0 {
+		t.Fatalf("expected no SetPayload call for empty hash, got %d", len(client.setPayloadRequests))
+	}
+}
+
+func TestQdrantStore_ListDocuments_Paginates(t *testing.T) {
+	client := &mockQdrantClient{
+		scrollPages: [][]*qdrant.RetrievedPoint{
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "a.go")}},
+			},
+			{
+				{Payload: map[string]*qdrant.Value{"file_path": mustCreateValue(t, "b.go")}},
+			},
+		},
+		scrollOffsets: []*qdrant.PointId{
+			qdrant.NewID("next-page"),
+			nil,
+		},
+	}
+	store := &QdrantStore{
+		client:         client,
+		collectionName: "test-collection",
+	}
+
+	paths, err := store.ListDocuments(context.Background())
+	if err != nil {
+		t.Fatalf("ListDocuments failed: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 unique paths, got %d: %v", len(paths), paths)
+	}
+	if len(client.scrollRequests) != 2 {
+		t.Fatalf("expected 2 scroll requests (pagination), got %d", len(client.scrollRequests))
 	}
 }

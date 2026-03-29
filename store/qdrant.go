@@ -32,6 +32,7 @@ type qdrantClient interface {
 	CreateCollection(ctx context.Context, request *qdrant.CreateCollection) error
 	CreateFieldIndex(ctx context.Context, request *qdrant.CreateFieldIndexCollection) (*qdrant.UpdateResult, error)
 	Upsert(ctx context.Context, request *qdrant.UpsertPoints) (*qdrant.UpdateResult, error)
+	SetPayload(ctx context.Context, request *qdrant.SetPayloadPoints) (*qdrant.UpdateResult, error)
 	Delete(ctx context.Context, request *qdrant.DeletePoints) (*qdrant.UpdateResult, error)
 	Query(ctx context.Context, request *qdrant.QueryPoints) ([]*qdrant.ScoredPoint, error)
 	Scroll(ctx context.Context, request *qdrant.ScrollPoints) ([]*qdrant.RetrievedPoint, error)
@@ -107,11 +108,16 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		}
 	}
 
-	// Create field index for content_hash to enable efficient lookups.
-	// Error is intentionally ignored because the index may already exist.
+	// Create field indexes for efficient filtered lookups.
+	// Errors are intentionally ignored because the indexes may already exist.
 	_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
 		CollectionName: s.collectionName,
 		FieldName:      "content_hash",
+		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
+	})
+	_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+		CollectionName: s.collectionName,
+		FieldName:      "file_path",
 		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
 	})
 
@@ -327,7 +333,7 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 		CollectionName: s.collectionName,
 		Filter:         filter,
 		Limit:          qdrant.PtrOf(uint32(1)),
-		WithPayload:    qdrant.NewWithPayloadInclude("chunk_ids"),
+		WithPayload:    qdrant.NewWithPayloadInclude("doc_hash"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get document: %w", err)
@@ -338,23 +344,61 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 	}
 
 	doc := &Document{
-		Path:     filePath,
-		ChunkIDs: []string{},
+		Path: filePath,
 	}
+
+	if val, ok := scrollResult[0].Payload["doc_hash"]; ok && val.GetStringValue() != "" {
+		doc.Hash = val.GetStringValue()
+		// Sentinel value: the indexer only checks len(ChunkIDs) > 0.
+		// Fetching all chunk IDs would require scrolling the entire file,
+		// so we use a single placeholder to signal that chunks exist.
+		doc.ChunkIDs = []string{"_"}
+	}
+	// Legacy chunks without doc_hash return an empty Hash and nil ChunkIDs,
+	// which causes the indexer to re-index the file and write doc_hash.
 
 	return doc, nil
 }
 
 func (s *QdrantStore) SaveDocument(ctx context.Context, doc Document) error {
+	if doc.Hash == "" {
+		return nil
+	}
+
+	docHashVal, err := qdrant.NewValue(doc.Hash)
+	if err != nil {
+		return fmt.Errorf("failed to create doc_hash value: %w", err)
+	}
+
+	filter := &qdrant.Filter{
+		Must: []*qdrant.Condition{
+			qdrant.NewMatch("file_path", doc.Path),
+		},
+	}
+
+	_, err = s.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: s.collectionName,
+		Payload: map[string]*qdrant.Value{
+			"doc_hash": docHashVal,
+		},
+		PointsSelector: qdrant.NewPointsSelectorFilter(filter),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set doc_hash payload: %w", err)
+	}
+
 	return nil
 }
 
+// DeleteDocument is a no-op for Qdrant because document metadata (doc_hash)
+// is stored as payload on chunk points. RemoveFile always calls DeleteByFile
+// first, which deletes all chunk points, so there is nothing left to clean up.
 func (s *QdrantStore) DeleteDocument(ctx context.Context, filePath string) error {
 	return nil
 }
 
 func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	points, err := s.scrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Limit:          qdrant.PtrOf(uint32(1000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
@@ -364,7 +408,7 @@ func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
 	}
 
 	pathsMap := make(map[string]bool)
-	for _, point := range scrollResult {
+	for _, point := range points {
 		if val, ok := point.Payload["file_path"]; ok {
 			pathsMap[val.GetStringValue()] = true
 		}
@@ -543,9 +587,9 @@ func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]
 }
 
 func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	points, err := s.scrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Limit:          qdrant.PtrOf(uint32(100000)),
+		Limit:          qdrant.PtrOf(uint32(1000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 		WithVectors:    qdrant.NewWithVectors(true),
 	})
@@ -553,8 +597,8 @@ func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 		return nil, fmt.Errorf("failed to get all chunks: %w", err)
 	}
 
-	chunks := make([]Chunk, 0, len(scrollResult))
-	for _, point := range scrollResult {
+	chunks := make([]Chunk, 0, len(points))
+	for _, point := range points {
 		chunk := s.parseChunkPayload(point.Payload)
 		if point.Vectors != nil && point.Vectors.GetVector() != nil {
 			if dense := point.Vectors.GetVector().GetDense(); dense != nil {
