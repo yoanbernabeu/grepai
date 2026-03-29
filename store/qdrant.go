@@ -107,7 +107,13 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 }
 
 func sanitizeCollectionName(path string) string {
-	return strings.ReplaceAll(path, "/", "_")
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\\', ':', '/':
+			return '_'
+		}
+		return r
+	}, path)
 }
 
 func SanitizeCollectionName(path string) string {
