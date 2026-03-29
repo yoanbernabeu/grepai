@@ -1,6 +1,6 @@
 module github.com/yoanbernabeu/grepai
 
-go 1.24.2
+go 1.25.0
 
 require (
 	github.com/alpkeskin/gotoon v0.1.1
@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/qdrant/go-client v1.17.1
