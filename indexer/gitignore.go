@@ -157,6 +157,13 @@ func NewIgnoreMatcher(projectRoot string, extraIgnore []string, externalGitignor
 }
 
 func (m *IgnoreMatcher) ShouldIgnore(path string) bool {
+	// The root directory itself ("." from filepath.Rel) must never be ignored.
+	// Patterns like ".*/" would otherwise match "." and cause the entire
+	// directory tree to be skipped.
+	if path == "." {
+		return false
+	}
+
 	normalizedPath := filepath.ToSlash(path)
 
 	// Phase 1: Check if .grepaiignore has an opinion
