@@ -261,8 +261,20 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	defer st.Close()
 
+	// Validate multi_model: reject if untagged chunks exist
+	if cfg.Store.MultiModel {
+		if count, checkErr := countUntaggedChunks(ctx, st); checkErr != nil {
+			return fmt.Errorf("failed to check for untagged chunks: %w", checkErr)
+		} else if count > 0 {
+			return fmt.Errorf("multi_model is enabled but %d chunks have no model tag. Run 'grepai migrate-model <provider/model>' to tag them before proceeding", count)
+		}
+	}
+
 	// Create searcher with boost config
 	searcher := search.NewSearcher(st, emb, cfg.Search)
+	if cfg.Store.MultiModel {
+		searcher.SetEmbedModelFilter(cfg.EmbedModelTag())
+	}
 
 	normalizedPath, err := search.NormalizeProjectPathPrefix(searchPath, projectRoot)
 	if err != nil {

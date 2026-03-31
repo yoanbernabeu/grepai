@@ -15,6 +15,7 @@ type Chunk struct {
 	Vector      []float32 `json:"vector"`
 	Hash        string    `json:"hash"`
 	ContentHash string    `json:"content_hash"` // SHA256 of raw content (path-independent)
+	EmbedModel  string    `json:"embed_model,omitempty"` // "provider/model" tag for multi-model indexing
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
@@ -35,6 +36,7 @@ type SearchResult struct {
 // SearchOptions contains optional filters for vector search queries.
 type SearchOptions struct {
 	PathPrefix string
+	EmbedModel string // When non-empty, only chunks with this exact EmbedModel are returned (strict; empty tags excluded).
 }
 
 // IndexStats contains statistics about the index

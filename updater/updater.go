@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 )
 
 const (
@@ -378,7 +380,7 @@ func (u *Updater) replaceBinary(newBinaryPath string) error {
 	}
 
 	// Resolve symlinks
-	execPath, err = filepath.EvalSymlinks(execPath)
+	execPath, err = pathutil.ResolveReal(execPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve executable path: %w", err)
 	}

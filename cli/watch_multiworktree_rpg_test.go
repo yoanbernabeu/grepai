@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 	"github.com/yoanbernabeu/grepai/rpg"
 )
 
@@ -62,11 +63,11 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 func normalizedPath(p string) string {
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		p = resolved
+	if resolved, err := pathutil.ResolveReal(p); err == nil {
+		return resolved
 	}
 	if abs, err := filepath.Abs(p); err == nil {
-		p = abs
+		return filepath.Clean(abs)
 	}
 	return filepath.Clean(p)
 }

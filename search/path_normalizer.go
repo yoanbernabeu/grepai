@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 )
 
 // NormalizeProjectPathPrefix normalizes a search path prefix for single-project mode.
@@ -109,7 +110,7 @@ func normalizeForPathMatch(path string) string {
 			path = abs
 		}
 	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	if resolved, err := pathutil.ResolveReal(path); err == nil {
 		path = resolved
 	}
 	return filepath.Clean(path)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -245,14 +246,14 @@ func FindWorkspaceForPath(targetPath string) (string, *Workspace, error) {
 	}
 
 	// Resolve symlinks
-	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil {
+	if resolved, err := pathutil.ResolveReal(targetPath); err == nil {
 		targetPath = resolved
 	}
 
 	for name, ws := range cfg.Workspaces {
 		for _, proj := range ws.Projects {
 			projPath := proj.Path
-			if resolved, err := filepath.EvalSymlinks(projPath); err == nil {
+			if resolved, err := pathutil.ResolveReal(projPath); err == nil {
 				projPath = resolved
 			}
 			rel, err := filepath.Rel(projPath, targetPath)

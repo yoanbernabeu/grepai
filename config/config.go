@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/grepai/git"
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -183,9 +184,10 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 }
 
 type StoreConfig struct {
-	Backend  string         `yaml:"backend"` // gob | postgres | qdrant
-	Postgres PostgresConfig `yaml:"postgres,omitempty"`
-	Qdrant   QdrantConfig   `yaml:"qdrant,omitempty"`
+	Backend    string         `yaml:"backend"` // gob | postgres | qdrant
+	MultiModel bool          `yaml:"multi_model,omitempty"` // When true, tag chunks with provider/model and filter on search
+	Postgres   PostgresConfig `yaml:"postgres,omitempty"`
+	Qdrant     QdrantConfig   `yaml:"qdrant,omitempty"`
 }
 
 type PostgresConfig struct {
@@ -203,6 +205,15 @@ type QdrantConfig struct {
 type ChunkingConfig struct {
 	Size    int `yaml:"size"`
 	Overlap int `yaml:"overlap"`
+}
+
+// EmbedModelTag returns the "provider/model" string used to tag chunks.
+// Returns empty string if either provider or model is empty.
+func (c *Config) EmbedModelTag() string {
+	if c.Embedder.Provider == "" || c.Embedder.Model == "" {
+		return ""
+	}
+	return c.Embedder.Provider + "/" + c.Embedder.Model
 }
 
 func DefaultStoreForBackend(backend string) StoreConfig {
@@ -677,9 +688,9 @@ func FindProjectRoot() (string, error) {
 	}
 
 	// Resolve symlinks to handle symlinked directories
-	cwd, err = filepath.EvalSymlinks(cwd)
+	cwd, err = pathutil.ResolveReal(cwd)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+		return "", fmt.Errorf("failed to resolve path: %w", err)
 	}
 
 	dir := cwd
@@ -822,7 +833,7 @@ func FindProjectRootWithGit() (string, *git.DetectInfo, error) {
 	}
 
 	// Resolve symlinks (same as FindProjectRoot does)
-	cwd, err = filepath.EvalSymlinks(cwd)
+	cwd, err = pathutil.ResolveReal(cwd)
 	if err != nil {
 		if findErr == nil {
 			return projectRoot, nil, nil

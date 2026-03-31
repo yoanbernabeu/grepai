@@ -74,6 +74,10 @@ func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int,
 		if opts.PathPrefix != "" && !strings.HasPrefix(chunk.FilePath, opts.PathPrefix) {
 			continue
 		}
+		// Filter by embed model if provided (strict: empty tags excluded)
+		if opts.EmbedModel != "" && chunk.EmbedModel != opts.EmbedModel {
+			continue
+		}
 		score := cosineSimilarity(queryVector, chunk.Vector)
 		results = append(results, SearchResult{
 			Chunk: chunk,

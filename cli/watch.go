@@ -24,6 +24,7 @@ import (
 	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
 	"github.com/yoanbernabeu/grepai/rpg"
+	"github.com/yoanbernabeu/grepai/internal/pathutil"
 	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 	"github.com/yoanbernabeu/grepai/watcher"
@@ -917,11 +918,12 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 }
 
 func canonicalPath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
+	if resolved, err := pathutil.ResolveReal(path); err == nil {
+		return resolved
 	}
+	// Last resort: just clean the path
 	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
+		return filepath.Clean(abs)
 	}
 	return filepath.Clean(path)
 }
@@ -980,6 +982,15 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 	defer st.Close()
 
+	// Validate multi_model: reject startup if untagged chunks exist
+	if cfg.Store.MultiModel {
+		if count, checkErr := countUntaggedChunks(ctx, st); checkErr != nil {
+			log.Printf("Warning: could not check for untagged chunks: %v", checkErr)
+		} else if count > 0 {
+			return fmt.Errorf("multi_model is enabled but %d chunks have no model tag. Run 'grepai migrate-model <provider/model>' to tag them before proceeding", count)
+		}
+	}
+
 	// Initialize ignore matcher
 	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, cfg.Ignore, cfg.ExternalGitignore)
 	if err != nil {
@@ -995,6 +1006,9 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	// Initialize indexer
 	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime, processorRegistry)
+	if cfg.Store.MultiModel {
+		idx.SetEmbedModelTag(cfg.EmbedModelTag())
+	}
 
 	// Initialize symbol store and extractor
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
@@ -2762,6 +2776,9 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		projectPath:   project.Path,
 	}
 	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime, processorRegistry)
+	if projectCfg.Store.MultiModel {
+		idx.SetEmbedModelTag(projectCfg.EmbedModelTag())
+	}
 	extractor := trace.NewRegexExtractor()
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
 	if err := symbolStore.Load(ctx); err != nil {
