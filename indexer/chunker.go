@@ -15,13 +15,14 @@ const (
 )
 
 type ChunkInfo struct {
-	ID          string
-	FilePath    string
-	StartLine   int
-	EndLine     int
-	Content     string
-	Hash        string
-	ContentHash string // SHA256 of raw content text (without file path prefix)
+	ID           string
+	FilePath     string
+	StartLine    int
+	EndLine      int
+	Content      string // Display content persisted in vector store.
+	EmbedContent string // Content used for embeddings and content hash.
+	Hash         string
+	ContentHash  string // SHA256 of raw content text (without file path prefix)
 }
 
 type Chunker struct {
@@ -105,13 +106,14 @@ func (c *Chunker) Chunk(filePath string, content string) []ChunkInfo {
 		chunkID := fmt.Sprintf("%s_%d", filePath, chunkIndex)
 
 		chunks = append(chunks, ChunkInfo{
-			ID:          chunkID,
-			FilePath:    filePath,
-			StartLine:   startLine,
-			EndLine:     endLine,
-			Content:     chunkContent,
-			Hash:        hex.EncodeToString(hash[:8]),
-			ContentHash: hex.EncodeToString(contentHash[:]),
+			ID:           chunkID,
+			FilePath:     filePath,
+			StartLine:    startLine,
+			EndLine:      endLine,
+			Content:      chunkContent,
+			EmbedContent: chunkContent,
+			Hash:         hex.EncodeToString(hash[:8]),
+			ContentHash:  hex.EncodeToString(contentHash[:]),
 		})
 
 		chunkIndex++
@@ -161,6 +163,7 @@ func (c *Chunker) ChunkWithContext(filePath string, content string) []ChunkInfo 
 	// Add file path context to each chunk
 	for i := range chunks {
 		chunks[i].Content = fmt.Sprintf("File: %s\n\n%s", filePath, chunks[i].Content)
+		chunks[i].EmbedContent = chunks[i].Content
 	}
 
 	return chunks
@@ -171,7 +174,10 @@ func (c *Chunker) ChunkWithContext(filePath string, content string) []ChunkInfo 
 // The parentIndex is used to generate unique sub-chunk IDs (e.g., "file.go_0_0", "file.go_0_1").
 func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
 	// Strip the file context prefix if present (we'll re-add it later)
-	content := parent.Content
+	content := parent.EmbedContent
+	if content == "" {
+		content = parent.Content
+	}
 	filePrefix := fmt.Sprintf("File: %s\n\n", parent.FilePath)
 	hasContext := strings.HasPrefix(content, filePrefix)
 	if hasContext {
@@ -244,13 +250,14 @@ func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
 		}
 
 		subChunks = append(subChunks, ChunkInfo{
-			ID:          subChunkID,
-			FilePath:    parent.FilePath,
-			StartLine:   absoluteStartLine,
-			EndLine:     absoluteEndLine,
-			Content:     finalContent,
-			Hash:        hex.EncodeToString(hash[:8]),
-			ContentHash: hex.EncodeToString(contentHash[:]),
+			ID:           subChunkID,
+			FilePath:     parent.FilePath,
+			StartLine:    absoluteStartLine,
+			EndLine:      absoluteEndLine,
+			Content:      finalContent,
+			EmbedContent: finalContent,
+			Hash:         hex.EncodeToString(hash[:8]),
+			ContentHash:  hex.EncodeToString(contentHash[:]),
 		})
 
 		subIndex++

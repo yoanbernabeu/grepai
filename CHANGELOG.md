@@ -7,10 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-03-16
+
 ### Added
 
 - **Voyage AI Provider**: Add Voyage AI as a new cloud embedding provider (`voyageai`) with code-optimized models like `voyage-code-3` (1024 dims), batch embedding, adaptive rate limiting, and full integration across CLI, MCP server, and workspaces
 - **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#107)
+- **Shell Completion**: New `grepai completion [zsh|bash|fish|powershell]` command for shell autocompletion (#175) - @Greite
+  - Static completions with descriptions for `--provider`, `--backend`, `--mode` flags
+  - Dynamic completions for `--workspace` and `--project` flags (loaded from config)
+  - Positional argument completions for workspace subcommands (names, project names, directories)
+  - Installation instructions for Zsh (eval, Oh-My-Zsh plugin, manual fpath), Bash, Fish, PowerShell
+- **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#163) - @Greite
+- **Lua Fast-Mode**: Add fast-mode support for Lua language (#176) - @Logonz
+- **Stats Tracking**: Introduce privacy-first gains tracking feature (#162) - @hansipie
+
+### Fixed
+
+- **OpenAI Workspace Defaults**: Fix OpenAI workspace create defaults (#182) - @garitar
+- **OpenAI Init Model**: Fix OpenAI init model handling and config defaults (#181) - @garitar
+
+### Changed
+
+- **Trace Helpers**: Deduplicate workspace helpers, eliminate double scan, add error logging (#164) - @jugrajsingh
+- **RPG Encoder**: Rename RPGIndexer to RPGEncoder and extend multi-feature model (#149) - @tinker495
+
+### Documentation
+
+- **Quickstart**: Add agent integration step to quickstart (#167) - @sethbrasile
+
+### Dependencies
+
+- Bump `github.com/mark3labs/mcp-go` from 0.44.0 to 0.45.0 (#184) - @dependabot
+- Bump `github.com/qdrant/go-client` from 1.16.2 to 1.17.1 (#160) - @dependabot
+
+### CI
+
+- Bump `actions/upload-artifact` from 6 to 7 (#171) - @dependabot
+- Bump `goreleaser/goreleaser-action` from 6 to 7 (#159) - @dependabot
 
 ## [0.34.0] - 2026-02-24
 
@@ -601,7 +635,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/yoanbernabeu/grepai/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/yoanbernabeu/grepai/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/yoanbernabeu/grepai/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/yoanbernabeu/grepai/compare/v0.32.0...v0.32.1

@@ -38,6 +38,7 @@ type Symbol struct {
 // Reference represents a usage/call of a symbol.
 type Reference struct {
 	SymbolName string `json:"symbol_name"`
+	Kind       string `json:"kind,omitempty"`
 	File       string `json:"file"`
 	Line       int    `json:"line"`
 	Column     int    `json:"column,omitempty"`
@@ -46,6 +47,12 @@ type Reference struct {
 	CallerFile string `json:"caller_file"`
 	CallerLine int    `json:"caller_line"`
 }
+
+const (
+	RefKindCall  = "call"
+	RefKindRead  = "read"
+	RefKindWrite = "write"
+)
 
 // CallEdge represents a caller -> callee relationship.
 type CallEdge struct {
@@ -148,6 +155,12 @@ type SymbolStore interface {
 
 	// LookupCallees finds all symbols called by a function.
 	LookupCallees(ctx context.Context, symbolName string, file string) ([]Reference, error)
+
+	// LookupReaders finds property/data readers for a symbol name.
+	LookupReaders(ctx context.Context, symbolName string) ([]Reference, error)
+
+	// LookupWriters finds property/data writers for a symbol name.
+	LookupWriters(ctx context.Context, symbolName string) ([]Reference, error)
 
 	// GetCallGraph builds a call graph from a starting symbol.
 	GetCallGraph(ctx context.Context, symbolName string, depth int) (*CallGraph, error)

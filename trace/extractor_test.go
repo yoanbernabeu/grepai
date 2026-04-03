@@ -17,6 +17,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".tsx":  true,
 		".py":   true,
 		".php":  true,
+		".lua":  true,
 		".c":    true,
 		".h":    true,
 		".zig":  true,
@@ -793,6 +794,268 @@ func run() {
 	}
 }
 
+func TestRegexExtractor_ExtractSymbols_Lua(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function helper(x)
+  return x + 1
+end
+
+function process(input)
+  return helper(input)
+end
+
+function M.foo(x)
+  return helper(x)
+end
+
+function M:bar(x)
+  return self:foo(x)
+end
+
+local baz = function(x)
+  return x * 2
+end
+
+M.qux = function(x)
+  return baz(x)
+end
+
+M["zip"] = function(x)
+  return x - 1
+end
+
+M["nested"]["zap"] = function(x)
+  return x + 3
+end
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundFunctions := make(map[string]bool)
+	foundMethods := make(map[string]bool)
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindFunction:
+			foundFunctions[sym.Name] = true
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		}
+	}
+
+	for _, name := range []string{"helper", "process", "baz"} {
+		if !foundFunctions[name] {
+			t.Errorf("missing function: %s", name)
+		}
+	}
+	for _, name := range []string{"foo", "bar", "qux", "zip", "zap"} {
+		if !foundMethods[name] {
+			t.Errorf("missing method: %s", name)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function helper(x)
+  return x + 1
+end
+
+local function weirdCall(x)
+  return helper(x)
+end
+
+function process(input)
+  helper(input)
+  M.foo(input)
+  M:bar(input)
+  weirdCall --[[inline comment]] (input)
+  local hello = "world" -- commentCall()
+end
+
+obj["foo"](1)
+obj["bar"]["foo"](2)
+obj["bar"]()["foo"](3)
+asdf["f"] --[[asdf ]] ()
+`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	callers := make(map[string]map[string]bool)
+	for _, ref := range refs {
+		if callers[ref.CallerName] == nil {
+			callers[ref.CallerName] = make(map[string]bool)
+		}
+		callers[ref.CallerName][ref.SymbolName] = true
+	}
+
+	for _, callee := range []string{"helper", "foo", "bar", "weirdCall"} {
+		if callers["process"] == nil || !callers["process"][callee] {
+			t.Errorf("missing process -> %s reference", callee)
+		}
+	}
+
+	if callers["process"]["commentCall"] {
+		t.Error("unexpected inline-comment artifact: commentCall")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["foo"] {
+		t.Error("missing top-level bracket-call reference to foo")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["bar"] {
+		t.Error("missing top-level bracket-call reference to bar")
+	}
+	if callers["<top-level>"] == nil || !callers["<top-level>"]["f"] {
+		t.Error("missing top-level comment-separated bracket-call reference to f")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_SkipCallResultKeyAccess(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `obj["bar"]()["foo"](1)`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	found := make(map[string]bool)
+	for _, ref := range refs {
+		found[ref.SymbolName] = true
+	}
+	if !found["bar"] {
+		t.Error("missing reference to bar")
+	}
+	if found["foo"] {
+		t.Error("unexpected reference to foo from call-result key access")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_IgnoresLongCommentsAndStrings(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `local function run()
+  -- hiddenCall()
+  --[[ longHiddenCall() ]]
+  --[=[ eqHiddenCall() ]=]
+  local a = [[stringCall()]]
+  local b = [=[anotherStringCall()]=]
+  realCall()
+end`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	found := make(map[string]bool)
+	for _, ref := range refs {
+		found[ref.SymbolName] = true
+	}
+	if !found["realCall"] {
+		t.Error("missing realCall reference")
+	}
+	for _, unexpected := range []string{"hiddenCall", "longHiddenCall", "eqHiddenCall", "stringCall", "anotherStringCall"} {
+		if found[unexpected] {
+			t.Errorf("unexpected Lua artifact reference: %s", unexpected)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_Lua_DedupesAndSkipsDeclarationNoise(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function M.foo(x)
+  return x
+end
+
+function M:bar(x)
+  return x
+end
+
+function process(input)
+  M.foo(input)
+  M:bar(input)
+end`
+
+	refs, err := extractor.ExtractReferences(ctx, "test.lua", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	if len(refs) != 2 {
+		t.Fatalf("expected exactly 2 refs, got %d: %#v", len(refs), refs)
+	}
+
+	seen := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.CallerName != "process" {
+			t.Fatalf("unexpected caller %q for ref %q", ref.CallerName, ref.SymbolName)
+		}
+		seen[ref.SymbolName] = true
+	}
+
+	for _, name := range []string{"foo", "bar"} {
+		if !seen[name] {
+			t.Errorf("missing reference to %s", name)
+		}
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_TypeScriptSkipsDeclarationArtifacts(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := "export function formatUserName(name: string): string {\n" +
+		"  return name.trim().toUpperCase()\n" +
+		"}\n\n" +
+		"export function getGreeting(name: string): string {\n" +
+		"  return formatUserName(name)\n" +
+		"}\n\n" +
+		"export function buildActivityLabel(name: string, count: number): string {\n" +
+		"  return formatUserName(name) + ' has ' + String(count) + ' alerts'\n" +
+		"}\n"
+
+	refs, err := extractor.ExtractReferences(ctx, "test.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	var selfCall bool
+	callers := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.SymbolName != "formatUserName" {
+			continue
+		}
+		if ref.CallerName == "formatUserName" {
+			selfCall = true
+		}
+		callers[ref.CallerName] = true
+	}
+
+	if selfCall {
+		t.Fatal("unexpected self-call artifact for function declaration")
+	}
+	if !callers["getGreeting"] {
+		t.Fatal("expected getGreeting -> formatUserName reference")
+	}
+	if !callers["buildActivityLabel"] {
+		t.Fatal("expected buildActivityLabel -> formatUserName reference")
+	}
+}
+
 func TestIsKeyword(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -816,6 +1079,9 @@ func TestIsKeyword(t *testing.T) {
 		{"instanceof", "java", true},
 		{"println", "java", true},
 		{"myMethod", "java", false},
+		{"if", "lua", true},
+		{"function", "lua", true},
+		{"myFunc", "lua", false},
 	}
 
 	for _, tt := range tests {
@@ -1035,5 +1301,171 @@ func TestRegexExtractor_ExtractReferences_FSharp_IgnoresCommentsAndStrings(t *te
 	}
 	if nestedFound["stillHidden"] {
 		t.Error("nested block comment not fully masked: stillHidden leaked")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_JSTypeScriptPropertyReadWrite(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function login(store) {
+  const ok = store.uid !== null
+  this.store.uid = "next"
+  return ok
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "store.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	foundRead := false
+	foundWrite := false
+	for _, ref := range refs {
+		if ref.SymbolName != "uid" {
+			continue
+		}
+		if ref.Kind == RefKindRead {
+			foundRead = true
+		}
+		if ref.Kind == RefKindWrite {
+			foundWrite = true
+		}
+	}
+
+	if !foundRead {
+		t.Fatal("expected at least one read reference for uid")
+	}
+	if !foundWrite {
+		t.Fatal("expected at least one write reference for uid")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_CompositionAPIAliases(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const { uid: uidRef } = storeToRefs(store)
+  const roleLocal = store.role
+  const r1 = uidRef.value
+  uidRef.value = "x"
+  return roleLocal
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeUID := false
+	readRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "uid" && ref.Kind == RefKindWrite {
+			writeUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindRead {
+			readRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via uidRef.value")
+	}
+	if !writeUID {
+		t.Fatal("expected uid write via uidRef.value assignment")
+	}
+	if !readRole {
+		t.Fatal("expected role read via simple alias")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_BracketPropertyAccess(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store) {
+  const a = store["uid"]
+  this.store["role"] = "admin"
+  return a
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "comp.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	readUID := false
+	writeRole := false
+	for _, ref := range refs {
+		if ref.SymbolName == "uid" && ref.Kind == RefKindRead {
+			readUID = true
+		}
+		if ref.SymbolName == "role" && ref.Kind == RefKindWrite {
+			writeRole = true
+		}
+	}
+
+	if !readUID {
+		t.Fatal("expected uid read via bracket access")
+	}
+	if !writeRole {
+		t.Fatal("expected role write via bracket access")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_FiltersBuiltinAndVueInternalNoise(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `function setup(store, obj) {
+  const n = Math.max(1, 2)
+  console.log(n)
+  const keys = Object.keys(obj)
+  this.$refs.input.focus()
+  const uid = store.uid
+  return uid
+}`
+
+	refs, err := extractor.ExtractReferences(ctx, "noise.ts", content)
+	if err != nil {
+		t.Fatalf("ExtractReferences failed: %v", err)
+	}
+
+	hasUID := false
+	hasMax := false
+	hasLog := false
+	hasKeys := false
+	hasRefs := false
+
+	for _, ref := range refs {
+		if ref.Kind == RefKindCall {
+			continue
+		}
+		switch ref.SymbolName {
+		case "uid":
+			if ref.Kind == RefKindRead {
+				hasUID = true
+			}
+		case "max":
+			hasMax = true
+		case "log":
+			hasLog = true
+		case "keys":
+			hasKeys = true
+		case "$refs":
+			hasRefs = true
+		}
+	}
+
+	if !hasUID {
+		t.Fatal("expected store uid read to remain after filtering")
+	}
+	if hasMax || hasLog || hasKeys || hasRefs {
+		t.Fatalf("expected builtins/vue internals filtered, got max=%v log=%v keys=%v $refs=%v", hasMax, hasLog, hasKeys, hasRefs)
 	}
 }

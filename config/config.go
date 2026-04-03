@@ -24,6 +24,9 @@ const (
 	DefaultOpenAIEmbeddingModel     = "text-embedding-3-small"
 	DefaultSyntheticEmbeddingModel  = "hf:nomic-ai/nomic-embed-text-v1.5"
 	DefaultOpenRouterEmbeddingModel = "openai/text-embedding-3-small"
+	OpenAIEmbeddingModelLarge       = "text-embedding-3-large"
+	OpenRouterEmbeddingModelLarge   = "openai/text-embedding-3-large"
+	OpenRouterEmbeddingModelQwen8B  = "qwen/qwen3-embedding-8b"
 	DefaultVoyageAIEmbeddingModel   = "voyage-code-3"
 
 	DefaultOllamaEndpoint     = "http://localhost:11434"
@@ -35,6 +38,10 @@ const (
 
 	DefaultLocalEmbeddingDimensions = 768
 	DefaultOpenAIDimensions         = 1536
+	DefaultOpenAILargeDimensions    = 3072
+	DefaultQwen8BDimensions         = 4096
+	DefaultVoyageAIDimensions       = 1024
+	DefaultOpenAIParallelism        = 4
 
 	DefaultPostgresDSN    = "postgres://localhost:5432/grepai"
 	DefaultQdrantEndpoint = "localhost"
@@ -55,17 +62,18 @@ const (
 )
 
 type Config struct {
-	Version           int            `yaml:"version"`
-	Embedder          EmbedderConfig `yaml:"embedder"`
-	Store             StoreConfig    `yaml:"store"`
-	Chunking          ChunkingConfig `yaml:"chunking"`
-	Watch             WatchConfig    `yaml:"watch"`
-	Search            SearchConfig   `yaml:"search"`
-	Trace             TraceConfig    `yaml:"trace"`
-	RPG               RPGConfig      `yaml:"rpg"`
-	Update            UpdateConfig   `yaml:"update"`
-	Ignore            []string       `yaml:"ignore"`
-	ExternalGitignore string         `yaml:"external_gitignore,omitempty"`
+	Version           int             `yaml:"version"`
+	Embedder          EmbedderConfig  `yaml:"embedder"`
+	Store             StoreConfig     `yaml:"store"`
+	Chunking          ChunkingConfig  `yaml:"chunking"`
+	Framework         FrameworkConfig `yaml:"framework_processing"`
+	Watch             WatchConfig     `yaml:"watch"`
+	Search            SearchConfig    `yaml:"search"`
+	Trace             TraceConfig     `yaml:"trace"`
+	RPG               RPGConfig       `yaml:"rpg"`
+	Update            UpdateConfig    `yaml:"update"`
+	Ignore            []string        `yaml:"ignore"`
+	ExternalGitignore string          `yaml:"external_gitignore,omitempty"`
 }
 
 // UpdateConfig holds auto-update settings
@@ -76,6 +84,12 @@ type UpdateConfig struct {
 type SearchConfig struct {
 	Boost  BoostConfig  `yaml:"boost"`
 	Hybrid HybridConfig `yaml:"hybrid"`
+	Dedup  DedupConfig  `yaml:"dedup"`
+}
+
+// DedupConfig controls file-level deduplication of search results.
+type DedupConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type HybridConfig struct {
@@ -113,9 +127,16 @@ func (e *EmbedderConfig) GetDimensions() int {
 	}
 	switch e.Provider {
 	case "openai", "openrouter":
-		return DefaultOpenAIDimensions
+		switch strings.TrimSpace(e.Model) {
+		case OpenAIEmbeddingModelLarge, OpenRouterEmbeddingModelLarge:
+			return DefaultOpenAILargeDimensions
+		case OpenRouterEmbeddingModelQwen8B, "qwen3-embedding-8b":
+			return DefaultQwen8BDimensions
+		default:
+			return DefaultOpenAIDimensions
+		}
 	case "voyageai":
-		return 1024
+		return DefaultVoyageAIDimensions
 	default:
 		return DefaultLocalEmbeddingDimensions
 	}
@@ -155,10 +176,11 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 		}
 	case "openai":
 		return EmbedderConfig{
-			Provider:   "openai",
-			Model:      DefaultOpenAIEmbeddingModel,
-			Endpoint:   DefaultOpenAIEndpoint,
-			Dimensions: nil,
+			Provider:    "openai",
+			Model:       DefaultOpenAIEmbeddingModel,
+			Endpoint:    DefaultOpenAIEndpoint,
+			Dimensions:  nil,
+			Parallelism: DefaultOpenAIParallelism,
 		}
 	case "ollama":
 		fallthrough
@@ -210,6 +232,62 @@ func DefaultStoreForBackend(backend string) StoreConfig {
 		}
 	}
 	return cfg
+}
+
+type FrameworkConfig struct {
+	Enabled    bool                  `yaml:"enabled"`
+	Mode       string                `yaml:"mode"` // auto | require | off
+	NodePath   string                `yaml:"node_path,omitempty"`
+	Frameworks FrameworkFeatureFlags `yaml:"frameworks"`
+	isSet      bool                  `yaml:"-"`
+	enabledSet bool                  `yaml:"-"`
+}
+
+type FrameworkFeatureFlags struct {
+	Vue    FrameworkFeatureConfig `yaml:"vue"`
+	Svelte FrameworkFeatureConfig `yaml:"svelte"`
+	Astro  FrameworkFeatureConfig `yaml:"astro"`
+	Solid  FrameworkFeatureConfig `yaml:"solid"`
+}
+
+type FrameworkFeatureConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	isSet      bool `yaml:"-"`
+	enabledSet bool `yaml:"-"`
+}
+
+func (c *FrameworkConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FrameworkConfig
+	var aux raw
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*c = FrameworkConfig(aux)
+	c.isSet = true
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "enabled" {
+			c.enabledSet = true
+			break
+		}
+	}
+	return nil
+}
+
+func (c *FrameworkFeatureConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FrameworkFeatureConfig
+	var aux raw
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+	*c = FrameworkFeatureConfig(aux)
+	c.isSet = true
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value == "enabled" {
+			c.enabledSet = true
+			break
+		}
+	}
+	return nil
 }
 
 type WatchConfig struct {
@@ -290,6 +368,17 @@ func DefaultConfig() *Config {
 			Size:    512,
 			Overlap: 50,
 		},
+		Framework: FrameworkConfig{
+			Enabled:  true,
+			Mode:     "auto",
+			NodePath: "node",
+			Frameworks: FrameworkFeatureFlags{
+				Vue:    FrameworkFeatureConfig{Enabled: true},
+				Svelte: FrameworkFeatureConfig{Enabled: false},
+				Astro:  FrameworkFeatureConfig{Enabled: false},
+				Solid:  FrameworkFeatureConfig{Enabled: false},
+			},
+		},
 		Watch: WatchConfig{
 			DebounceMs:                  500,
 			RPGPersistIntervalMs:        DefaultWatchRPGPersistIntervalMs,
@@ -298,6 +387,9 @@ func DefaultConfig() *Config {
 			RPGMaxDirtyFilesPerBatch:    DefaultWatchRPGMaxDirtyFilesPerBatch,
 		},
 		Search: SearchConfig{
+			Dedup: DedupConfig{
+				Enabled: true,
+			},
 			Hybrid: HybridConfig{
 				Enabled: false,
 				K:       60,
@@ -339,7 +431,8 @@ func DefaultConfig() *Config {
 		Trace: TraceConfig{
 			Mode: "fast",
 			EnabledLanguages: []string{
-				".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".php",
+				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
+				".lua",
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#
@@ -471,6 +564,34 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Chunking.Overlap == 0 {
 		c.Chunking.Overlap = defaults.Chunking.Overlap
+	}
+
+	// Framework processing defaults
+	hasFrameworkConfig := c.Framework.isSet
+	if !hasFrameworkConfig {
+		c.Framework = defaults.Framework
+	} else {
+		if !c.Framework.enabledSet {
+			c.Framework.Enabled = defaults.Framework.Enabled
+		}
+		if c.Framework.Mode == "" {
+			c.Framework.Mode = defaults.Framework.Mode
+		}
+		if c.Framework.NodePath == "" {
+			c.Framework.NodePath = defaults.Framework.NodePath
+		}
+		if !c.Framework.Frameworks.Vue.enabledSet {
+			c.Framework.Frameworks.Vue.Enabled = defaults.Framework.Frameworks.Vue.Enabled
+		}
+		if !c.Framework.Frameworks.Svelte.enabledSet {
+			c.Framework.Frameworks.Svelte.Enabled = defaults.Framework.Frameworks.Svelte.Enabled
+		}
+		if !c.Framework.Frameworks.Astro.enabledSet {
+			c.Framework.Frameworks.Astro.Enabled = defaults.Framework.Frameworks.Astro.Enabled
+		}
+		if !c.Framework.Frameworks.Solid.enabledSet {
+			c.Framework.Frameworks.Solid.Enabled = defaults.Framework.Frameworks.Solid.Enabled
+		}
 	}
 
 	// Watch defaults

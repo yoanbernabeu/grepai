@@ -285,7 +285,7 @@ func (s *GOBSymbolStore) LookupCallers(ctx context.Context, symbolName string) (
 	if refs == nil {
 		return []Reference{}, nil
 	}
-	return refs, nil
+	return filterByReferenceKinds(refs, RefKindCall, ""), nil
 }
 
 // LookupCallees finds all symbols called by a function.
@@ -307,6 +307,9 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 			// Find reference details
 			if refs, ok := s.index.References[edge.Callee]; ok {
 				for _, ref := range refs {
+					if !isCallReference(ref) {
+						continue
+					}
 					if ref.CallerName == symbolName && ref.File == edge.File && ref.Line == edge.Line {
 						callees = append(callees, ref)
 						break
@@ -326,6 +329,59 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 		}
 	}
 	return callees, nil
+}
+
+// LookupReaders finds property/data readers for a symbol name.
+func (s *GOBSymbolStore) LookupReaders(ctx context.Context, symbolName string) ([]Reference, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	refs := s.index.References[symbolName]
+	if refs == nil {
+		return []Reference{}, nil
+	}
+	return filterByReferenceKinds(refs, RefKindRead), nil
+}
+
+// LookupWriters finds property/data writers for a symbol name.
+func (s *GOBSymbolStore) LookupWriters(ctx context.Context, symbolName string) ([]Reference, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	refs := s.index.References[symbolName]
+	if refs == nil {
+		return []Reference{}, nil
+	}
+	return filterByReferenceKinds(refs, RefKindWrite), nil
+}
+
+func filterByReferenceKinds(refs []Reference, kinds ...string) []Reference {
+	if len(refs) == 0 {
+		return []Reference{}
+	}
+
+	allowed := make(map[string]bool, len(kinds))
+	for _, kind := range kinds {
+		allowed[kind] = true
+	}
+
+	filtered := make([]Reference, 0, len(refs))
+	for _, ref := range refs {
+		if allowed[ref.Kind] {
+			filtered = append(filtered, ref)
+			continue
+		}
+		// Backward compatibility with older indices where kind wasn't persisted.
+		if ref.Kind == "" && allowed[RefKindCall] {
+			filtered = append(filtered, ref)
+		}
+	}
+
+	return filtered
+}
+
+func isCallReference(ref Reference) bool {
+	return ref.Kind == "" || ref.Kind == RefKindCall
 }
 
 // GetCallGraph builds a call graph from a starting symbol.
