@@ -105,6 +105,7 @@ Install skills by category:
 | `grepai-embeddings-ollama` | Configure Ollama for local, private embeddings |
 | `grepai-embeddings-openai` | Configure OpenAI for cloud embeddings |
 | `grepai-embeddings-lmstudio` | Configure LM Studio with GUI interface |
+| `grepai-embeddings-voyageai` | Configure Voyage AI for code-optimized cloud embeddings |
 
 ### Storage Backends
 | Skill | Description |

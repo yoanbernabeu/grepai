@@ -53,7 +53,7 @@ grepai workspace create my-fullstack --from workspace-config.yaml
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--backend` | Storage backend (`qdrant` or `postgres`) | Required (or `--yes`) |
-| `--provider` | Embedding provider (`ollama`, `openai`, `lmstudio`) | `ollama` with `--yes` |
+| `--provider` | Embedding provider (`ollama`, `openai`, `lmstudio`, `voyageai`, `synthetic`, `openrouter`) | `ollama` with `--yes` |
 | `--model` | Embedding model name | Provider default |
 | `--endpoint` | Embedder endpoint URL | Provider default |
 | `--dsn` | PostgreSQL connection string | Required for postgres |

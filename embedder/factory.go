@@ -54,6 +54,18 @@ func NewFromConfig(cfg *config.Config) (Embedder, error) {
 		}
 		return NewSyntheticEmbedder(opts...)
 
+	case "voyageai":
+		opts := []VoyageAIOption{
+			WithVoyageAIModel(cfg.Embedder.Model),
+			WithVoyageAIKey(cfg.Embedder.APIKey),
+			WithVoyageAIEndpoint(cfg.Embedder.Endpoint),
+			WithVoyageAIParallelism(cfg.Embedder.Parallelism),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, WithVoyageAIDimensions(*cfg.Embedder.Dimensions))
+		}
+		return NewVoyageAIEmbedder(opts...)
+
 	case "openrouter":
 		opts := []OpenRouterOption{
 			WithOpenRouterModel(cfg.Embedder.Model),

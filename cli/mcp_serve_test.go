@@ -7,7 +7,16 @@ import (
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/mcp"
 )
+
+// makeTestProject creates a minimal grepai project in dir and writes cfg to it.
+func makeTestProject(t *testing.T, dir string, cfg *config.Config) {
+	t.Helper()
+	if err := cfg.Save(dir); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+}
 
 func TestResolveMCPWorkspace(t *testing.T) {
 	t.Run("explicit_workspace_flag", func(t *testing.T) {
@@ -153,6 +162,90 @@ func TestResolveMCPWorkspace(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "no grepai project or workspace found") {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestResolveRPGEnabled_ReturnsFalseWhenProjectRootEmpty(t *testing.T) {
+	if resolveRPGEnabled("") {
+		t.Error("expected false for empty projectRoot, got true")
+	}
+}
+
+func TestResolveRPGEnabled_ReturnsFalseWhenConfigMissing(t *testing.T) {
+	dir := t.TempDir() // no .grepai/ directory
+	if resolveRPGEnabled(dir) {
+		t.Error("expected false when config file is absent, got true")
+	}
+}
+
+func TestResolveRPGEnabled_ReturnsFalseWhenRPGDisabledInConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.DefaultConfig() // RPG.Enabled defaults to false
+	makeTestProject(t, dir, cfg)
+
+	if resolveRPGEnabled(dir) {
+		t.Error("expected false when RPG is disabled in config, got true")
+	}
+}
+
+func TestResolveRPGEnabled_ReturnsTrueWhenRPGEnabledInConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.RPG.Enabled = true
+	makeTestProject(t, dir, cfg)
+
+	if !resolveRPGEnabled(dir) {
+		t.Error("expected true when RPG is enabled in config, got false")
+	}
+}
+
+// TestIntegration_MCPServerRPGToolsReflectConfig verifies end-to-end that the MCP
+// server created by runMCPServe-style logic advertises RPG tools only when the
+// project config has RPG enabled.
+func TestIntegration_MCPServerRPGToolsReflectConfig(t *testing.T) {
+	t.Run("rpg_disabled_no_rpg_tools", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := config.DefaultConfig() // RPG.Enabled = false
+		makeTestProject(t, dir, cfg)
+
+		rpgEnabled := resolveRPGEnabled(dir)
+		if rpgEnabled {
+			t.Fatal("expected rpgEnabled=false for project with RPG disabled")
+		}
+
+		srv, err := mcp.NewServer(dir, rpgEnabled)
+		if err != nil {
+			t.Fatalf("mcp.NewServer error: %v", err)
+		}
+
+		for _, toolName := range []string{"grepai_rpg_search", "grepai_rpg_fetch", "grepai_rpg_explore"} {
+			if _, ok := srv.ListTools()[toolName]; ok {
+				t.Errorf("tool %q should not be registered when RPG is disabled", toolName)
+			}
+		}
+	})
+
+	t.Run("rpg_enabled_rpg_tools_present", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := config.DefaultConfig()
+		cfg.RPG.Enabled = true
+		makeTestProject(t, dir, cfg)
+
+		rpgEnabled := resolveRPGEnabled(dir)
+		if !rpgEnabled {
+			t.Fatal("expected rpgEnabled=true for project with RPG enabled")
+		}
+
+		srv, err := mcp.NewServer(dir, rpgEnabled)
+		if err != nil {
+			t.Fatalf("mcp.NewServer error: %v", err)
+		}
+
+		for _, toolName := range []string{"grepai_rpg_search", "grepai_rpg_fetch", "grepai_rpg_explore"} {
+			if _, ok := srv.ListTools()[toolName]; !ok {
+				t.Errorf("tool %q should be registered when RPG is enabled", toolName)
+			}
 		}
 	})
 }

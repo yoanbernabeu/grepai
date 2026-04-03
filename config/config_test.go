@@ -101,6 +101,11 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 	if openai.Parallelism != DefaultOpenAIParallelism {
 		t.Fatalf("openai parallelism = %d, want %d", openai.Parallelism, DefaultOpenAIParallelism)
 	}
+
+	voyageai := DefaultEmbedderForProvider("voyageai")
+	if voyageai.Endpoint != DefaultVoyageAIEndpoint || voyageai.Model != DefaultVoyageAIEmbeddingModel {
+		t.Fatalf("unexpected voyageai defaults: %+v", voyageai)
+	}
 }
 
 func TestDefaultStoreForBackend(t *testing.T) {

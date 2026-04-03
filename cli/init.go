@@ -32,14 +32,14 @@ var initCmd = &cobra.Command{
 
 This command will:
 - Create .grepai/config.yaml with default settings
-- Prompt for embedding provider (Ollama or OpenAI)
+- Prompt for embedding provider (Ollama, LM Studio, OpenAI, or Voyage AI)
 - Prompt for storage backend (GOB file or PostgreSQL)
 - Add .grepai/ to .gitignore if present`,
 	RunE: runInit,
 }
 
 func init() {
-	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, or openrouter)")
+	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, voyageai or openrouter)")
 	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openai/openrouter: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
@@ -123,6 +123,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			fmt.Println("  3) openai (cloud, requires API key)")
 			fmt.Println("  4) synthetic (cloud, free embedding API)")
 			fmt.Println("  5) openrouter (cloud, multi-provider gateway)")
+			fmt.Println("  6) voyageai (cloud, optimized for code, requires API key)")
 			fmt.Print("Choice [1]: ")
 
 			input, _ := reader.ReadString('\n')
@@ -156,7 +157,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "5", "openrouter":
 				cfg.Embedder.Provider = "openrouter"
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
-				// OpenRouter: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 
 				// Model selection for OpenRouter
 				fmt.Println("\nSelect OpenRouter embedding model:")
@@ -176,6 +177,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 				default:
 					cfg.Embedder.Model = "openai/text-embedding-3-small"
 				}
+			case "6", "voyageai":
+				cfg.Embedder.Provider = "voyageai"
+				cfg.Embedder.Model = "voyage-code-3"
+				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
+				cfg.Embedder.Dimensions = nil // use model's native dimensions (1024)
 			default:
 				cfg.Embedder.Provider = "ollama"
 				fmt.Print("Ollama endpoint [http://localhost:11434]: ")
@@ -198,7 +204,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
-				// OpenAI: leave Dimensions nil to use model's native dimensions
+			case "voyageai":
+				cfg.Embedder.Model = "voyage-code-3"
+				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
 			case "synthetic":
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
@@ -207,7 +215,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "openrouter":
 				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
-				// OpenRouter: leave Dimensions nil to use model's native dimensions
+				cfg.Embedder.Dimensions = nil // use model's native dimensions
 			}
 		}
 
@@ -334,6 +342,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Endpoint: %s\n", cfg.Embedder.Endpoint)
 	case "openai":
 		fmt.Println("\nMake sure OPENAI_API_KEY is set in your environment.")
+	case "voyageai":
+		fmt.Println("\nMake sure VOYAGE_API_KEY is set in your environment.")
 	case "synthetic":
 		fmt.Println("\nMake sure SYNTHETIC_API_KEY or OPENAI_API_KEY is set in your environment.")
 		fmt.Println("  Get your free API key at: https://api.synthetic.new")

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Voyage AI Provider**: Add Voyage AI as a new cloud embedding provider (`voyageai`) with code-optimized models like `voyage-code-3` (1024 dims), batch embedding, adaptive rate limiting, and full integration across CLI, MCP server, and workspaces
+- **`.grepaiignore` Support**: New `.grepaiignore` file allows overriding `.gitignore` rules for grepai indexing. Supports negation patterns (`!`) to re-include files excluded by `.gitignore`, with directory-level precedence for nested files (#107)
 - **Shell Completion**: New `grepai completion [zsh|bash|fish|powershell]` command for shell autocompletion (#175) - @Greite
   - Static completions with descriptions for `--provider`, `--backend`, `--mode` flags
   - Dynamic completions for `--workspace` and `--project` flags (loaded from config)

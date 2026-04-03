@@ -418,7 +418,7 @@ func (idx *Indexer) indexFilesBatched(
 
 	// Embed remaining (non-cached) files
 	if len(remainingFileChunks) > 0 {
-		batches := embedder.FormBatches(remainingFileChunks)
+		batches := embedder.FormBatches(remainingFileChunks, batchEmb.BatchConfig())
 		results, err := batchEmb.EmbedBatches(ctx, batches, wrapBatchProgress(onProgress))
 		if err != nil {
 			return filesIndexed, chunksCreated, fmt.Errorf("failed to embed batches: %w", err)

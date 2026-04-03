@@ -26,6 +26,9 @@ The server communicates via stdio and exposes the following tools:
   - grepai_refs_writers: Find property/state writers for a symbol name
   - grepai_refs_graph: Build a property usage graph (readers + writers)
   - grepai_index_status: Check index health and statistics (includes RPG stats when enabled)
+
+The following tools are only advertised when RPG is enabled in .grepai/config.yaml:
+
   - grepai_rpg_search: Search RPG graph nodes by feature semantics
   - grepai_rpg_fetch: Fetch hierarchy and edge context for a specific RPG node
   - grepai_rpg_explore: Traverse RPG graph neighborhoods with direction/depth filters
@@ -147,6 +150,21 @@ func resolveMCPTarget(explicitPath, workspaceName string) (string, string, error
 	return "", "", fmt.Errorf("no grepai project or workspace found (run 'grepai init' or use --workspace)")
 }
 
+// resolveRPGEnabled reports whether the RPG feature is enabled for the given
+// project root. When projectRoot is empty (workspace-only mode without a local
+// project) or the config cannot be loaded, it returns false so that RPG tools
+// are not advertised.
+func resolveRPGEnabled(projectRoot string) bool {
+	if projectRoot == "" {
+		return false
+	}
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return false
+	}
+	return cfg.RPG.Enabled
+}
+
 func runMCPServe(cmd *cobra.Command, args []string) error {
 	workspaceFlag, _ := cmd.Flags().GetString("workspace")
 
@@ -160,11 +178,13 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	rpgEnabled := resolveRPGEnabled(projectRoot)
+
 	var srv *mcp.Server
 	if wsName != "" {
-		srv, err = mcp.NewServerWithWorkspace(projectRoot, wsName)
+		srv, err = mcp.NewServerWithWorkspace(projectRoot, wsName, rpgEnabled)
 	} else {
-		srv, err = mcp.NewServer(projectRoot)
+		srv, err = mcp.NewServer(projectRoot, rpgEnabled)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create MCP server: %w", err)

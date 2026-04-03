@@ -433,6 +433,7 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 				return nil, fmt.Errorf("cannot connect to Ollama: %w\nMake sure Ollama is running and has the %s model", err, cfg.Embedder.Model)
 			}
 		}
+
 	case "lmstudio":
 		if p, ok := emb.(pinger); ok {
 			if err := p.Ping(ctx); err != nil {

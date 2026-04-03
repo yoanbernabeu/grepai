@@ -266,7 +266,7 @@ func TestRegisterTools_IndexStatusSchema(t *testing.T) {
 
 func TestNewServerWithWorkspace(t *testing.T) {
 	t.Run("creates_server_with_workspace", func(t *testing.T) {
-		srv, err := NewServerWithWorkspace("", "test")
+		srv, err := NewServerWithWorkspace("", "test", false)
 		if err != nil {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
@@ -279,7 +279,7 @@ func TestNewServerWithWorkspace(t *testing.T) {
 	})
 
 	t.Run("creates_server_with_project_and_workspace", func(t *testing.T) {
-		srv, err := NewServerWithWorkspace("/tmp/project", "test")
+		srv, err := NewServerWithWorkspace("/tmp/project", "test", false)
 		if err != nil {
 			t.Fatalf("NewServerWithWorkspace error: %v", err)
 		}
@@ -898,5 +898,100 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 	}
 	if !strings.Contains(text, "SendResponse") {
 		t.Errorf("expected result to contain callee 'SendResponse', got: %s", text)
+	}
+}
+
+// rpgToolNames lists all RPG-specific MCP tools.
+var rpgToolNames = []string{
+	"grepai_rpg_search",
+	"grepai_rpg_fetch",
+	"grepai_rpg_explore",
+}
+
+// TestRegisterTools_RPGToolsNotRegisteredWhenDisabled verifies that RPG tools are
+// absent from the MCP tool list when rpgEnabled is false.
+func TestRegisterTools_RPGToolsNotRegisteredWhenDisabled(t *testing.T) {
+	srv, err := NewServer("/tmp/test-project", false)
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	tools := srv.mcpServer.ListTools()
+	for _, name := range rpgToolNames {
+		if _, ok := tools[name]; ok {
+			t.Errorf("expected tool %q to be absent when RPG is disabled, but it was registered", name)
+		}
+	}
+}
+
+// TestRegisterTools_RPGToolsRegisteredWhenEnabled verifies that all three RPG tools
+// are present in the MCP tool list when rpgEnabled is true.
+func TestRegisterTools_RPGToolsRegisteredWhenEnabled(t *testing.T) {
+	srv, err := NewServer("/tmp/test-project", true)
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	tools := srv.mcpServer.ListTools()
+	for _, name := range rpgToolNames {
+		if _, ok := tools[name]; !ok {
+			t.Errorf("expected tool %q to be registered when RPG is enabled, but it was absent", name)
+		}
+	}
+}
+
+// TestRegisterTools_NonRPGToolsAlwaysRegistered verifies that core (non-RPG) tools
+// are always registered regardless of the rpgEnabled flag.
+func TestRegisterTools_NonRPGToolsAlwaysRegistered(t *testing.T) {
+	coreTools := []string{
+		"grepai_search",
+		"grepai_trace_callers",
+		"grepai_trace_callees",
+		"grepai_trace_graph",
+		"grepai_index_status",
+		"grepai_list_workspaces",
+		"grepai_list_projects",
+	}
+
+	for _, rpgEnabled := range []bool{false, true} {
+		srv, err := NewServer("/tmp/test-project", rpgEnabled)
+		if err != nil {
+			t.Fatalf("NewServer(rpgEnabled=%v) error: %v", rpgEnabled, err)
+		}
+
+		tools := srv.mcpServer.ListTools()
+		for _, name := range coreTools {
+			if _, ok := tools[name]; !ok {
+				t.Errorf("rpgEnabled=%v: expected core tool %q to be registered, but it was absent", rpgEnabled, name)
+			}
+		}
+	}
+}
+
+// TestNewServer_RPGEnabledFieldSet verifies that the rpgEnabled field on the Server
+// struct matches the value passed to NewServer.
+func TestNewServer_RPGEnabledFieldSet(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		srv, err := NewServer("/tmp/test-project", want)
+		if err != nil {
+			t.Fatalf("NewServer(rpgEnabled=%v) error: %v", want, err)
+		}
+		if srv.rpgEnabled != want {
+			t.Errorf("expected rpgEnabled=%v, got %v", want, srv.rpgEnabled)
+		}
+	}
+}
+
+// TestNewServerWithWorkspace_RPGEnabledFieldSet verifies that rpgEnabled propagates
+// correctly through NewServerWithWorkspace.
+func TestNewServerWithWorkspace_RPGEnabledFieldSet(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		srv, err := NewServerWithWorkspace("", "ws", want)
+		if err != nil {
+			t.Fatalf("NewServerWithWorkspace(rpgEnabled=%v) error: %v", want, err)
+		}
+		if srv.rpgEnabled != want {
+			t.Errorf("expected rpgEnabled=%v, got %v", want, srv.rpgEnabled)
+		}
 	}
 }

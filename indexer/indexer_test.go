@@ -485,6 +485,10 @@ func (m *mockBatchEmbedder) Close() error {
 	return nil
 }
 
+func (m *mockBatchEmbedder) BatchConfig() embedder.BatchConfig {
+	return embedder.DefaultBatchConfig()
+}
+
 func (m *mockBatchEmbedder) EmbedBatches(ctx context.Context, batches []embedder.Batch, progress embedder.BatchProgress) ([]embedder.BatchResult, error) {
 	m.embedCalled = true
 

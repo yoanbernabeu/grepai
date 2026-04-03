@@ -34,6 +34,7 @@ type Server struct {
 	projectRoot   string
 	workspaceName string // non-empty when started via --workspace or auto-detect
 	recorder      *stats.Recorder
+	rpgEnabled    bool   // whether RPG feature is enabled
 }
 
 // SearchResult is a lightweight struct for MCP output.
@@ -124,9 +125,10 @@ func encodeOutput(data any, format string) (string, error) {
 }
 
 // NewServer creates a new MCP server for grepai.
-func NewServer(projectRoot string) (*Server, error) {
+func NewServer(projectRoot string, rpgEnabled bool) (*Server, error) {
 	s := &Server{
 		projectRoot: projectRoot,
+		rpgEnabled:  rpgEnabled,
 		recorder:    stats.NewRecorder(projectRoot),
 	}
 
@@ -145,10 +147,11 @@ func NewServer(projectRoot string) (*Server, error) {
 
 // NewServerWithWorkspace creates a new MCP server with workspace context.
 // projectRoot may be empty when in workspace-only mode (no local .grepai/).
-func NewServerWithWorkspace(projectRoot, workspaceName string) (*Server, error) {
+func NewServerWithWorkspace(projectRoot, workspaceName string, rpgEnabled bool) (*Server, error) {
 	s := &Server{
 		projectRoot:   projectRoot,
 		workspaceName: workspaceName,
+		rpgEnabled:    rpgEnabled,
 		recorder:      stats.NewRecorder(projectRoot),
 	}
 
@@ -356,65 +359,68 @@ func (s *Server) registerTools() {
 	)
 	s.mcpServer.AddTool(listProjectsTool, s.handleListProjects)
 
-	// grepai_rpg_search tool
-	rpgSearchTool := mcp.NewTool("grepai_rpg_search",
-		mcp.WithDescription("Search RPG nodes using Jaccard-based semantic matching with scope and kind filtering."),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Natural language or feature query to search for"),
-		),
-		mcp.WithString("scope",
-			mcp.Description("Area/category path to narrow search (e.g., 'cli', 'rpg/query')"),
-		),
-		mcp.WithString("kinds",
-			mcp.Description("Comma-separated node kinds to filter: area, category, subcategory, file, symbol, chunk (default: symbol)"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of results to return (default: 10)"),
-		),
-		mcp.WithString("format",
-			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
-		),
-	)
-	s.mcpServer.AddTool(rpgSearchTool, s.handleRPGSearch)
+	// Register RPG tools only if RPG feature is enabled
+	if s.rpgEnabled {
+		// grepai_rpg_search tool
+		rpgSearchTool := mcp.NewTool("grepai_rpg_search",
+			mcp.WithDescription("Search RPG nodes using Jaccard-based semantic matching with scope and kind filtering."),
+			mcp.WithString("query",
+				mcp.Required(),
+				mcp.Description("Natural language or feature query to search for"),
+			),
+			mcp.WithString("scope",
+				mcp.Description("Area/category path to narrow search (e.g., 'cli', 'rpg/query')"),
+			),
+			mcp.WithString("kinds",
+				mcp.Description("Comma-separated node kinds to filter: area, category, subcategory, file, symbol, chunk (default: symbol)"),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum number of results to return (default: 10)"),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+			),
+		)
+		s.mcpServer.AddTool(rpgSearchTool, s.handleRPGSearch)
 
-	// grepai_rpg_fetch tool
-	rpgFetchTool := mcp.NewTool("grepai_rpg_fetch",
-		mcp.WithDescription("Fetch detailed information about a specific RPG node including hierarchy, edges, and context."),
-		mcp.WithString("node_id",
-			mcp.Required(),
-			mcp.Description("Node ID to fetch (e.g., 'sym:main.go:HandleRequest')"),
-		),
-		mcp.WithString("format",
-			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
-		),
-	)
-	s.mcpServer.AddTool(rpgFetchTool, s.handleRPGFetch)
+		// grepai_rpg_fetch tool
+		rpgFetchTool := mcp.NewTool("grepai_rpg_fetch",
+			mcp.WithDescription("Fetch detailed information about a specific RPG node including hierarchy, edges, and context."),
+			mcp.WithString("node_id",
+				mcp.Required(),
+				mcp.Description("Node ID to fetch (e.g., 'sym:main.go:HandleRequest')"),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+			),
+		)
+		s.mcpServer.AddTool(rpgFetchTool, s.handleRPGFetch)
 
-	// grepai_rpg_explore tool
-	rpgExploreTool := mcp.NewTool("grepai_rpg_explore",
-		mcp.WithDescription("Explore the RPG graph using BFS traversal from a starting node with configurable depth and edge type filtering."),
-		mcp.WithString("start_node_id",
-			mcp.Required(),
-			mcp.Description("Starting node ID for graph traversal"),
-		),
-		mcp.WithString("direction",
-			mcp.Description("Traversal direction: 'forward', 'reverse', or 'both' (default: 'both')"),
-		),
-		mcp.WithNumber("depth",
-			mcp.Description("Maximum BFS depth (default: 2)"),
-		),
-		mcp.WithString("edge_types",
-			mcp.Description("Comma-separated edge types to follow: feature_parent, contains, invokes, imports, maps_to_chunk, semantic_sim"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum nodes to return (default: 100)"),
-		),
-		mcp.WithString("format",
-			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
-		),
-	)
-	s.mcpServer.AddTool(rpgExploreTool, s.handleRPGExplore)
+		// grepai_rpg_explore tool
+		rpgExploreTool := mcp.NewTool("grepai_rpg_explore",
+			mcp.WithDescription("Explore the RPG graph using BFS traversal from a starting node with configurable depth and edge type filtering."),
+			mcp.WithString("start_node_id",
+				mcp.Required(),
+				mcp.Description("Starting node ID for graph traversal"),
+			),
+			mcp.WithString("direction",
+				mcp.Description("Traversal direction: 'forward', 'reverse', or 'both' (default: 'both')"),
+			),
+			mcp.WithNumber("depth",
+				mcp.Description("Maximum BFS depth (default: 2)"),
+			),
+			mcp.WithString("edge_types",
+				mcp.Description("Comma-separated edge types to follow: feature_parent, contains, invokes, imports, maps_to_chunk, semantic_sim"),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum nodes to return (default: 100)"),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
+			),
+		)
+		s.mcpServer.AddTool(rpgExploreTool, s.handleRPGExplore)
+	}
 
 	// grepai_stats tool
 	statsTool := mcp.NewTool("grepai_stats",
@@ -2059,6 +2065,17 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 }
 
 // Serve starts the MCP server using stdio transport.
+// ListTools returns the map of registered MCP tools, keyed by tool name.
+// This is primarily used for testing.
+func (s *Server) ListTools() map[string]interface{} {
+	raw := s.mcpServer.ListTools()
+	out := make(map[string]interface{}, len(raw))
+	for k, v := range raw {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *Server) Serve() error {
 	// Create stdio server with title fix wrapper
 	stdioServer := server.NewStdioServer(s.mcpServer)
