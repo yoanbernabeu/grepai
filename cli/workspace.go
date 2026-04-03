@@ -23,6 +23,8 @@ var (
 	workspaceStatusUIRunner   = runWorkspaceStatusUI
 )
 
+const workspaceCreateOpenAIParallelism = 4
+
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
 	Short: "Manage multi-project workspaces",
@@ -255,9 +257,9 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 	if model == "" {
 		switch provider {
 		case "openai":
-			model = "text-embedding-3-small"
+			model = config.DefaultOpenAIEmbeddingModel
 		default:
-			model = "nomic-embed-text"
+			model = config.DefaultOllamaEmbeddingModel
 		}
 	}
 
@@ -291,23 +293,24 @@ func buildWorkspaceFromFlags(name, backend, provider, model, dsn, endpoint, qdra
 	switch provider {
 	case "ollama":
 		if endpoint == "" {
-			endpoint = "http://localhost:11434"
+			endpoint = config.DefaultOllamaEndpoint
 		}
 		embedderConfig.Endpoint = endpoint
-		dim := 768
+		dim := config.DefaultLocalEmbeddingDimensions
 		embedderConfig.Dimensions = &dim
 	case "lmstudio":
 		if endpoint == "" {
-			endpoint = "http://127.0.0.1:1234"
+			endpoint = config.DefaultLMStudioEndpoint
 		}
 		embedderConfig.Endpoint = endpoint
-		dim := 768
+		dim := config.DefaultLocalEmbeddingDimensions
 		embedderConfig.Dimensions = &dim
 	case "openai":
 		if endpoint == "" {
-			endpoint = "https://api.openai.com/v1"
+			endpoint = config.DefaultOpenAIEndpoint
 		}
 		embedderConfig.Endpoint = endpoint
+		embedderConfig.Parallelism = workspaceCreateOpenAIParallelism
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s (use ollama, openai, or lmstudio)", provider)
 	}
@@ -535,14 +538,15 @@ func createWorkspaceInteractive(workspaceName string) (*config.Workspace, error)
 		fmt.Print("OpenAI API Key: ")
 		apiKey, _ := reader.ReadString('\n')
 		embedderConfig.APIKey = strings.TrimSpace(apiKey)
-		fmt.Print("Model [text-embedding-3-small]: ")
+		fmt.Printf("Model [%s]: ", config.DefaultOpenAIEmbeddingModel)
 		model, _ := reader.ReadString('\n')
 		model = strings.TrimSpace(model)
 		if model == "" {
-			model = "text-embedding-3-small"
+			model = config.DefaultOpenAIEmbeddingModel
 		}
 		embedderConfig.Model = model
-		embedderConfig.Endpoint = "https://api.openai.com/v1"
+		embedderConfig.Endpoint = config.DefaultOpenAIEndpoint
+		embedderConfig.Parallelism = workspaceCreateOpenAIParallelism
 	case "3":
 		embedderConfig.Provider = "lmstudio"
 		fmt.Print("LM Studio endpoint [http://127.0.0.1:1234]: ")

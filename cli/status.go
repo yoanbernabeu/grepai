@@ -14,6 +14,7 @@ import (
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 	"github.com/yoanbernabeu/grepai/git"
+	"github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -38,25 +39,29 @@ const (
 	viewStats viewState = iota
 	viewFiles
 	viewChunks
+	viewTokenSavings
 )
 
 type model struct {
-	st            store.VectorStore
-	cfg           *config.Config
-	state         viewState
-	stats         *store.IndexStats
-	files         []store.FileStats
-	chunks        []store.Chunk
-	selectedFile  int
-	selectedChunk int
-	width         int
-	height        int
-	watchRunning  bool
-	watchPID      int
-	watchLogDir   string
-	watchLogFile  string
-	worktreeID    string
-	err           error
+	st              store.VectorStore
+	cfg             *config.Config
+	state           viewState
+	stats           *store.IndexStats
+	files           []store.FileStats
+	chunks          []store.Chunk
+	selectedFile    int
+	selectedChunk   int
+	width           int
+	height          int
+	watchRunning    bool
+	watchPID        int
+	watchLogDir     string
+	watchLogFile    string
+	worktreeID      string
+	err             error
+	savingsSummary  *stats.Summary
+	savingsDays     []stats.DaySummary
+	savingsSelected int
 }
 
 func init() {
@@ -105,6 +110,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = viewStats
 			case viewChunks:
 				m.state = viewFiles
+			case viewTokenSavings:
+				m.state = viewStats
+			}
+
+		case "s":
+			if m.state == viewStats {
+				m.state = viewTokenSavings
+				m.savingsSelected = 0
 			}
 
 		case "enter":
@@ -135,6 +148,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedChunk > 0 {
 					m.selectedChunk--
 				}
+			case viewTokenSavings:
+				if m.savingsSelected > 0 {
+					m.savingsSelected--
+				}
 			}
 
 		case "down", "j":
@@ -146,6 +163,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case viewChunks:
 				if m.selectedChunk < len(m.chunks)-1 {
 					m.selectedChunk++
+				}
+			case viewTokenSavings:
+				if m.savingsSelected < len(m.savingsDays)-1 {
+					m.savingsSelected++
 				}
 			}
 		}
@@ -170,6 +191,8 @@ func (m model) View() string {
 		return m.viewFiles()
 	case viewChunks:
 		return m.viewChunks()
+	case viewTokenSavings:
+		return m.viewTokenSavingsView()
 	}
 
 	return ""
@@ -214,7 +237,7 @@ func (m model) viewStats() string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("[Enter] Browse files  [q] Quit"))
+	sb.WriteString(helpStyle.Render("[Enter] Browse files  [s] Token savings  [q] Quit"))
 
 	return boxStyle.Render(sb.String())
 }
@@ -325,6 +348,91 @@ func (m model) viewChunks() string {
 	return boxStyle.Render(sb.String())
 }
 
+func (m model) viewTokenSavingsView() string {
+	var sb strings.Builder
+
+	sb.WriteString(titleStyle.Render("Token Savings"))
+	sb.WriteString("\n\n")
+
+	if m.savingsSummary == nil {
+		sb.WriteString(dimStyle.Render("No stats recorded yet."))
+		sb.WriteString("\n\n")
+		sb.WriteString(helpStyle.Render("[Esc] Back  [q] Quit"))
+		return boxStyle.Render(sb.String())
+	}
+
+	s := m.savingsSummary
+	label := normalStyle.Width(20)
+
+	sb.WriteString(label.Render("Queries"))
+	sb.WriteString(fmt.Sprintf("%d\n", s.TotalQueries))
+	sb.WriteString(label.Render("Tokens saved"))
+	sb.WriteString(fmt.Sprintf("%s\n", formatInt(s.TokensSaved)))
+	sb.WriteString(label.Render("Savings"))
+	sb.WriteString(fmt.Sprintf("%.1f%%\n", s.SavingsPct))
+	if s.CostSavedUSD != nil {
+		sb.WriteString(label.Render("Cost saved"))
+		sb.WriteString(fmt.Sprintf("~$%.4f", *s.CostSavedUSD))
+		sb.WriteString(dimStyle.Render("  (cloud provider)"))
+		sb.WriteString("\n")
+	}
+
+	if len(m.savingsDays) > 0 {
+		sb.WriteString("\n")
+		colDate := 16
+		colQ := 10
+		colSaved := 16
+		colPct := 10
+		sb.WriteString(dimStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s",
+			colDate, "Date", colQ, "Queries", colSaved, "Tokens saved", colPct, "Savings")))
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s",
+			colDate, "────────────────", colQ, "─────────", colSaved, "───────────────", colPct, "────────")))
+		sb.WriteString("\n")
+
+		maxVisible := 10
+		if m.height > 0 {
+			maxVisible = m.height - 20
+		}
+		if maxVisible < 3 {
+			maxVisible = 3
+		}
+		start := 0
+		if m.savingsSelected >= maxVisible {
+			start = m.savingsSelected - maxVisible + 1
+		}
+		end := start + maxVisible
+		if end > len(m.savingsDays) {
+			end = len(m.savingsDays)
+		}
+
+		for i := start; i < end; i++ {
+			d := m.savingsDays[i]
+			pct := 0.0
+			if d.GrepTokens > 0 {
+				pct = float64(d.TokensSaved) / float64(d.GrepTokens) * 100
+			}
+			row := fmt.Sprintf("%-*s %-*d %-*s %-*.1f%%",
+				colDate, d.Date,
+				colQ, d.QueryCount,
+				colSaved, formatInt(d.TokensSaved),
+				colPct-1, pct,
+			)
+			if i == m.savingsSelected {
+				sb.WriteString(selectedStyle.Render("> " + row))
+			} else {
+				sb.WriteString(normalStyle.Render("  " + row))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(helpStyle.Render("[↑/↓] Navigate  [Esc] Back  [q] Quit"))
+
+	return boxStyle.Render(sb.String())
+}
+
 func runStatus(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -371,17 +479,27 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	defer st.Close()
 
-	// Get stats
-	stats, err := st.GetStats(ctx)
+	// Get index stats
+	indexStats, err := st.GetStats(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get stats: %w", err)
+	}
+
+	// Load token savings stats (non-fatal)
+	var savingsSummary *stats.Summary
+	var savingsDays []stats.DaySummary
+	statsPath := stats.StatsPath(projectRoot)
+	if entries, serr := stats.ReadAll(statsPath); serr == nil && len(entries) > 0 {
+		s := stats.Summarize(entries, cfg.Embedder.Provider)
+		savingsSummary = &s
+		savingsDays = stats.HistoryByDay(entries)
 	}
 
 	watchStatus := resolveWatcherRuntimeStatus(projectRoot)
 	useUI := shouldUseStatusUI(isInteractiveTerminal(), statusNoUI)
 
 	if !useUI {
-		fmt.Print(renderStatusSummary(cfg, stats, watchStatus))
+		fmt.Print(renderStatusSummary(cfg, indexStats, watchStatus))
 		return nil
 	}
 
@@ -392,16 +510,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// Create model
 	m := model{
-		st:           st,
-		cfg:          cfg,
-		state:        viewStats,
-		stats:        stats,
-		files:        files,
-		watchRunning: watchStatus.running,
-		watchPID:     watchStatus.pid,
-		watchLogDir:  watchStatus.logDir,
-		watchLogFile: watchStatus.logFile,
-		worktreeID:   watchStatus.worktreeID,
+		st:             st,
+		cfg:            cfg,
+		state:          viewStats,
+		stats:          indexStats,
+		files:          files,
+		watchRunning:   watchStatus.running,
+		watchPID:       watchStatus.pid,
+		watchLogDir:    watchStatus.logDir,
+		watchLogFile:   watchStatus.logFile,
+		worktreeID:     watchStatus.worktreeID,
+		savingsSummary: savingsSummary,
+		savingsDays:    savingsDays,
 	}
 
 	// Run TUI

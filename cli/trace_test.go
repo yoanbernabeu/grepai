@@ -20,7 +20,7 @@ func TestLoadWorkspaceSymbolStores_should_return_error_when_workspace_not_found(
 	// This should return an error regardless of whether workspace.yaml exists:
 	// - If workspace.yaml doesn't exist: "failed to load workspace config" or "no workspaces configured"
 	// - If workspace.yaml exists but lacks this workspace: "workspace not found"
-	_, err := loadWorkspaceSymbolStores(ctx, "nonexistent-workspace-abc123xyz", "")
+	_, err := trace.LoadWorkspaceSymbolStores(ctx, "nonexistent-workspace-abc123xyz", "")
 	if err == nil {
 		t.Fatal("expected error when loading stores for nonexistent workspace, got nil")
 	}
@@ -39,12 +39,12 @@ func TestCloseSymbolStores_should_close_all_stores(t *testing.T) {
 	stores := []trace.SymbolStore{store1, store2, store3}
 
 	// Should not panic
-	closeSymbolStores(stores)
+	trace.CloseSymbolStores(stores)
 }
 
 func TestCloseSymbolStores_should_handle_empty_slice(t *testing.T) {
 	// Should not panic with an empty slice
-	closeSymbolStores([]trace.SymbolStore{})
+	trace.CloseSymbolStores([]trace.SymbolStore{})
 }
 
 func TestLoadWorkspaceSymbolStores_should_return_error_when_project_requires_workspace(t *testing.T) {
@@ -154,7 +154,7 @@ func TestWorkspaceTraceCallers_should_aggregate_results_from_multiple_stores(t *
 	}
 
 	// Cleanup
-	closeSymbolStores(stores)
+	trace.CloseSymbolStores(stores)
 }
 
 func TestTruncate_should_return_short_string_unchanged(t *testing.T) {
@@ -203,28 +203,12 @@ func TestOutputJSON_should_produce_valid_json(t *testing.T) {
 		},
 	}
 
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := outputJSON(result)
-
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
-		t.Fatalf("outputJSON() failed: %v", err)
-	}
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
+	output := captureJSON(result)
 
 	// Verify it's valid JSON
 	var decoded trace.TraceResult
 	if err := json.Unmarshal([]byte(output), &decoded); err != nil {
-		t.Fatalf("outputJSON() produced invalid JSON: %v\nOutput: %s", err, output)
+		t.Fatalf("captureJSON() produced invalid JSON: %v\nOutput: %s", err, output)
 	}
 	if decoded.Query != "TestSymbol" {
 		t.Errorf("decoded query = %q, want %q", decoded.Query, "TestSymbol")
@@ -258,6 +242,39 @@ func TestDisplayCallersResult_should_handle_empty_callers(t *testing.T) {
 
 	if !strings.Contains(output, "No callers found") {
 		t.Errorf("expected 'No callers found' in output, got: %s", output)
+	}
+}
+
+func TestPickBestTargetSymbol_prefersSameFileReferences(t *testing.T) {
+	candidates := []trace.Symbol{
+		{Name: "isAdmin", File: "src/components/Navigation.vue", Line: 10},
+		{Name: "isAdmin", File: "src/views/Home.vue", Line: 20},
+	}
+	refs := []trace.Reference{
+		{SymbolName: "isAdmin", File: "src/views/Home.vue", CallerFile: "src/views/Home.vue", Line: 49},
+	}
+
+	picked := pickBestTargetSymbol(candidates, refs)
+	if picked == nil {
+		t.Fatal("expected symbol to be selected")
+	}
+	if picked.File != "src/views/Home.vue" {
+		t.Fatalf("expected Home.vue symbol, got %s", picked.File)
+	}
+}
+
+func TestPickBestSymbolForFile_prefersCallerFile(t *testing.T) {
+	candidates := []trace.Symbol{
+		{Name: "__vue_template_reads__", File: "src/App.vue", Line: 100},
+		{Name: "__vue_template_reads__", File: "src/views/Home.vue", Line: 200},
+	}
+
+	picked := pickBestSymbolForFile(candidates, "src/views/Home.vue")
+	if picked == nil {
+		t.Fatal("expected caller symbol")
+	}
+	if picked.File != "src/views/Home.vue" {
+		t.Fatalf("expected Home.vue caller symbol, got %s", picked.File)
 	}
 }
 
@@ -492,11 +509,11 @@ func TestLoadWorkspaceSymbolStores_should_load_stores_for_valid_workspace(t *tes
 	config.SaveWorkspaceConfig(wsCfg)
 
 	// Load all stores
-	stores, err := loadWorkspaceSymbolStores(ctx, "test-load", "")
+	stores, err := trace.LoadWorkspaceSymbolStores(ctx, "test-load", "")
 	if err != nil {
-		t.Fatalf("loadWorkspaceSymbolStores() failed: %v", err)
+		t.Fatalf("trace.LoadWorkspaceSymbolStores() failed: %v", err)
 	}
-	defer closeSymbolStores(stores)
+	defer trace.CloseSymbolStores(stores)
 
 	if len(stores) != 2 {
 		t.Fatalf("expected 2 stores, got %d", len(stores))
@@ -539,11 +556,11 @@ func TestLoadWorkspaceSymbolStores_should_filter_by_project(t *testing.T) {
 	config.SaveWorkspaceConfig(wsCfg)
 
 	// Filter to just proj1
-	stores, err := loadWorkspaceSymbolStores(ctx, "test-filter", "proj1")
+	stores, err := trace.LoadWorkspaceSymbolStores(ctx, "test-filter", "proj1")
 	if err != nil {
-		t.Fatalf("loadWorkspaceSymbolStores() failed: %v", err)
+		t.Fatalf("trace.LoadWorkspaceSymbolStores() failed: %v", err)
 	}
-	defer closeSymbolStores(stores)
+	defer trace.CloseSymbolStores(stores)
 
 	if len(stores) != 1 {
 		t.Fatalf("expected 1 store when filtering by project, got %d", len(stores))
@@ -571,7 +588,7 @@ func TestLoadWorkspaceSymbolStores_should_error_on_unknown_project(t *testing.T)
 	})
 	config.SaveWorkspaceConfig(wsCfg)
 
-	_, err := loadWorkspaceSymbolStores(ctx, "test-unknown", "nonexistent-project")
+	_, err := trace.LoadWorkspaceSymbolStores(ctx, "test-unknown", "nonexistent-project")
 	if err == nil {
 		t.Fatal("expected error for unknown project")
 	}

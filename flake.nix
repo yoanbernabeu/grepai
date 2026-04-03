@@ -10,14 +10,14 @@
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
-      version = "0.34.0";
+      version = "0.35.0";
 
       mkGrepai = pkgs: pkgs.buildGoModule {
         pname = "grepai";
         inherit version;
         src = ./.;
 
-        vendorHash = "sha256-6U9O7SbjKLlDadxwdoPJMbjUEnL9Qw/7+CHchwZnakQ=";
+        vendorHash = "sha256-sHIX7RGfVcWf/HZB5a+2ahm4/bOylIZ/u8TealOyEss=";
 
         ldflags = [
           "-s"

@@ -13,6 +13,7 @@ type Searcher struct {
 	embedder  embedder.Embedder
 	boostCfg  config.BoostConfig
 	hybridCfg config.HybridConfig
+	dedupCfg  config.DedupConfig
 }
 
 func NewSearcher(st store.VectorStore, emb embedder.Embedder, searchCfg config.SearchConfig) *Searcher {
@@ -21,26 +22,27 @@ func NewSearcher(st store.VectorStore, emb embedder.Embedder, searchCfg config.S
 		embedder:  emb,
 		boostCfg:  searchCfg.Boost,
 		hybridCfg: searchCfg.Hybrid,
+		dedupCfg:  searchCfg.Dedup,
 	}
 }
 
 func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPrefix string) ([]store.SearchResult, error) {
-	// Embed the query
 	queryVector, err := s.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch more results to allow re-ranking
-	fetchLimit := limit * 2
+	fetchMultiplier := 2
+	if s.dedupCfg.Enabled {
+		fetchMultiplier = 4
+	}
+	fetchLimit := limit * fetchMultiplier
 
 	var results []store.SearchResult
 
 	if s.hybridCfg.Enabled {
-		// Hybrid search: combine vector + text search with RRF
 		results, err = s.hybridSearch(ctx, query, queryVector, fetchLimit, pathPrefix)
 	} else {
-		// Vector-only search
 		results, err = s.store.Search(ctx, queryVector, fetchLimit, store.SearchOptions{PathPrefix: pathPrefix})
 	}
 
@@ -48,10 +50,12 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPref
 		return nil, err
 	}
 
-	// Apply structural boosting
 	results = ApplyBoost(results, s.boostCfg)
 
-	// Trim to requested limit
+	if s.dedupCfg.Enabled {
+		results = DeduplicateByFile(results)
+	}
+
 	if len(results) > limit {
 		results = results[:limit]
 	}
@@ -61,13 +65,11 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int, pathPref
 
 // hybridSearch combines vector search and text search using RRF.
 func (s *Searcher) hybridSearch(ctx context.Context, query string, queryVector []float32, limit int, pathPrefix string) ([]store.SearchResult, error) {
-	// Vector search
 	vectorResults, err := s.store.Search(ctx, queryVector, limit, store.SearchOptions{PathPrefix: pathPrefix})
 	if err != nil {
 		return nil, err
 	}
 
-	// Text search (get all chunks first)
 	allChunks, err := s.store.GetAllChunks(ctx)
 	if err != nil {
 		return nil, err
@@ -75,10 +77,9 @@ func (s *Searcher) hybridSearch(ctx context.Context, query string, queryVector [
 
 	textResults := TextSearch(ctx, allChunks, query, limit, pathPrefix)
 
-	// Combine with RRF
 	k := s.hybridCfg.K
 	if k <= 0 {
-		k = 60 // default
+		k = 60
 	}
 
 	return ReciprocalRankFusion(k, limit, vectorResults, textResults), nil

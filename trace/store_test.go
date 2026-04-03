@@ -603,3 +603,46 @@ func TestGOBSymbolStore_PersistCreatesLockFileAndNoTempFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestGOBSymbolStore_ReferenceKindFilters(t *testing.T) {
+	ctx := context.Background()
+	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
+	store := NewGOBSymbolStore(indexPath)
+
+	symbols := []Symbol{
+		{Name: "uidConsumer", Kind: KindFunction, File: "store.ts", Line: 1, Language: "typescript"},
+	}
+	refs := []Reference{
+		{SymbolName: "uid", Kind: RefKindRead, File: "store.ts", Line: 2, CallerName: "uidConsumer", CallerFile: "store.ts"},
+		{SymbolName: "uid", Kind: RefKindWrite, File: "store.ts", Line: 3, CallerName: "uidConsumer", CallerFile: "store.ts"},
+		{SymbolName: "uid", Kind: RefKindCall, File: "store.ts", Line: 4, CallerName: "uidConsumer", CallerFile: "store.ts"},
+	}
+
+	if err := store.SaveFile(ctx, "store.ts", symbols, refs); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	callers, err := store.LookupCallers(ctx, "uid")
+	if err != nil {
+		t.Fatalf("LookupCallers failed: %v", err)
+	}
+	if len(callers) != 1 || callers[0].Kind != RefKindCall {
+		t.Fatalf("expected only call refs, got %+v", callers)
+	}
+
+	readers, err := store.LookupReaders(ctx, "uid")
+	if err != nil {
+		t.Fatalf("LookupReaders failed: %v", err)
+	}
+	if len(readers) != 1 || readers[0].Kind != RefKindRead {
+		t.Fatalf("expected only read refs, got %+v", readers)
+	}
+
+	writers, err := store.LookupWriters(ctx, "uid")
+	if err != nil {
+		t.Fatalf("LookupWriters failed: %v", err)
+	}
+	if len(writers) != 1 || writers[0].Kind != RefKindWrite {
+		t.Fatalf("expected only write refs, got %+v", writers)
+	}
+}

@@ -66,6 +66,41 @@ grepai search "error handling"     # Search semantically
 grepai trace callers "Login"       # Find who calls a function
 ```
 
+## Shell Completion
+
+grepai supports autocompletion for commands, flags, and dynamic values (workspace names, project names, providers, backends).
+
+**Zsh (add to `~/.zshrc`):**
+```bash
+eval "$(grepai completion zsh)"
+```
+
+**Oh-My-Zsh plugin:**
+```bash
+mkdir -p ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/grepai
+grepai completion zsh > ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/grepai/_grepai
+# Then add "grepai" to plugins=(...) in ~/.zshrc
+```
+
+**Bash:**
+```bash
+# Linux
+grepai completion bash > /etc/bash_completion.d/grepai
+
+# macOS (requires bash-completion@2)
+grepai completion bash > $(brew --prefix)/etc/bash_completion.d/grepai
+```
+
+**Fish:**
+```bash
+grepai completion fish > ~/.config/fish/completions/grepai.fish
+```
+
+**PowerShell:**
+```powershell
+grepai completion powershell | Out-String | Invoke-Expression
+```
+
 ## What developers say
 
 > *"I just hit my limit and it took 13% of my max5 plan just to read my codebase. I am very, very excited about your new tool."*

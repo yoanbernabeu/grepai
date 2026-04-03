@@ -39,8 +39,8 @@ This command will:
 }
 
 func init() {
-	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, voyageai, synthetic, or openrouter)")
-	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openrouter: text-embedding-3-small, text-embedding-3-large, qwen3-embedding-8b)")
+	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, voyageai or openrouter)")
+	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openai/openrouter: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
@@ -144,9 +144,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Dimensions = &dim
 			case "3", "openai":
 				cfg.Embedder.Provider = "openai"
-				cfg.Embedder.Model = "text-embedding-3-small"
+				cfg.Embedder.Model = config.DefaultOpenAIEmbeddingModel
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				cfg.Embedder.Dimensions = nil // use model's native dimensions
+				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
+				// OpenAI: leave Dimensions nil to use model's native dimensions
 			case "4", "synthetic":
 				cfg.Embedder.Provider = "synthetic"
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
@@ -200,20 +201,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
 			case "openai":
-				cfg.Embedder.Model = "text-embedding-3-small"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
-				cfg.Embedder.Dimensions = nil // use model's native dimensions
+				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
 			case "voyageai":
 				cfg.Embedder.Model = "voyage-code-3"
 				cfg.Embedder.Endpoint = "https://api.voyageai.com/v1"
-				cfg.Embedder.Dimensions = nil // use model's native dimensions (1024)
 			case "synthetic":
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
 				dim := 768
 				cfg.Embedder.Dimensions = &dim
 			case "openrouter":
-				cfg.Embedder.Model = "openai/text-embedding-3-small"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
 				cfg.Embedder.Dimensions = nil // use model's native dimensions
 			}
@@ -290,9 +290,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
 			case "openai":
-				cfg.Embedder.Model = "text-embedding-3-small"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://api.openai.com/v1"
 				cfg.Embedder.Dimensions = nil
+				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
 			case "synthetic":
 				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
@@ -301,15 +302,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			case "openrouter":
 				cfg.Embedder.Endpoint = "https://openrouter.ai/api/v1"
 				cfg.Embedder.Dimensions = nil
-				// Use provided model flag or default
-				switch initModel {
-				case "text-embedding-3-large":
-					cfg.Embedder.Model = "openai/text-embedding-3-large"
-				case "qwen3-embedding-8b":
-					cfg.Embedder.Model = "qwen/qwen3-embedding-8b"
-				default:
-					cfg.Embedder.Model = "openai/text-embedding-3-small"
-				}
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 			}
 		}
 		if initBackend != "" {
@@ -364,4 +357,28 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 func shouldPromptInheritChoice(shouldInherit, nonInteractive, uiMode bool) bool {
 	return !shouldInherit && !nonInteractive && !uiMode
+}
+
+func resolveInitModel(provider, requestedModel string) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	switch provider {
+	case "openai":
+		if requestedModel != "" {
+			return requestedModel
+		}
+		return config.DefaultOpenAIEmbeddingModel
+	case "openrouter":
+		switch requestedModel {
+		case "text-embedding-3-large":
+			return config.OpenRouterEmbeddingModelLarge
+		case "qwen3-embedding-8b":
+			return config.OpenRouterEmbeddingModelQwen8B
+		case "text-embedding-3-small", "":
+			return config.DefaultOpenRouterEmbeddingModel
+		default:
+			return requestedModel
+		}
+	default:
+		return requestedModel
+	}
 }
