@@ -815,12 +815,9 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 			continue
 		}
 
-		// Skip files that are unchanged since the last index run and already tracked.
-		if !lastIndexTime.IsZero() {
-			fileModTime := time.Unix(file.ModTime, 0)
-			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
-				continue
-			}
+		// Skip files verified unchanged by the indexer (per-file ModTime or hash match).
+		if stats.UnchangedFiles[file.Path] && symbolStore.IsFileIndexed(file.Path) {
+			continue
 		}
 
 		fileInfo, err := scanner.ScanFile(file.Path)
