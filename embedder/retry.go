@@ -80,6 +80,7 @@ type RetryableError struct {
 	StatusCode       int
 	Message          string
 	Retryable        bool
+	BatchTooLarge    bool // true when the request exceeds the API's token-per-request limit
 	RateLimitHeaders *RateLimitHeaders
 }
 
