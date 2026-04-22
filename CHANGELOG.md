@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Atomic Index Persist**: `store.GOBStore.Persist` now writes the vector index via a temp file + `fsync` + atomic rename, mirroring the pattern already used by `trace/store.go` and `rpg/store_gob.go`. Previously the index was truncated in place with `os.Create` before being progressively encoded, so any crash mid-encode (SIGKILL after Docker's `stop_grace_period`, OOM, power loss) corrupted `.grepai/index.gob` and made the next `Load` fail with `failed to decode index: unexpected EOF`.
+
 ## [0.35.0] - 2026-03-16
 
 ### Added

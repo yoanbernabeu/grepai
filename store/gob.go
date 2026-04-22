@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -214,22 +215,45 @@ func (s *GOBStore) Persist(ctx context.Context) error {
 }
 
 // persistUnlocked performs the actual persist without any locking.
+//
+// The write is atomic: we encode into a sibling temp file, fsync it, then
+// rename it over the target. A crash (SIGKILL, power loss, OOM) mid-encode
+// leaves the previous index file untouched instead of truncating it — the
+// same pattern already used by trace/store.go and rpg/store_gob.go.
 func (s *GOBStore) persistUnlocked() error {
-	file, err := os.Create(s.indexPath)
-	if err != nil {
-		return fmt.Errorf("failed to create index file: %w", err)
-	}
-	defer file.Close()
-
 	data := gobData{
 		Chunks:    s.chunks,
 		Documents: s.documents,
 	}
 
-	encoder := gob.NewEncoder(file)
-	if err := encoder.Encode(data); err != nil {
+	tmpFile, err := os.CreateTemp(filepath.Dir(s.indexPath), filepath.Base(s.indexPath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create index temp file: %w", err)
+	}
+
+	tmpPath := tmpFile.Name()
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := gob.NewEncoder(tmpFile).Encode(data); err != nil {
+		_ = tmpFile.Close()
 		return fmt.Errorf("failed to encode index: %w", err)
 	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("failed to sync index temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close index temp file: %w", err)
+	}
+	if err := fileutil.ReplaceFileAtomically(tmpPath, s.indexPath); err != nil {
+		return fmt.Errorf("failed to replace index file: %w", err)
+	}
+	cleanupTemp = false
 
 	return nil
 }
