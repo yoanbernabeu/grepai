@@ -1,9 +1,7 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,16 +410,16 @@ func TestGOBStore_LookupByContentHash(t *testing.T) {
 }
 
 // TestGOBStore_PersistIsAtomic verifies that Persist never truncates the index
-// file in place. The current implementation uses os.Create (O_TRUNC) which
+// file in place. The previous implementation used os.Create (O_TRUNC) which
 // empties the file before progressively writing the gob stream, so any crash
 // mid-encode (e.g. SIGKILL from Docker after the stop_grace_period expires)
 // corrupts the on-disk index and makes the next Load fail with
 // "failed to decode index: unexpected EOF".
 //
-// We prove atomicity via an open read handle: on POSIX, renaming a new file
-// over the target path leaves the previous inode intact for anyone still
-// holding a descriptor on it. If Persist instead truncates the target in
-// place, the old handle observes the file shrinking to zero bytes.
+// We prove atomicity by comparing the underlying file identity before and
+// after a second Persist: tmp+rename creates a new inode (POSIX) / FileIndex
+// (Windows), while an in-place truncate reuses the existing one. os.SameFile
+// wraps both semantics.
 func TestGOBStore_PersistIsAtomic(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "index.gob")
@@ -439,19 +437,10 @@ func TestGOBStore_PersistIsAtomic(t *testing.T) {
 		t.Fatalf("initial Persist failed: %v", err)
 	}
 
-	originalBytes, err := os.ReadFile(indexPath)
+	info1, err := os.Stat(indexPath)
 	if err != nil {
-		t.Fatalf("failed to read original index: %v", err)
+		t.Fatalf("stat after first Persist failed: %v", err)
 	}
-	if len(originalBytes) == 0 {
-		t.Fatal("initial persist produced an empty file")
-	}
-
-	handle, err := os.Open(indexPath)
-	if err != nil {
-		t.Fatalf("failed to open read handle: %v", err)
-	}
-	defer handle.Close()
 
 	err = s.SaveChunks(ctx, []Chunk{
 		{ID: "c2", FilePath: "b.go", Content: "modified", Vector: []float32{0, 1, 0}},
@@ -463,16 +452,15 @@ func TestGOBStore_PersistIsAtomic(t *testing.T) {
 		t.Fatalf("second Persist failed: %v", err)
 	}
 
-	handleBytes, err := io.ReadAll(handle)
+	info2, err := os.Stat(indexPath)
 	if err != nil {
-		t.Fatalf("failed to read via retained handle: %v", err)
+		t.Fatalf("stat after second Persist failed: %v", err)
 	}
 
-	if !bytes.Equal(handleBytes, originalBytes) {
-		t.Errorf("Persist was not atomic: retained handle saw %d bytes, expected the original %d. "+
-			"The index file was truncated in place instead of being replaced via rename, "+
-			"which corrupts the index if the process is killed mid-encode.",
-			len(handleBytes), len(originalBytes))
+	if os.SameFile(info1, info2) {
+		t.Error("Persist was not atomic: the second write reused the same underlying file identity. " +
+			"An atomic tmp+rename replaces the target with a freshly-created file (new inode on POSIX, " +
+			"new FileIndex on Windows), so os.SameFile should return false.")
 	}
 }
 
