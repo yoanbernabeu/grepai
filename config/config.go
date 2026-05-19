@@ -50,6 +50,7 @@ const (
 	DefaultRPGLLMTimeoutMs         = 8000
 	DefaultRPGFeatureMode          = "local"
 	DefaultRPGFeatureGroupStrategy = "sample"
+	DefaultRPGParallelism          = 1 // sequential by default
 
 	// Watch defaults for RPG realtime updates.
 	DefaultWatchRPGPersistIntervalMs      = 1000
@@ -304,6 +305,7 @@ type RPGConfig struct {
 	LLMAPIKey            string  `yaml:"llm_api_key,omitempty"`
 	LLMTimeoutMs         int     `yaml:"llm_timeout_ms,omitempty"`
 	FeatureGroupStrategy string  `yaml:"feature_group_strategy,omitempty"`
+	Parallelism          int     `yaml:"parallelism,omitempty"` // parallel LLM workers for feature extraction (default: 1)
 }
 
 // ValidateRPGConfig checks RPG configuration values for validity.
@@ -325,6 +327,9 @@ func ValidateRPGConfig(cfg RPGConfig) error {
 		// valid
 	default:
 		return fmt.Errorf("rpg.feature_group_strategy must be one of: sample, split; got %q", cfg.FeatureGroupStrategy)
+	}
+	if cfg.Parallelism < 1 || cfg.Parallelism > 64 {
+		return fmt.Errorf("rpg.parallelism must be between 1 and 64, got %d", cfg.Parallelism)
 	}
 	return nil
 }
@@ -444,6 +449,7 @@ func DefaultConfig() *Config {
 			LLMEndpoint:          "http://localhost:11434/v1",
 			LLMTimeoutMs:         DefaultRPGLLMTimeoutMs,
 			FeatureGroupStrategy: DefaultRPGFeatureGroupStrategy,
+			Parallelism:          DefaultRPGParallelism,
 		},
 		Update: UpdateConfig{
 			CheckOnStartup: false, // Opt-in by default for privacy
@@ -627,6 +633,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.RPG.FeatureGroupStrategy == "" {
 		c.RPG.FeatureGroupStrategy = DefaultRPGFeatureGroupStrategy
+	}
+	if c.RPG.Parallelism <= 0 {
+		c.RPG.Parallelism = DefaultRPGParallelism
 	}
 }
 

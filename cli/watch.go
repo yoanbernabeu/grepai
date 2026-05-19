@@ -1037,6 +1037,7 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 			DriftThreshold:       cfg.RPG.DriftThreshold,
 			MaxTraversalDepth:    cfg.RPG.MaxTraversalDepth,
 			FeatureGroupStrategy: cfg.RPG.FeatureGroupStrategy,
+			Parallelism:          cfg.RPG.Parallelism,
 		})
 	}
 
@@ -1857,7 +1858,7 @@ func runWatchForeground() error {
 		fmt.Printf("Provider: %s (%s)\n", cfg.Embedder.Provider, cfg.Embedder.Model)
 		fmt.Printf("Backend: %s\n", cfg.Store.Backend)
 		if cfg.RPG.Enabled {
-			fmt.Printf("RPG: enabled (feature_mode: %s, llm: %s/%s)\n", cfg.RPG.FeatureMode, cfg.RPG.LLMProvider, cfg.RPG.LLMModel)
+			fmt.Printf("RPG: enabled (feature_mode: %s, llm: %s/%s, parallelism: %d)\n", cfg.RPG.FeatureMode, cfg.RPG.LLMProvider, cfg.RPG.LLMModel, cfg.RPG.Parallelism)
 		} else {
 			fmt.Println("RPG: disabled")
 		}
@@ -1866,7 +1867,7 @@ func runWatchForeground() error {
 		log.Printf("Provider: %s (%s)", cfg.Embedder.Provider, cfg.Embedder.Model)
 		log.Printf("Backend: %s", cfg.Store.Backend)
 		if cfg.RPG.Enabled {
-			log.Printf("RPG: enabled (feature_mode: %s, llm: %s/%s)", cfg.RPG.FeatureMode, cfg.RPG.LLMProvider, cfg.RPG.LLMModel)
+			log.Printf("RPG: enabled (feature_mode: %s, llm: %s/%s, parallelism: %d)", cfg.RPG.FeatureMode, cfg.RPG.LLMProvider, cfg.RPG.LLMModel, cfg.RPG.Parallelism)
 		} else {
 			log.Printf("RPG: disabled")
 		}
@@ -2817,6 +2818,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 			DriftThreshold:       projectCfg.RPG.DriftThreshold,
 			MaxTraversalDepth:    projectCfg.RPG.MaxTraversalDepth,
 			FeatureGroupStrategy: projectCfg.RPG.FeatureGroupStrategy,
+			Parallelism:          projectCfg.RPG.Parallelism,
 		})
 		if err := rpgEncoder.BuildFull(ctx, symbolStore, vectorStore, nil); err != nil {
 			log.Printf("Warning: failed to build RPG graph for %s: %v", project.Path, err)

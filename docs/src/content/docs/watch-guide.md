@@ -40,6 +40,12 @@ Provider: ollama (nomic-embed-text)
 Backend: gob
 RPG: disabled
 
+When RPG is enabled the output includes feature mode, LLM provider/model, and parallelism:
+
+```text
+RPG: enabled (feature_mode: hybrid, llm: ollama/llama3.2, parallelism: 4)
+```
+
 Performing initial scan...
 Indexing [================] 100% (245/245) src/auth/handler.go
 Initial scan complete: 245 files indexed, 1842 chunks created (took 45.2s)

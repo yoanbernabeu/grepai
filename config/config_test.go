@@ -650,6 +650,7 @@ func TestValidateRPGConfig_FeatureGroupStrategy(t *testing.T) {
 				MaxTraversalDepth:    DefaultRPGMaxTraversalDepth,
 				FeatureMode:          DefaultRPGFeatureMode,
 				FeatureGroupStrategy: tt.strategy,
+				Parallelism:          DefaultRPGParallelism,
 			}
 			err := ValidateRPGConfig(cfg)
 			if (err != nil) != tt.wantErr {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **RPG Parallelism**: New `rpg.parallelism` config option for concurrent LLM feature extraction (1–64, default: 1)
+
 ## [0.35.0] - 2026-03-16
 
 ### Added

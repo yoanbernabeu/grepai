@@ -303,6 +303,45 @@ search:
 
 See [Hybrid Search](/grepai/hybrid-search/) for full documentation.
 
+## RPG Configuration
+
+The Repository Planning Graph (RPG) provides semantic code understanding for agentic workflows. When enabled, grepai builds a feature graph alongside the vector index.
+
+```yaml
+rpg:
+  # Enable RPG graph building
+  enabled: false
+  # Storage path for RPG graph (default: .grepai/rpg.gob)
+  store_path: ""
+  # Feature extraction mode: "local" (regex/AST), "hybrid" (regex + LLM summary), or "llm" (full LLM)
+  feature_mode: local
+  # Jaccard similarity threshold for drift detection (0.0–1.0)
+  drift_threshold: 0.3
+  # Maximum traversal depth for graph queries (1–10)
+  max_traversal_depth: 5
+  # Strategy for grouping features: "sample" or "split"
+  feature_group_strategy: sample
+  # Parallel LLM workers for feature extraction (1–64, default: 1 = sequential)
+  parallelism: 1
+
+  # LLM provider settings (required when feature_mode is "hybrid" or "llm")
+  llm_provider: ollama
+  llm_model: llama3.2
+  llm_endpoint: http://localhost:11434/v1
+  llm_api_key: ""  # or use ${OLLAMA_API_KEY}
+  llm_timeout_ms: 8000
+```
+
+### Parallelism
+
+The `rpg.parallelism` setting controls how many LLM requests run concurrently during feature extraction in `hybrid` or `llm` mode:
+
+- **`1`** (default): Sequential processing. Safe for all providers and rate limits.
+- **`2–8`**: Moderate parallelism. Good for local LLM providers (Ollama, LM Studio) with sufficient GPU/CPU resources.
+- **`8–64`**: High parallelism. Best for cloud LLM providers (OpenAI, OpenRouter) with high rate limits.
+
+Setting parallelism too high for your provider's rate limits will result in throttling and retries, negating any speed benefit.
+
 ## External Gitignore
 
 You can specify an external gitignore file (such as your global Git ignore file) to be respected during indexing:

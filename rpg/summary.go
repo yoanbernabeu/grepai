@@ -6,19 +6,36 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync/atomic"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Summarizer handles the generation of semantic summaries for the hierarchy.
 type Summarizer struct {
-	graph     *Graph
-	extractor FeatureExtractor
+	graph       *Graph
+	extractor   FeatureExtractor
+	parallelism int
 }
 
 // NewSummarizer creates a new Summarizer.
 func NewSummarizer(graph *Graph, extractor FeatureExtractor) *Summarizer {
 	return &Summarizer{
-		graph:     graph,
-		extractor: extractor,
+		graph:       graph,
+		extractor:   extractor,
+		parallelism: 1,
+	}
+}
+
+// NewSummarizerWithParallelism creates a new Summarizer with configurable parallelism.
+func NewSummarizerWithParallelism(graph *Graph, extractor FeatureExtractor, parallelism int) *Summarizer {
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	return &Summarizer{
+		graph:       graph,
+		extractor:   extractor,
+		parallelism: parallelism,
 	}
 }
 
@@ -47,30 +64,98 @@ func (s *Summarizer) SummarizeHierarchy(ctx context.Context, force bool) error {
 
 func (s *Summarizer) summarizeNodes(ctx context.Context, kind NodeKind, force bool) error {
 	nodes := s.graph.GetNodesByKind(kind)
-	consecutiveFailures := 0
-	const maxConsecutiveFailures = 3
 
-	for _, node := range nodes {
+	if s.parallelism <= 1 {
+		// Sequential path (default).
+		consecutiveFailures := 0
+		const maxConsecutiveFailures = 3
+		for _, node := range nodes {
+			if node.Summary != "" && !force {
+				continue
+			}
+			summary, err := s.generateNodeSummary(ctx, node)
+			if err != nil {
+				log.Printf("Failed to summarize node %s: %v\n", node.ID, err)
+				consecutiveFailures++
+				if consecutiveFailures >= maxConsecutiveFailures {
+					log.Printf("rpg: summarization circuit breaker tripped after %d consecutive failures, skipping remaining nodes", maxConsecutiveFailures)
+					break
+				}
+				continue
+			}
+			node.Summary = summary
+			consecutiveFailures = 0
+		}
+		return nil
+	}
+
+	// Parallel path: fan out LLM calls, collect results, apply sequentially.
+	// We cannot mutate nodes in parallel (Graph is not thread-safe), so we
+	// collect summaries first and then apply them.
+	//
+	// Circuit-breaker: once maxConsecutiveFailures LLM calls fail in a row
+	// (without a success in between), remaining nodes are skipped to avoid
+	// waste when the LLM backend is down.
+	type result struct {
+		idx     int
+		summary string
+	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	sem := make(chan struct{}, s.parallelism)
+	resultsCh := make(chan result, len(nodes))
+
+	// Identify nodes that need summarization.
+	needSummary := make([]int, 0, len(nodes)) // indices into nodes
+	for i, node := range nodes {
 		if node.Summary != "" && !force {
 			continue
 		}
-
-		summary, err := s.generateNodeSummary(ctx, node)
-		if err != nil {
-			// Log error but continue? Or fail?
-			// For now, let's log and continue, as LLM failures shouldn't block everything.
-			// In a real app we'd have better logging.
-			log.Printf("Failed to summarize node %s: %v\n", node.ID, err)
-			consecutiveFailures++
-			if consecutiveFailures >= maxConsecutiveFailures {
-				log.Printf("rpg: summarization circuit breaker tripped after %d consecutive failures, skipping remaining nodes", maxConsecutiveFailures)
-				break
-			}
-			continue
-		}
-		node.Summary = summary
-		consecutiveFailures = 0
+		needSummary = append(needSummary, i)
 	}
+
+	const maxConsecutiveFailures = 3
+	var consecutiveFailures int32 // atomically incremented for circuit-breaker
+
+	for _, idx := range needSummary {
+		idx := idx
+		node := nodes[idx]
+
+		eg.Go(func() error {
+			// Circuit-breaker: skip if too many consecutive failures.
+			if atomic.LoadInt32(&consecutiveFailures) >= maxConsecutiveFailures {
+				return nil
+			}
+
+			sem <- struct{}{} // acquire worker slot (blocks until one is free)
+			defer func() { <-sem }()
+
+			summary, err := s.generateNodeSummary(egCtx, node)
+			if err != nil {
+				log.Printf("Failed to summarize node %s: %v\n", node.ID, err)
+				atomic.AddInt32(&consecutiveFailures, 1)
+				if atomic.LoadInt32(&consecutiveFailures) >= maxConsecutiveFailures {
+					log.Printf("rpg: summarization circuit breaker tripped after %d consecutive failures, skipping remaining nodes", maxConsecutiveFailures)
+				}
+				return nil // non-fatal, skip
+			}
+			atomic.StoreInt32(&consecutiveFailures, 0) // reset on success
+			resultsCh <- result{idx: idx, summary: summary}
+			return nil
+		})
+	}
+
+	// Close results channel when all goroutines complete.
+	go func() {
+		eg.Wait() //nolint:errcheck // errors are logged, not returned
+		close(resultsCh)
+	}()
+
+	// Collect results and apply them.
+	for r := range resultsCh {
+		nodes[r.idx].Summary = r.summary
+	}
+
 	return nil
 }
 
