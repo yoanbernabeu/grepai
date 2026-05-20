@@ -48,6 +48,25 @@ func TestBuildEnsureVectorSQL_ContainsExpectedFragments(t *testing.T) {
 	}
 }
 
+func TestLookupByContentHashSQLScopesByProject(t *testing.T) {
+	expected := []string{
+		"SELECT vector FROM chunks",
+		"project_id = $1",
+		"content_hash = $2",
+		"vector IS NOT NULL",
+	}
+
+	for _, frag := range expected {
+		if !strings.Contains(lookupByContentHashSQL, frag) {
+			t.Fatalf("expected lookup SQL to contain %q, got: %q", frag, lookupByContentHashSQL)
+		}
+	}
+
+	if strings.Contains(lookupByContentHashSQL, "WHERE content_hash = $1") {
+		t.Fatalf("lookup SQL must not use content_hash as the first and only scope: %q", lookupByContentHashSQL)
+	}
+}
+
 // strconvItoa converts an int to string without importing strconv.
 // This keeps the test dependency surface minimal.
 func strconvItoa(n int) string {

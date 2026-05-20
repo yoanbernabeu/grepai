@@ -16,6 +16,8 @@ type PostgresStore struct {
 	dimensions int
 }
 
+const lookupByContentHashSQL = `SELECT vector FROM chunks WHERE project_id = $1 AND content_hash = $2 AND vector IS NOT NULL LIMIT 1`
+
 func NewPostgresStore(ctx context.Context, dsn string, projectID string, vectorDimensions int) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -61,7 +63,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			PRIMARY KEY (project_id, path)
 		)`,
 		`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT DEFAULT ''`,
-		`CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash) WHERE content_hash != ''`,
+		`CREATE INDEX IF NOT EXISTS idx_chunks_project_content_hash ON chunks(project_id, content_hash) WHERE content_hash != ''`,
 		buildEnsureVectorSQL(s.dimensions),
 		// Migrate chunks primary key from (id) to (project_id, id) so that
 		// worktrees sharing the same database get their own chunk rows instead
@@ -381,8 +383,8 @@ func (s *PostgresStore) LookupByContentHash(ctx context.Context, contentHash str
 
 	var vec pgvector.Vector
 	err := s.pool.QueryRow(ctx,
-		`SELECT vector FROM chunks WHERE content_hash = $1 AND vector IS NOT NULL LIMIT 1`,
-		contentHash,
+		lookupByContentHashSQL,
+		s.projectID, contentHash,
 	).Scan(&vec)
 
 	if err == pgx.ErrNoRows {
