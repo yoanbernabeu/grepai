@@ -5,16 +5,15 @@ package embedder
 const MaxBatchSize = 2000
 
 // MaxBatchTokens is the maximum total tokens per OpenAI embedding API batch.
-// OpenAI has a 300,000 token limit. We use 280,000 for safety margin.
-const MaxBatchTokens = 280000
+// OpenAI has a 300,000 token limit. We use 250,000 for safety margin since
+// token estimation is approximate.
+const MaxBatchTokens = 250000
 
 // EstimateTokens estimates the token count for a text string.
-// Uses a conservative estimate of ~4 characters per token for English text.
-// This is intentionally conservative to avoid hitting API limits.
+// Code/CSS/HTML tokenizes at ~2.5-3 chars per token due to special characters
+// and short identifiers. We use 3 chars/token to avoid exceeding API limits.
 func EstimateTokens(text string) int {
-	// Rough estimate: 1 token ≈ 4 characters for English text
-	// Use 3.5 to be more conservative
-	return (len(text) + 3) / 4 // Round up
+	return (len(text) + 2) / 3
 }
 
 // BatchEntry represents a single chunk with metadata for tracking its source.

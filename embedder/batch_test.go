@@ -392,10 +392,10 @@ func TestEstimateTokens(t *testing.T) {
 		{"a", 1},
 		{"ab", 1},
 		{"abc", 1},
-		{"abcd", 1},
+		{"abcd", 2},                     // 4 chars -> 2 tokens (ceil(4/3))
 		{"abcde", 2},                    // 5 chars -> 2 tokens
-		{"hello world", 3},              // 11 chars -> 3 tokens
-		{string(make([]byte, 100)), 25}, // 100 chars -> 25 tokens
+		{"hello world", 4},              // 11 chars -> 4 tokens (ceil(11/3))
+		{string(make([]byte, 100)), 34}, // 100 chars -> 34 tokens (ceil(100/3))
 	}
 
 	for _, tt := range tests {
@@ -408,8 +408,8 @@ func TestEstimateTokens(t *testing.T) {
 
 func TestFormBatches_TokenLimit(t *testing.T) {
 	// Create chunks that are large enough to trigger token limit
-	// Each chunk will be ~10000 chars -> ~2500 tokens
-	// With MaxBatchTokens = 280000, we can fit ~112 such chunks per batch
+	// Each chunk will be ~10000 chars -> ~3334 tokens (10000/3)
+	// With MaxBatchTokens = 250000, we can fit ~75 such chunks per batch
 	largeChunk := string(make([]byte, 10000))
 
 	// Create 200 large chunks - should be split into multiple batches by token limit

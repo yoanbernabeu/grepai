@@ -33,6 +33,29 @@ func NewContextLengthError(chunkIndex, estimatedTokens, maxTokens int, message s
 	}
 }
 
+// BatchError wraps an embedding error with the file indices that were in the failing batch.
+type BatchError struct {
+	FileIndices []int
+	Err         error
+}
+
+func (e *BatchError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *BatchError) Unwrap() error {
+	return e.Err
+}
+
+// AsBatchError extracts a BatchError from an error chain.
+func AsBatchError(err error) *BatchError {
+	var batchErr *BatchError
+	if errors.As(err, &batchErr) {
+		return batchErr
+	}
+	return nil
+}
+
 // IsContextLengthError checks if an error is or wraps a ContextLengthError.
 func IsContextLengthError(err error) bool {
 	var ctxErr *ContextLengthError

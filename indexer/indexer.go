@@ -421,6 +421,17 @@ func (idx *Indexer) indexFilesBatched(
 		batches := embedder.FormBatches(remainingFileChunks)
 		results, err := batchEmb.EmbedBatches(ctx, batches, wrapBatchProgress(onProgress))
 		if err != nil {
+			if batchErr := embedder.AsBatchError(err); batchErr != nil {
+				log.Printf("Batch embedding failed. Files in the failing batch:")
+				for _, fileIdx := range batchErr.FileIndices {
+					for _, fd := range remainingFileData {
+						if fd.fileIndex == fileIdx {
+							log.Printf("  %s (%d chunks)", fd.file.Path, len(fd.chunkInfos))
+							break
+						}
+					}
+				}
+			}
 			return filesIndexed, chunksCreated, fmt.Errorf("failed to embed batches: %w", err)
 		}
 

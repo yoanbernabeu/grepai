@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -252,7 +253,8 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 		g.Go(func() error {
 			embeddings, err := e.embedBatchWithRetry(ctx, batch, len(batches), totalChunks, &completedChunks, progress)
 			if err != nil {
-				return err
+				fileIndices := batchFileIndices(batch)
+				return &BatchError{FileIndices: fileIndices, Err: err}
 			}
 			results[batch.Index] = BatchResult{
 				BatchIndex: batch.Index,
@@ -267,6 +269,19 @@ func (e *OpenAIEmbedder) EmbedBatches(ctx context.Context, batches []Batch, prog
 	}
 
 	return results, nil
+}
+
+func batchFileIndices(batch Batch) []int {
+	seen := make(map[int]bool)
+	for _, entry := range batch.Entries {
+		seen[entry.FileIndex] = true
+	}
+	indices := make([]int, 0, len(seen))
+	for idx := range seen {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	return indices
 }
 
 // embedBatchWithRetry embeds a single batch with retry logic for retryable errors.

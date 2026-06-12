@@ -3,6 +3,7 @@ package embedder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,10 +321,16 @@ func TestOpenAIEmbedder_EmbedBatches_FailOn4xx(t *testing.T) {
 		t.Fatal("expected error for 401 response")
 	}
 
-	// Verify it's identified as non-retryable
-	retryErr, ok := err.(*RetryableError)
-	if !ok {
-		t.Fatalf("expected RetryableError, got %T", err)
+	// Verify it's wrapped in a BatchError with file indices
+	batchErr := AsBatchError(err)
+	if batchErr == nil {
+		t.Fatalf("expected BatchError wrapper, got %T", err)
+	}
+
+	// Verify the underlying error is a non-retryable RetryableError
+	var retryErr *RetryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected RetryableError in chain, got %T", err)
 	}
 	if retryErr.Retryable {
 		t.Error("401 error should not be retryable")
@@ -742,10 +749,19 @@ func TestOpenAIEmbedder_EmbedBatches_ParallelBatchFailure(t *testing.T) {
 		t.Fatal("expected error when batch fails")
 	}
 
-	// Verify the error is from the failed batch
-	retryErr, ok := err.(*RetryableError)
-	if !ok {
-		t.Fatalf("expected RetryableError, got %T: %v", err, err)
+	// Verify it's wrapped in a BatchError with the correct file indices
+	batchErr := AsBatchError(err)
+	if batchErr == nil {
+		t.Fatalf("expected BatchError wrapper, got %T: %v", err, err)
+	}
+	if len(batchErr.FileIndices) == 0 {
+		t.Error("expected file indices in BatchError")
+	}
+
+	// Verify the underlying error is from the failed batch
+	var retryErr *RetryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected RetryableError in chain, got: %v", err)
 	}
 	if retryErr.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", retryErr.StatusCode)
