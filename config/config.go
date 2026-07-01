@@ -24,6 +24,7 @@ const (
 	DefaultOpenAIEmbeddingModel     = "text-embedding-3-small"
 	DefaultSyntheticEmbeddingModel  = "hf:nomic-ai/nomic-embed-text-v1.5"
 	DefaultOpenRouterEmbeddingModel = "openai/text-embedding-3-small"
+	DefaultRequestyEmbeddingModel   = "openai/text-embedding-3-small"
 	OpenAIEmbeddingModelLarge       = "text-embedding-3-large"
 	OpenRouterEmbeddingModelLarge   = "openai/text-embedding-3-large"
 	OpenRouterEmbeddingModelQwen8B  = "qwen/qwen3-embedding-8b"
@@ -33,6 +34,7 @@ const (
 	DefaultOpenAIEndpoint     = "https://api.openai.com/v1"
 	DefaultSyntheticEndpoint  = "https://api.synthetic.new/openai/v1"
 	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/v1"
+	DefaultRequestyEndpoint   = "https://router.requesty.ai/v1"
 
 	DefaultLocalEmbeddingDimensions = 768
 	DefaultOpenAIDimensions         = 1536
@@ -106,7 +108,7 @@ type BoostRule struct {
 }
 
 type EmbedderConfig struct {
-	Provider    string `yaml:"provider"` // ollama | lmstudio | openai | synthetic | openrouter
+	Provider    string `yaml:"provider"` // ollama | lmstudio | openai | synthetic | openrouter | requesty
 	Model       string `yaml:"model"`
 	Endpoint    string `yaml:"endpoint,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
@@ -122,7 +124,7 @@ func (e *EmbedderConfig) GetDimensions() int {
 		return *e.Dimensions
 	}
 	switch e.Provider {
-	case "openai", "openrouter":
+	case "openai", "openrouter", "requesty":
 		switch strings.TrimSpace(e.Model) {
 		case OpenAIEmbeddingModelLarge, OpenRouterEmbeddingModelLarge:
 			return DefaultOpenAILargeDimensions
@@ -151,6 +153,13 @@ func DefaultEmbedderForProvider(provider string) EmbedderConfig {
 			Provider:   "openrouter",
 			Model:      DefaultOpenRouterEmbeddingModel,
 			Endpoint:   DefaultOpenRouterEndpoint,
+			Dimensions: nil,
+		}
+	case "requesty":
+		return EmbedderConfig{
+			Provider:   "requesty",
+			Model:      DefaultRequestyEmbeddingModel,
+			Endpoint:   DefaultRequestyEndpoint,
 			Dimensions: nil,
 		}
 	case "lmstudio":

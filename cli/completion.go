@@ -97,7 +97,8 @@ func registerCompletions() {
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",
-			"openrouter\tCloud multi-provider gateway",
+			"openrouter	Cloud multi-provider gateway",
+			"requesty	Cloud multi-provider gateway",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
 	_ = initCmd.RegisterFlagCompletionFunc("backend", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -121,7 +122,8 @@ func registerCompletions() {
 			"lmstudio\tLocal embedding with LM Studio",
 			"openai\tCloud embedding with OpenAI",
 			"synthetic\tCloud embedding with Synthetic (free)",
-			"openrouter\tCloud multi-provider gateway",
+			"openrouter	Cloud multi-provider gateway",
+			"requesty	Cloud multi-provider gateway",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
 

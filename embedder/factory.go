@@ -65,6 +65,17 @@ func NewFromConfig(cfg *config.Config) (Embedder, error) {
 		}
 		return NewOpenRouterEmbedder(opts...)
 
+	case "requesty":
+		opts := []RequestyOption{
+			WithRequestyModel(cfg.Embedder.Model),
+			WithRequestyKey(cfg.Embedder.APIKey),
+			WithRequestyEndpoint(cfg.Embedder.Endpoint),
+		}
+		if cfg.Embedder.Dimensions != nil {
+			opts = append(opts, WithRequestyDimensions(*cfg.Embedder.Dimensions))
+		}
+		return NewRequestyEmbedder(opts...)
+
 	default:
 		return nil, fmt.Errorf("unknown embedding provider: %s", cfg.Embedder.Provider)
 	}

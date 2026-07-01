@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Requesty Provider**: Add Requesty as a new embedding provider
+  - Requesty (`requesty`): Multi-provider gateway via `https://router.requesty.ai/v1` with OpenAI-compatible embeddings (`openai/text-embedding-3-small`, 1536 dims)
+  - API key resolved from `REQUESTY_API_KEY` (falling back to `OPENAI_API_KEY`)
+  - Integrated into the embedder factory (`NewFromConfig`), `grepai init` prompts, and shell completion
+
 ## [0.35.0] - 2026-03-16
 
 ### Added

@@ -122,6 +122,29 @@ func TestNewFromConfig_OpenRouter(t *testing.T) {
 	}
 }
 
+func TestNewFromConfig_Requesty(t *testing.T) {
+	t.Setenv("REQUESTY_API_KEY", "test-key")
+
+	cfg := &config.Config{
+		Embedder: config.EmbedderConfig{
+			Provider: "requesty",
+			Model:    "openai/text-embedding-3-small",
+			Endpoint: "https://router.requesty.ai/v1",
+		},
+	}
+
+	emb, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	defer emb.Close()
+
+	_, ok := emb.(*RequestyEmbedder)
+	if !ok {
+		t.Errorf("expected *RequestyEmbedder, got %T", emb)
+	}
+}
+
 func TestNewFromConfig_UnknownProvider(t *testing.T) {
 	cfg := &config.Config{
 		Embedder: config.EmbedderConfig{
