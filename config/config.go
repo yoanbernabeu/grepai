@@ -420,7 +420,7 @@ func DefaultConfig() *Config {
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",
-				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hxx",
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#
 				".pas", ".dpr", // Pascal/Delphi

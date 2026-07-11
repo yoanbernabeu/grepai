@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,11 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Watch.RPGMaxDirtyFilesPerBatch != DefaultWatchRPGMaxDirtyFilesPerBatch {
 		t.Errorf("expected watch.rpg_max_dirty_files_per_batch=%d, got %d", DefaultWatchRPGMaxDirtyFilesPerBatch, cfg.Watch.RPGMaxDirtyFilesPerBatch)
+	}
+	for _, ext := range []string{".cxx", ".hxx"} {
+		if !slices.Contains(cfg.Trace.EnabledLanguages, ext) {
+			t.Errorf("expected trace.enabled_languages to contain %s", ext)
+		}
 	}
 }
 

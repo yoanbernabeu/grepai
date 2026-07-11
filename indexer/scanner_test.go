@@ -7,7 +7,7 @@ import (
 )
 
 func TestSupportedExtensions(t *testing.T) {
-	supported := []string{".go", ".js", ".ts", ".py", ".rs", ".java"}
+	supported := []string{".go", ".js", ".ts", ".py", ".rs", ".java", ".cxx", ".hxx"}
 	unsupported := []string{".exe", ".bin", ".png", ".jpg", ".mp3"}
 
 	for _, ext := range supported {
@@ -20,6 +20,36 @@ func TestSupportedExtensions(t *testing.T) {
 		if SupportedExtensions[ext] {
 			t.Errorf("expected %s to be unsupported", ext)
 		}
+	}
+}
+
+func TestScanner_ScanCXXFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	for _, name := range []string{"source.cxx", "header.hxx"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("int example();\n"), 0644); err != nil {
+			t.Fatalf("failed to create %s: %v", name, err)
+		}
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	files, _, err := NewScanner(tmpDir, ignoreMatcher).Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected .cxx and .hxx files to be scanned, got %d files", len(files))
+	}
+
+	metadata, _, err := NewScanner(tmpDir, ignoreMatcher).ScanMetadata()
+	if err != nil {
+		t.Fatalf("metadata scan failed: %v", err)
+	}
+	if len(metadata) != 2 {
+		t.Fatalf("expected .cxx and .hxx files in metadata scan, got %d files", len(metadata))
 	}
 }
 

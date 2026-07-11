@@ -164,6 +164,7 @@ trace:
     - .hpp
     - .cc
     - .cxx
+    - .hxx
     - .rs
     - .zig
     - .cs
