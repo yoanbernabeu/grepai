@@ -89,6 +89,23 @@ func BenchmarkIndexAllWithProgress_BranchSwitchScenario(b *testing.B) {
 	lastIndexTime := time.Now().Add(1 * time.Hour)
 	idx := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, lastIndexTime)
 
+	// Pre-seed documents so every b.N iteration hits the mtime-gate fast path,
+	// same as TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding.
+	// Without this, the first iteration would actually index all 800 files
+	// (populating mockStore as a side effect), and only iterations after the
+	// first would take the fast path -- making the benchmark's own assertion
+	// fail whenever b.N > 1 (e.g. under -benchtime=Nx, or whenever Go's default
+	// calibration decides more than one iteration is needed), independent of
+	// anything being measured.
+	for i := range 800 {
+		path := fmt.Sprintf("file_%04d.go", i)
+		mockStore.documents[path] = store.Document{
+			Path:     path,
+			Hash:     "seeded",
+			ChunkIDs: []string{"c1"},
+		}
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
 
@@ -99,6 +116,61 @@ func BenchmarkIndexAllWithProgress_BranchSwitchScenario(b *testing.B) {
 		}
 		if stats.FilesIndexed != 0 {
 			b.Fatalf("expected 0 indexed files, got %d", stats.FilesIndexed)
+		}
+	}
+}
+
+// BenchmarkIndexAllWithProgress_FullHashRescan exercises the path this
+// change targets directly: every file's mtime looks new (e.g. after a
+// watcher restart, git checkout, or CI clone where mtimes don't reflect
+// history), so every file must be read and hashed to discover that its
+// content actually hasn't changed. This is the phase that was previously
+// fully sequential; see decideFileScan/scanWorkerLimit in indexer.go.
+func BenchmarkIndexAllWithProgress_FullHashRescan(b *testing.B) {
+	ctx := context.Background()
+	tmpDir := b.TempDir()
+	createGoFixtureFiles(b, tmpDir, 800)
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		b.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, ignoreMatcher)
+	chunker := NewChunker(512, 50)
+
+	// Pre-seed the store with the *real* content hash for each file so the
+	// hash comparison in decideFileScan finds them unchanged, matching what
+	// happens on a watcher restart against an already fully-indexed project.
+	mockStore := newMockStore()
+	for i := range 800 {
+		path := fmt.Sprintf("file_%04d.go", i)
+		info, err := scanner.ScanFile(path)
+		if err != nil || info == nil {
+			b.Fatalf("failed to pre-hash fixture %s: %v", path, err)
+		}
+		mockStore.documents[path] = store.Document{
+			Path:     path,
+			Hash:     info.Hash,
+			ChunkIDs: []string{"c1"},
+		}
+	}
+
+	mockEmbedder := newMockEmbedder()
+	// lastIndexTime is intentionally zero so the mtime fast-path gate never
+	// applies -- every file must go through ScanFile + hash comparison.
+	idx := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, time.Time{})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		stats, err := idx.IndexAllWithProgress(ctx, nil)
+		if err != nil {
+			b.Fatalf("IndexAllWithProgress failed: %v", err)
+		}
+		if stats.FilesIndexed != 0 {
+			b.Fatalf("expected 0 indexed files (all unchanged), got %d", stats.FilesIndexed)
 		}
 	}
 }
