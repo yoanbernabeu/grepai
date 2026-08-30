@@ -119,6 +119,20 @@ type Scanner struct {
 }
 
 func NewScanner(root string, ignore *IgnoreMatcher) *Scanner {
+	// Resolve the project root if (and only if) it is itself a symlink to a
+	// directory. filepath.WalkDir does not descend into symlinked dirs, so a
+	// project rooted at a symlink would otherwise enumerate zero files. We
+	// only resolve the root entry — intermediate symlinks deeper in the tree
+	// remain skipped, which avoids recursion loops and surprising blow-ups
+	// when packages vendor third-party trees through symlinks. We deliberately
+	// do not call filepath.EvalSymlinks unconditionally because that would
+	// also rewrite parent-directory symlinks (e.g. /usr/local on a Nix system)
+	// and shift the project's stored path in ways the user didn't ask for.
+	if info, err := os.Lstat(root); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+	}
 	return &Scanner{
 		root:   root,
 		ignore: ignore,

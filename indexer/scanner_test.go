@@ -382,3 +382,79 @@ func TestScanner_ScanFile_SkipsMinified(t *testing.T) {
 		t.Error("expected nil for minified file, got file info")
 	}
 }
+
+func TestScanner_SymlinkProjectRoot(t *testing.T) {
+	// Real directory containing source files.
+	realDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realDir, "main.go"), []byte("package main"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(realDir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "sub", "nested.go"), []byte("package sub"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A symlink in a different parent pointing at the real directory.
+	linkParent := t.TempDir()
+	linkRoot := filepath.Join(linkParent, "via-symlink")
+	if err := os.Symlink(realDir, linkRoot); err != nil {
+		t.Skipf("cannot create symlinks in this environment: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(linkRoot, []string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := NewScanner(linkRoot, ignoreMatcher)
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected 2 files via symlinked root, got %d: %+v", len(files), files)
+	}
+	// File paths must be relative to the resolved real root, not the
+	// symlink — otherwise downstream callers can't match them against
+	// re-scans or watcher events that arrive with resolved paths.
+	for _, f := range files {
+		if filepath.IsAbs(f.Path) {
+			t.Errorf("expected relative path, got absolute: %q", f.Path)
+		}
+	}
+}
+
+func TestScanner_RealDirRoot_NotEvalSymlinks(t *testing.T) {
+	// When the root is a real directory (not a symlink), the scanner must
+	// NOT call EvalSymlinks — we don't want parent symlinks (e.g. /usr/local
+	// on Nix systems) to silently rewrite the project's stored path.
+	parent := t.TempDir()
+	realRoot := filepath.Join(parent, "real")
+	if err := os.MkdirAll(realRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink to the parent of realRoot — i.e. realRoot/.. is reachable
+	// via a different absolute path.
+	linkParent := filepath.Join(t.TempDir(), "linked-parent")
+	if err := os.Symlink(parent, linkParent); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+	rootViaLinkedParent := filepath.Join(linkParent, "real")
+
+	if err := os.WriteFile(filepath.Join(realRoot, "a.go"), []byte("package x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(rootViaLinkedParent, []string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := NewScanner(rootViaLinkedParent, ignoreMatcher)
+
+	if scanner.root != rootViaLinkedParent {
+		t.Errorf("scanner.root should stay as the caller-provided path (%q), got %q",
+			rootViaLinkedParent, scanner.root)
+	}
+}
