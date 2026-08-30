@@ -388,7 +388,7 @@ func TestScanner_CustomExtensions(t *testing.T) {
 
 	// File with a custom extension that's not in SupportedExtensions.
 	tengoFile := filepath.Join(tmpDir, "workflow.tengo")
-	if err := os.WriteFile(tengoFile, []byte(`fmt := import("fmt")` + "\n" + `fmt.println("hello")` + "\n"), 0644); err != nil {
+	if err := os.WriteFile(tengoFile, []byte(`fmt := import("fmt")`+"\n"+`fmt.println("hello")`+"\n"), 0644); err != nil {
 		t.Fatalf("failed to create tengo file: %v", err)
 	}
 
