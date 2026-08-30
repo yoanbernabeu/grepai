@@ -22,12 +22,13 @@ type Indexer struct {
 }
 
 type IndexStats struct {
-	FilesIndexed  int
-	FilesSkipped  int
-	ChunksCreated int
-	FilesRemoved  int
-	Duration      time.Duration
-	ScannedFiles  []FileMeta // All files found during scan (for reuse by callers)
+	FilesIndexed   int
+	FilesSkipped   int
+	ChunksCreated  int
+	FilesRemoved   int
+	Duration       time.Duration
+	ScannedFiles   []FileMeta      // All files found during scan (for reuse by callers)
+	UnchangedFiles map[string]bool // Files verified unchanged (by ModTime or hash) for callers to reuse
 }
 
 // ProgressInfo contains progress information for indexing
@@ -93,7 +94,9 @@ func (idx *Indexer) IndexAllWithProgress(ctx context.Context, onProgress Progres
 // When the embedder implements BatchEmbedder, files are processed in parallel using cross-file batching.
 func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress ProgressCallback, onBatchProgress BatchProgressCallback) (*IndexStats, error) {
 	start := time.Now()
-	stats := &IndexStats{}
+	stats := &IndexStats{
+		UnchangedFiles: make(map[string]bool),
+	}
 
 	// Scan all files (metadata-only first pass)
 	fileMetas, skipped, err := idx.scanner.ScanMetadata()
@@ -135,12 +138,25 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 		// Skip files modified before lastIndexTime — but only if they have chunks.
 		// Files with no chunks need re-indexing even if their mod_time is old
 		// (e.g., a prior indexing run created the document but failed to embed).
-		if !idx.lastIndexTime.IsZero() && doc != nil && len(doc.ChunkIDs) > 0 {
+		if doc != nil && len(doc.ChunkIDs) > 0 {
 			fileModTime := time.Unix(fileMeta.ModTime, 0)
-			if fileModTime.Before(idx.lastIndexTime) || fileModTime.Equal(idx.lastIndexTime) {
+
+			// Primary: per-file ModTime comparison — precise, no file I/O needed.
+			if !doc.ModTime.IsZero() && fileModTime.Equal(doc.ModTime) {
 				stats.FilesSkipped++
+				stats.UnchangedFiles[fileMeta.Path] = true
 				delete(existingMap, fileMeta.Path)
 				continue
+			}
+
+			// Fallback: global lastIndexTime for legacy documents without stored ModTime.
+			if !idx.lastIndexTime.IsZero() && doc.ModTime.IsZero() {
+				if fileModTime.Before(idx.lastIndexTime) || fileModTime.Equal(idx.lastIndexTime) {
+					stats.FilesSkipped++
+					stats.UnchangedFiles[fileMeta.Path] = true
+					delete(existingMap, fileMeta.Path)
+					continue
+				}
 			}
 		}
 
@@ -159,6 +175,16 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 		}
 
 		if doc != nil && doc.Hash == file.Hash && len(doc.ChunkIDs) > 0 {
+			// Content unchanged — update stored ModTime so future per-file checks
+			// can skip this file without reading its content (e.g. after git checkout).
+			newModTime := time.Unix(file.ModTime, 0)
+			if !newModTime.Equal(doc.ModTime) {
+				doc.ModTime = newModTime
+				if saveErr := idx.store.SaveDocument(ctx, *doc); saveErr != nil {
+					log.Printf("Warning: failed to update document mod_time for %s: %v", file.Path, saveErr)
+				}
+			}
+			stats.UnchangedFiles[file.Path] = true
 			delete(existingMap, fileMeta.Path)
 			continue // File unchanged and has chunks
 		}
