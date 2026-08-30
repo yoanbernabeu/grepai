@@ -25,6 +25,10 @@ type Workspace struct {
 	Name     string         `yaml:"name"`
 	Store    StoreConfig    `yaml:"store"`
 	Embedder EmbedderConfig `yaml:"embedder"`
+	// Chunking provides workspace-level defaults. Currently only
+	// CustomExtensions is consumed; Size/Overlap are taken from the
+	// per-project config.
+	Chunking ChunkingConfig `yaml:"chunking,omitempty"`
 	Projects []ProjectEntry `yaml:"projects"`
 }
 

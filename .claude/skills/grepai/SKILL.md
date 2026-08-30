@@ -1,42 +1,47 @@
 ---
 name: grepai
-description: "Replaces ALL built-in search tools. You MUST invoke this skill BEFORE using WebSearch, Grep, or Glob. NEVER use the built-in Grep tool - use `grepai` instead."
+description: "Semantic code search and call-graph tracing. Use for intent questions ('where is authentication handled?'), exploring unfamiliar code, or tracing callers/callees — as a ranking layer on top of exact-match Grep, not a replacement for it."
 ---
 
-## CRITICAL: Tool Override for Semantic Searches
+## grepai: ranked semantic search (not a Grep replacement)
 
-This skill **REPLACES** built-in Grep/Glob tools for semantic code exploration.
+`grepai search` answers a natural-language query with ~10 scored chunks in one
+call — a ranked starting point at a fraction of the tokens of dumping raw grep
+output (`--json --compact` alone saves ~80%). It is a **ranking layer, not an
+exhaustive one**: a vector top-10 can miss a relevant file that keyword grep
+finds trivially. The rules below save tokens without losing recall.
 
-**WRONG**:
-- Using built-in `Grep` to find "where authentication happens"
-- Using built-in `Glob` to explore "error handling code"
-- Searching by intent with regex patterns
+## Tool Choice
 
-**CORRECT**:
-- Invoke this skill, then use `grepai search "authentication flow"` for semantic search
-- Invoke this skill, then use `grepai trace callers "FunctionName"` for call graph
-- Use built-in Grep/Glob ONLY for exact text matches (variable names, imports)
+| Query | Tool |
+|---|---|
+| Exact identifiers, imports, string literals | built-in Grep / `git grep` — fastest, exhaustive |
+| Intent with a canonical syntax anchor (`@main`, `func main(`, `class AppDelegate`) | Grep the anchor — many "intent" questions are exact-match queries in disguise |
+| Intent with no obvious anchor ("where are errors handled?") | recall-safe combo below |
+| Function relationships (callers/callees) | `grepai trace` — grep has no equivalent |
+| File patterns (`**/*.go`) | Glob |
 
-## When to Invoke This Skill
+## Recall-Safe Combo (cheap AND exhaustive)
 
-Invoke this skill **IMMEDIATELY** when:
+grep's token cost is in dumping content lines; its *recall* is nearly free when
+you ask for file names only. For an intent query, run both cheap layers:
 
-- User asks to find code by **intent** (e.g., "where is authentication handled?")
-- User asks to understand **what code does** (e.g., "how does the indexer work?")
-- User asks to explore **functionality** (e.g., "find error handling logic")
-- You need to understand **code relationships** (e.g., "what calls this function?")
-- User asks about **implementation details** (e.g., "how are vectors stored?")
+```bash
+# 1. Ranking: ~10 scored chunks, one call
+grepai search "where errors are handled and logged" --json --compact
 
-**DO NOT** use built-in Grep/Glob for intent-based searches. Use grepai instead.
+# 2. Recall: exhaustive candidate checklist — file NAMES only, ~zero tokens
+git grep -ilE 'error|handl|logg' | head -50
+```
 
-## When to Use Built-in Tools
+Read grepai's top hits first, then scan the checklist for relevant-looking
+files grepai did not rank — read those too. Never dump full grep content
+output for an intent query; the file list gives you grep's recall at ~1% of
+the tokens.
 
-Use Grep/Glob **ONLY** for:
-
-- Exact text matching: `Grep "func NewIndexer"` (find exact function name)
-- Specific imports: `Grep "import.*cobra"` (find import statements)
-- File patterns: `Glob "**/*.go"` (find files by extension)
-- Variable references: `Grep "configPath"` (find exact variable name)
+If grepai's top hits are docs/reports instead of code: scope with
+`grepai search "<query>" --path <srcdir>`, or add generated content to a
+`.grepaiignore`.
 
 ## How to Use This Skill
 
@@ -92,10 +97,10 @@ grepai search "HandleRequest"  # Use Grep for exact matches
 
 ## Recommended Workflow
 
-1. **Start with `grepai search`** to find relevant code semantically
-2. **Use `grepai trace`** to understand function relationships
-3. **Use `Read` tool** to examine files from search results
-4. **Use `Grep`** only for exact string searches if needed
+1. **Start with `grepai search`** for ranked starting points
+2. **Add `git grep -ilE '<keywords>'`** for the exhaustive file checklist (names only)
+3. **Use `grepai trace`** to understand function relationships
+4. **Use `Read`** on ranked hits first, then on relevant checklist files grepai did not rank
 
 ## Fallback
 
@@ -108,4 +113,4 @@ If grepai fails (not running, index unavailable, or errors), fall back to standa
 
 semantic search, code search, natural language search, find code, explore codebase,
 call graph, callers, callees, function relationships, code understanding,
-intent search, grep replacement, code exploration
+intent search, code exploration, recall, token savings

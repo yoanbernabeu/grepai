@@ -77,6 +77,16 @@ func WithSyntheticDimensions(dimensions int) SyntheticOption {
 	}
 }
 
+// WithSyntheticTimeout overrides the HTTP client timeout for embedding
+// requests. Values <= 0 are ignored, preserving the default.
+func WithSyntheticTimeout(d time.Duration) SyntheticOption {
+	return func(e *SyntheticEmbedder) {
+		if d > 0 && e.client != nil {
+			e.client.Timeout = d
+		}
+	}
+}
+
 func NewSyntheticEmbedder(opts ...SyntheticOption) (*SyntheticEmbedder, error) {
 	e := &SyntheticEmbedder{
 		endpoint:   defaultSyntheticEndpoint + defaultSyntheticPath,

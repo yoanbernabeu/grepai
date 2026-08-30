@@ -98,6 +98,26 @@ func WithOpenAIRetryPolicy(policy RetryPolicy) OpenAIOption {
 	}
 }
 
+// WithOpenAITimeout overrides the HTTP client timeout for embedding requests.
+// Values <= 0 are ignored, preserving the default.
+func WithOpenAITimeout(d time.Duration) OpenAIOption {
+	return func(e *OpenAIEmbedder) {
+		if d > 0 && e.client != nil {
+			e.client.Timeout = d
+		}
+	}
+}
+
+// WithOpenAIMaxRetries sets the maximum retry attempts on the embedder's
+// retry policy. Values <= 0 are ignored, preserving the default.
+func WithOpenAIMaxRetries(n int) OpenAIOption {
+	return func(e *OpenAIEmbedder) {
+		if n > 0 {
+			e.retryPolicy.MaxAttempts = n
+		}
+	}
+}
+
 // WithOpenAITPMLimit sets the tokens-per-minute limit for proactive rate limiting.
 // When set > 0, the embedder will pace requests to stay within this limit.
 // Default: 0 (disabled). OpenAI Tier 1 limit is 1,000,000 TPM for embeddings.
@@ -351,7 +371,7 @@ func (e *OpenAIEmbedder) embedBatchWithRetry(
 			return nil, err
 		}
 
-		embeddings, err := e.embedBatchRequest(ctx, contents)
+		embeddings, err := e.embedTexts(ctx, contents)
 		if err == nil {
 			e.reportBatchSuccess(batch, totalBatches, totalChunks, completedChunks, estimatedTokens, progress)
 			return embeddings, nil
@@ -426,6 +446,13 @@ func handleEmbedErrorResponse(resp *http.Response, body []byte) error {
 		return NewContextLengthError(0, 0, 8191, msg)
 	}
 
+	// Check for batch-level token limit (request contains too many inputs in total)
+	if resp.StatusCode == http.StatusBadRequest && strings.Contains(msg, "maximum request size") {
+		retryErr := NewRetryableError(resp.StatusCode, fmt.Sprintf("OpenAI API error (status %d): %s", resp.StatusCode, msg))
+		retryErr.BatchTooLarge = true
+		return retryErr
+	}
+
 	retryErr := NewRetryableError(resp.StatusCode, fmt.Sprintf("OpenAI API error (status %d): %s", resp.StatusCode, msg))
 	if resp.StatusCode == http.StatusTooManyRequests {
 		headers := parseRateLimitHeaders(resp.Header)
@@ -452,6 +479,30 @@ func parseEmbeddingsResponse(body []byte, expectedCount int) ([][]float32, error
 	}
 
 	return embeddings, nil
+}
+
+// embedTexts embeds a slice of texts, automatically splitting the request in half
+// if the API returns a "maximum request size" error. This handles cases where our
+// token estimation undershoots the real count (e.g., dense or minified code).
+func (e *OpenAIEmbedder) embedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	embeddings, err := e.embedBatchRequest(ctx, texts)
+	if err == nil {
+		return embeddings, nil
+	}
+	retryErr, ok := err.(*RetryableError)
+	if ok && retryErr.BatchTooLarge && len(texts) > 1 {
+		mid := len(texts) / 2
+		left, err := e.embedTexts(ctx, texts[:mid])
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.embedTexts(ctx, texts[mid:])
+		if err != nil {
+			return nil, err
+		}
+		return append(left, right...), nil
+	}
+	return nil, err
 }
 
 // embedBatchRequest makes a single embedding request to the OpenAI API.

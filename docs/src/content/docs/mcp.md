@@ -30,6 +30,12 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 | `grepai_trace_callers` | Find callers of a symbol | `symbol` (required), `workspace`, `project`, `compact` (default: false) |
 | `grepai_trace_callees` | Find callees of a symbol | `symbol` (required), `workspace`, `project`, `compact` (default: false) |
 | `grepai_trace_graph` | Build complete call graph | `symbol` (required), `workspace`, `project`, `depth` (default: 2) |
+| `grepai_refs_readers` | Find property/state readers | `symbol` (required), `workspace`, `project`, `compact` (default: false), `format` (`json` or `toon`) |
+| `grepai_refs_writers` | Find property/state writers | `symbol` (required), `workspace`, `project`, `compact` (default: false), `format` (`json` or `toon`) |
+| `grepai_refs_graph` | Build property usage graph | `symbol` (required), `workspace`, `project`, `compact` (default: false), `format` (`json` or `toon`) |
+| `grepai_rpg_search` | Search Repository Planning Graph nodes | `query` (required), `scope`, `kinds`, `limit` (default: 10), `format` (`json` or `toon`) |
+| `grepai_rpg_fetch` | Fetch context for an RPG node | `node_id` (required), `format` (`json` or `toon`) |
+| `grepai_rpg_explore` | Traverse an RPG graph neighborhood | `start_node_id` (required), `direction`, `depth`, `edge_types`, `limit`, `format` (`json` or `toon`) |
 | `grepai_index_status` | Check index health | `verbose` (optional, default: false), `workspace` |
 | `grepai_list_workspaces` | List available workspace names | `format` (optional: `json` or `toon`) |
 | `grepai_list_projects` | List projects for a workspace | `workspace` (required), `format` (optional: `json` or `toon`) |
@@ -172,6 +178,13 @@ Arguments: {"query": "user authentication flow", "limit": 5}
 ```text
 Tool: grepai_trace_callers
 Arguments: {"symbol": "HandleLogin"}
+```
+
+**RPG search example:**
+
+```text
+Tool: grepai_rpg_search
+Arguments: {"query": "command line search flow", "kinds": "symbol,file", "limit": 5}
 ```
 
 **Index status example:**

@@ -460,7 +460,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}

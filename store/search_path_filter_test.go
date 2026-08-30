@@ -132,7 +132,7 @@ func TestPostgresStoreSearchWithPathPrefix(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store, err := NewPostgresStore(ctx, dsn, "test-project-"+randomString(8), 3)
+	store, err := NewPostgresStore(ctx, dsn, "test-project-"+randomString(8), 3, "test-cache-namespace")
 	if err != nil {
 		t.Skip("could not connect to PostgreSQL:", err)
 	}

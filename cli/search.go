@@ -242,7 +242,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
@@ -520,7 +520,7 @@ func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResu
 		st = gobStore
 	case "postgres":
 		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
+		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
 		if err != nil {
 			return nil, err
 		}
@@ -577,7 +577,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 
 	switch ws.Store.Backend {
 	case "postgres":
-		st, err = store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions())
+		st, err = store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions(), ws.Embedder.CacheNamespace())
 		if err != nil {
 			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}

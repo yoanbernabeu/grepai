@@ -52,6 +52,16 @@ func WithOllamaDimensions(dimensions int) OllamaOption {
 	}
 }
 
+// WithOllamaTimeout overrides the HTTP client timeout for embedding requests.
+// Values <= 0 are ignored, preserving the default.
+func WithOllamaTimeout(d time.Duration) OllamaOption {
+	return func(e *OllamaEmbedder) {
+		if d > 0 && e.client != nil {
+			e.client.Timeout = d
+		}
+	}
+}
+
 func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 	e := &OllamaEmbedder{
 		endpoint:   defaultOllamaEndpoint,

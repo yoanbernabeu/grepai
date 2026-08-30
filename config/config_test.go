@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Watch.RPGMaxDirtyFilesPerBatch != DefaultWatchRPGMaxDirtyFilesPerBatch {
 		t.Errorf("expected watch.rpg_max_dirty_files_per_batch=%d, got %d", DefaultWatchRPGMaxDirtyFilesPerBatch, cfg.Watch.RPGMaxDirtyFilesPerBatch)
 	}
+	for _, ext := range []string{".cxx", ".hxx"} {
+		if !slices.Contains(cfg.Trace.EnabledLanguages, ext) {
+			t.Errorf("expected trace.enabled_languages to contain %s", ext)
+		}
+	}
 }
 
 func TestDefaultEmbedderForProvider(t *testing.T) {
@@ -100,6 +106,42 @@ func TestDefaultEmbedderForProvider(t *testing.T) {
 	}
 	if openai.Parallelism != DefaultOpenAIParallelism {
 		t.Fatalf("openai parallelism = %d, want %d", openai.Parallelism, DefaultOpenAIParallelism)
+	}
+}
+
+func TestEmbedderConfigCacheNamespace(t *testing.T) {
+	dim := 2048
+	cfg := EmbedderConfig{
+		Provider:   " openai ",
+		Model:      " text-embedding-3-small ",
+		Endpoint:   " https://api.openai.com/v1 ",
+		Dimensions: &dim,
+	}
+
+	got := cfg.CacheNamespace()
+	want := "embedding-cache-v2:provider=openai:model=text-embedding-3-small:dimensions=2048:endpoint=https://api.openai.com/v1"
+	if got != want {
+		t.Fatalf("CacheNamespace() = %q, want %q", got, want)
+	}
+}
+
+func TestEmbedderConfigCacheNamespaceUsesResolvedDimensions(t *testing.T) {
+	cfg := EmbedderConfig{
+		Provider: "openai",
+		Model:    OpenAIEmbeddingModelLarge,
+	}
+
+	if got, want := cfg.CacheNamespace(), "embedding-cache-v2:provider=openai:model=text-embedding-3-large:dimensions=3072:endpoint="; got != want {
+		t.Fatalf("CacheNamespace() = %q, want %q", got, want)
+	}
+}
+
+func TestEmbedderConfigCacheNamespaceChangesForModel(t *testing.T) {
+	small := EmbedderConfig{Provider: "openai", Model: DefaultOpenAIEmbeddingModel}
+	large := EmbedderConfig{Provider: "openai", Model: OpenAIEmbeddingModelLarge}
+
+	if small.CacheNamespace() == large.CacheNamespace() {
+		t.Fatalf("cache namespace must differ across models: %q", small.CacheNamespace())
 	}
 }
 

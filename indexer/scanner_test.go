@@ -7,7 +7,7 @@ import (
 )
 
 func TestSupportedExtensions(t *testing.T) {
-	supported := []string{".go", ".js", ".ts", ".py", ".rs", ".java"}
+	supported := []string{".go", ".js", ".ts", ".py", ".rs", ".java", ".cxx", ".hxx"}
 	unsupported := []string{".exe", ".bin", ".png", ".jpg", ".mp3"}
 
 	for _, ext := range supported {
@@ -20,6 +20,36 @@ func TestSupportedExtensions(t *testing.T) {
 		if SupportedExtensions[ext] {
 			t.Errorf("expected %s to be unsupported", ext)
 		}
+	}
+}
+
+func TestScanner_ScanCXXFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	for _, name := range []string{"source.cxx", "header.hxx"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("int example();\n"), 0644); err != nil {
+			t.Fatalf("failed to create %s: %v", name, err)
+		}
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	files, _, err := NewScanner(tmpDir, ignoreMatcher).Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected .cxx and .hxx files to be scanned, got %d files", len(files))
+	}
+
+	metadata, _, err := NewScanner(tmpDir, ignoreMatcher).ScanMetadata()
+	if err != nil {
+		t.Fatalf("metadata scan failed: %v", err)
+	}
+	if len(metadata) != 2 {
+		t.Fatalf("expected .cxx and .hxx files in metadata scan, got %d files", len(metadata))
 	}
 }
 
@@ -350,5 +380,143 @@ func TestScanner_ScanFile_SkipsMinified(t *testing.T) {
 	// Should return nil for minified files
 	if fileInfo != nil {
 		t.Error("expected nil for minified file, got file info")
+	}
+}
+
+func TestScanner_CustomExtensions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// File with a custom extension that's not in SupportedExtensions.
+	tengoFile := filepath.Join(tmpDir, "workflow.tengo")
+	if err := os.WriteFile(tengoFile, []byte(`fmt := import("fmt")` + "\n" + `fmt.println("hello")` + "\n"), 0644); err != nil {
+		t.Fatalf("failed to create tengo file: %v", err)
+	}
+
+	// File with an unrecognized extension that should remain unsupported.
+	unknownFile := filepath.Join(tmpDir, "data.xyz")
+	if err := os.WriteFile(unknownFile, []byte("ignored"), 0644); err != nil {
+		t.Fatalf("failed to create xyz file: %v", err)
+	}
+
+	// File with a built-in supported extension to confirm coexistence.
+	goFile := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main"), 0644); err != nil {
+		t.Fatalf("failed to create go file: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	// Without custom extensions: only main.go indexed.
+	scanner := NewScanner(tmpDir, ignoreMatcher)
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(files) != 1 || filepath.Base(files[0].Path) != "main.go" {
+		t.Errorf("baseline scan expected only main.go, got %+v", files)
+	}
+
+	// With ".tengo" added: main.go + workflow.tengo (xyz still skipped).
+	scanner = NewScanner(tmpDir, ignoreMatcher).
+		WithCustomExtensions([]string{".tengo"})
+	files, _, err = scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan with custom ext failed: %v", err)
+	}
+	got := make(map[string]bool)
+	for _, f := range files {
+		got[filepath.Base(f.Path)] = true
+	}
+	if !got["main.go"] || !got["workflow.tengo"] {
+		t.Errorf("expected main.go + workflow.tengo, got %v", got)
+	}
+	if got["data.xyz"] {
+		t.Errorf("data.xyz should not have been indexed")
+	}
+}
+
+func TestScanner_WithCustomExtensions_Normalizes(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Both uppercase and lowercase variants of the file extension.
+	upper := filepath.Join(tmpDir, "module.TENGO")
+	if err := os.WriteFile(upper, []byte("upper"), 0644); err != nil {
+		t.Fatalf("failed to create upper file: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("failed to create ignore matcher: %v", err)
+	}
+
+	scanner := NewScanner(tmpDir, ignoreMatcher).
+		WithCustomExtensions([]string{"  .TENGO  "})
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d: %+v", len(files), files)
+	}
+}
+
+func TestScanner_WithCustomExtensions_RejectsInvalidEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Files exercising the various invalid-entry forms.
+	if err := os.WriteFile(filepath.Join(tmpDir, "bad1"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "bad2.foo"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All these inputs should be silently dropped: empty, missing dot, just whitespace.
+	scanner := NewScanner(tmpDir, ignoreMatcher).
+		WithCustomExtensions([]string{"", "foo", "   ", ".."})
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ".." is a valid extension-with-dot, so .foo files might match if treated wrong.
+	// But filepath.Ext("bad2.foo") == ".foo", which we did NOT add. Should be 0 files.
+	if len(files) != 0 {
+		t.Errorf("expected no files indexed from invalid extensions, got %+v", files)
+	}
+}
+
+func TestScanner_CustomExtensions_BinaryStillSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A "tengo" file that is actually binary (null bytes) — should be skipped
+	// even with the extension whitelisted.
+	binFile := filepath.Join(tmpDir, "blob.tengo")
+	if err := os.WriteFile(binFile, []byte{0x00, 0x01, 0x02, 0x03}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := NewScanner(tmpDir, ignoreMatcher).
+		WithCustomExtensions([]string{".tengo"})
+
+	// Scan reads content + binary check; should drop the binary blob.
+	files, _, err := scanner.Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected binary .tengo to be skipped, got %+v", files)
 	}
 }

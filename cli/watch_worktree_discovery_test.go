@@ -85,3 +85,43 @@ func TestDiscoverWorktreesForWatch_LinkedWorktreeDoesNotDiscoverSiblings(t *test
 		t.Fatalf("discoverWorktreesForWatch() returned %d worktrees for linked worktree, want 0", len(got))
 	}
 }
+
+func TestDiscoverWorktreesForWatch_DisabledByConfig(t *testing.T) {
+	mainRepo, worktreePath := setupMainRepoForWorktreeDiscovery(t)
+
+	configPath := filepath.Join(mainRepo, ".grepai", "config.yaml")
+	configYAML := "watch:\n  debounce_ms: 500\n  discover_worktrees: false\n"
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	got := discoverWorktreesForWatch(mainRepo)
+	if len(got) != 0 {
+		t.Fatalf("discoverWorktreesForWatch() returned %d worktrees with discovery disabled, want 0", len(got))
+	}
+
+	// Discovery must not have auto-initialized the linked worktree either.
+	if _, err := os.Stat(filepath.Join(worktreePath, ".grepai")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .grepai auto-init in linked worktree when discovery is disabled")
+	}
+}
+
+func TestDiscoverWorktreesForWatch_UnreadableConfigFailsClosed(t *testing.T) {
+	mainRepo, worktreePath := setupMainRepoForWorktreeDiscovery(t)
+
+	// A torn/invalid config (e.g. saved mid-edit between reconcile passes)
+	// must not re-enable discovery: auto-init has side effects (creates
+	// .grepai/, edits .gitignore) that skipping a pass does not.
+	configPath := filepath.Join(mainRepo, ".grepai", "config.yaml")
+	if err := os.WriteFile(configPath, []byte("watch: [broken\n"), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	got := discoverWorktreesForWatch(mainRepo)
+	if len(got) != 0 {
+		t.Fatalf("discoverWorktreesForWatch() returned %d worktrees with unreadable config, want 0 (fail closed)", len(got))
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, ".grepai")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .grepai auto-init in linked worktree when config load fails")
+	}
+}

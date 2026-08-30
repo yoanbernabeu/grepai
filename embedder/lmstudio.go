@@ -62,6 +62,16 @@ func WithLMStudioDimensions(dimensions int) LMStudioOption {
 	}
 }
 
+// WithLMStudioTimeout overrides the HTTP client timeout for embedding requests.
+// Values <= 0 are ignored, preserving the default.
+func WithLMStudioTimeout(d time.Duration) LMStudioOption {
+	return func(e *LMStudioEmbedder) {
+		if d > 0 && e.client != nil {
+			e.client.Timeout = d
+		}
+	}
+}
+
 func NewLMStudioEmbedder(opts ...LMStudioOption) *LMStudioEmbedder {
 	e := &LMStudioEmbedder{
 		endpoint:   defaultLMStudioEndpoint,

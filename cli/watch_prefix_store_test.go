@@ -217,8 +217,18 @@ func TestProjectPrefixStore_PassThroughAndGetChunks(t *testing.T) {
 	ctx := context.Background()
 	projectRoot := t.TempDir()
 	mock := &mockVectorStore{
-		searchResults:         []store.SearchResult{{Score: 0.9}},
-		listDocumentsResult:   []string{"a", "b"},
+		searchResults: []store.SearchResult{{Score: 0.9}},
+		// The underlying shared store sees the full workspace. ListDocuments
+		// must filter to this project's prefix and strip it before returning,
+		// so the indexer's scan-vs-stored diff doesn't treat other projects'
+		// documents as "removed".
+		listDocumentsResult: []string{
+			"ws/proj/main.go",
+			"ws/proj/sub/file.go",
+			"ws/other/main.go",          // different project — must be filtered out
+			"different-ws/proj/main.go", // different workspace — must be filtered out
+			"unprefixed.go",             // no workspace prefix — must be filtered out
+		},
 		getStatsResult:        &store.IndexStats{TotalFiles: 2},
 		listFilesResult:       []store.FileStats{{Path: "p"}},
 		getChunksForFileItems: []store.Chunk{{ID: "c1"}},
@@ -240,8 +250,18 @@ func TestProjectPrefixStore_PassThroughAndGetChunks(t *testing.T) {
 	}
 
 	docs, err := wrapped.ListDocuments(ctx)
-	if err != nil || len(docs) != 2 {
-		t.Fatalf("ListDocuments failed: %v %v", docs, err)
+	if err != nil {
+		t.Fatalf("ListDocuments failed: %v", err)
+	}
+	wantDocs := []string{"main.go", "sub/file.go"}
+	if len(docs) != len(wantDocs) {
+		t.Fatalf("ListDocuments: expected %d paths (filtered + stripped), got %d: %v",
+			len(wantDocs), len(docs), docs)
+	}
+	for i, want := range wantDocs {
+		if docs[i] != want {
+			t.Errorf("ListDocuments[%d]: got %q, want %q", i, docs[i], want)
+		}
 	}
 	if err := wrapped.Load(ctx); err != nil {
 		t.Fatalf("Load failed: %v", err)

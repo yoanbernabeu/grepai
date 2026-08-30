@@ -454,7 +454,7 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 		}
 		return gobStore, nil
 	case "postgres":
-		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions())
+		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
 	case "qdrant":
 		collectionName := cfg.Store.Qdrant.Collection
 		if collectionName == "" {
@@ -861,6 +861,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 
 // discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
 // Only discovers from the main worktree; returns nil for linked worktrees.
+// Discovery can be disabled with watch.discover_worktrees: false in config.
 func discoverWorktreesForWatch(projectRoot string) []string {
 	projectRootCanonical := canonicalPath(projectRoot)
 
@@ -871,6 +872,24 @@ func discoverWorktreesForWatch(projectRoot string) []string {
 
 	// Only the main worktree discovers linked worktrees
 	if gitInfo.IsWorktree {
+		return nil
+	}
+
+	// Respect the opt-out. Re-checked on every discovery pass, so toggling the
+	// option takes effect on the supervisor's next reconcile without a restart.
+	// Only the main worktree's config is consulted: discovery never runs from
+	// linked worktrees, so the key is ignored in their config copies.
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		// Fail closed: a torn/invalid config (e.g. saved mid-edit between two
+		// reconcile passes) must not re-enable discovery behind the user's
+		// back — discovery auto-initializes worktrees (creates .grepai/,
+		// edits .gitignore), which is not free to undo. Skipping a pass is:
+		// the next successful load resumes discovery.
+		log.Printf("Warning: skipping worktree discovery: failed to load config for %s: %v", projectRoot, err)
+		return nil
+	}
+	if !cfg.Watch.WorktreeDiscoveryEnabled() {
 		return nil
 	}
 
@@ -987,7 +1006,8 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	}
 
 	// Initialize scanner
-	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+	scanner := indexer.NewScanner(projectRoot, ignoreMatcher).
+		WithCustomExtensions(cfg.Chunking.CustomExtensions)
 
 	// Initialize chunker
 	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
@@ -1046,7 +1066,7 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 
 	tracedLanguages := cfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = config.DefaultConfig().Trace.EnabledLanguages
 	}
 	// In multi-worktree mode callers pass isBackgroundChild=true for non-interactive output.
 	// Run initial scan and build symbol index.
@@ -2752,7 +2772,9 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		return nil, nil, fmt.Errorf("failed to initialize ignore matcher: %w", err)
 	}
 
-	scanner := indexer.NewScanner(project.Path, ignoreMatcher)
+	scanner := indexer.NewScanner(project.Path, ignoreMatcher).
+		WithCustomExtensions(ws.Chunking.CustomExtensions).
+		WithCustomExtensions(projectCfg.Chunking.CustomExtensions)
 	chunker := indexer.NewChunker(projectCfg.Chunking.Size, projectCfg.Chunking.Overlap)
 	processorRegistry := buildFrameworkRegistry(projectCfg)
 	vectorStore := &projectPrefixStore{
@@ -2770,7 +2792,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 
 	tracedLanguages := projectCfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
-		tracedLanguages = []string{".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php", ".lua", ".java", ".cs", ".fs", ".fsx", ".fsi"}
+		tracedLanguages = config.DefaultConfig().Trace.EnabledLanguages
 	}
 
 	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil, processorRegistry)
@@ -2870,7 +2892,7 @@ func initializeWorkspaceStore(ctx context.Context, ws *config.Workspace) (store.
 
 	switch ws.Store.Backend {
 	case "postgres":
-		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions())
+		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions(), ws.Embedder.CacheNamespace())
 	case "qdrant":
 		collectionName := ws.Store.Qdrant.Collection
 		if collectionName == "" {
@@ -2948,8 +2970,31 @@ func (p *projectPrefixStore) DeleteDocument(ctx context.Context, filePath string
 	return p.store.DeleteDocument(ctx, prefixedPath)
 }
 
+// ListDocuments returns only the documents whose path begins with this
+// project's workspace+project prefix, with the prefix stripped so the
+// indexer sees relative paths that match what its scanner enumerates.
+//
+// Without this filter the inner shared store returns every document in
+// the entire workspace; the indexer then treats every other project's
+// docs as "no longer present" and runs RemoveFile against each one. The
+// removes silently no-op (projectPrefixStore.DeleteByFile re-adds the
+// prefix, producing a doubly-prefixed path that never matches a stored
+// row), but the spurious work shows up as wildly inflated "files
+// removed" counts (the workspace total, on every per-project scan) and
+// thousands of pointless Postgres roundtrips on every restart.
 func (p *projectPrefixStore) ListDocuments(ctx context.Context) ([]string, error) {
-	return p.store.ListDocuments(ctx)
+	all, err := p.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	prefix := p.getPrefix() + "/"
+	out := make([]string, 0, len(all))
+	for _, path := range all {
+		if strings.HasPrefix(path, prefix) {
+			out = append(out, strings.TrimPrefix(path, prefix))
+		}
+	}
+	return out, nil
 }
 
 func (p *projectPrefixStore) Load(ctx context.Context) error {

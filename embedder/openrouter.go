@@ -80,6 +80,16 @@ func WithOpenRouterDimensions(dimensions int) OpenRouterOption {
 	}
 }
 
+// WithOpenRouterTimeout overrides the HTTP client timeout for embedding
+// requests. Values <= 0 are ignored, preserving the default.
+func WithOpenRouterTimeout(d time.Duration) OpenRouterOption {
+	return func(e *OpenRouterEmbedder) {
+		if d > 0 && e.client != nil {
+			e.client.Timeout = d
+		}
+	}
+}
+
 func NewOpenRouterEmbedder(opts ...OpenRouterOption) (*OpenRouterEmbedder, error) {
 	e := &OpenRouterEmbedder{
 		endpoint:   defaultOpenRouterEndpoint,

@@ -2,6 +2,7 @@ package embedder
 
 import (
 	"testing"
+	"time"
 
 	"github.com/yoanbernabeu/grepai/config"
 )
@@ -177,6 +178,64 @@ func TestNewFromConfig_WithDimensions(t *testing.T) {
 
 	if emb.Dimensions() != 1024 {
 		t.Errorf("expected dimensions 1024, got %d", emb.Dimensions())
+	}
+}
+
+func TestNewFromConfig_RequestTimeoutAndMaxRetries(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	cfg := &config.Config{
+		Embedder: config.EmbedderConfig{
+			Provider:              "openai",
+			Model:                 "text-embedding-3-small",
+			RequestTimeoutSeconds: 300,
+			MaxRetries:            9,
+		},
+	}
+
+	emb, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	defer emb.Close()
+
+	oai, ok := emb.(*OpenAIEmbedder)
+	if !ok {
+		t.Fatalf("expected *OpenAIEmbedder, got %T", emb)
+	}
+	if got := oai.client.Timeout; got != 300*time.Second {
+		t.Errorf("expected HTTP client timeout 5m, got %v", got)
+	}
+	if got := oai.retryPolicy.MaxAttempts; got != 9 {
+		t.Errorf("expected MaxAttempts 9, got %d", got)
+	}
+}
+
+func TestNewFromConfig_TimeoutDefaultsPreserved(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	cfg := &config.Config{
+		Embedder: config.EmbedderConfig{
+			Provider: "openai",
+			Model:    "text-embedding-3-small",
+		},
+	}
+
+	emb, err := NewFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	defer emb.Close()
+
+	oai, ok := emb.(*OpenAIEmbedder)
+	if !ok {
+		t.Fatalf("expected *OpenAIEmbedder, got %T", emb)
+	}
+	if got := oai.client.Timeout; got != 60*time.Second {
+		t.Errorf("expected default 60s timeout to be preserved, got %v", got)
+	}
+	if got := oai.retryPolicy.MaxAttempts; got != 5 {
+		t.Errorf("expected default MaxAttempts 5 to be preserved, got %d", got)
 	}
 }
 

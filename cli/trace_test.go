@@ -596,3 +596,69 @@ func TestLoadWorkspaceSymbolStores_should_error_on_unknown_project(t *testing.T)
 		t.Fatalf("expected 'not found' in error, got: %s", err.Error())
 	}
 }
+
+func TestCaptureTraceCompactJSON_should_omit_call_site_context(t *testing.T) {
+	result := trace.TraceResult{
+		Query:  "Login",
+		Mode:   "fast",
+		Symbol: &trace.Symbol{Name: "Login", Kind: trace.KindFunction, File: "auth.go", Line: 10},
+		Callers: []trace.CallerInfo{{
+			Symbol:   trace.Symbol{Name: "HandleAuth", Kind: trace.KindFunction, File: "handler.go", Line: 20},
+			CallSite: trace.CallSite{File: "handler.go", Line: 25, Context: "Login()"},
+		}},
+		Callees: []trace.CalleeInfo{{
+			Symbol:   trace.Symbol{Name: "Validate", Kind: trace.KindFunction, File: "validate.go", Line: 5},
+			CallSite: trace.CallSite{File: "auth.go", Line: 12, Context: "Validate()"},
+		}},
+	}
+
+	output := captureTraceCompactJSON(result)
+	if strings.Contains(output, "Login()") || strings.Contains(output, "Validate()") || strings.Contains(output, "context") {
+		t.Fatalf("compact trace JSON should omit call-site context, got:\n%s", output)
+	}
+	if !strings.Contains(output, "handler.go") || !strings.Contains(output, "\"line\": 25") {
+		t.Fatalf("compact trace JSON should keep call-site file and line, got:\n%s", output)
+	}
+}
+
+func TestValidateTraceOutputFlags_should_require_structured_output_for_compact(t *testing.T) {
+	oldJSON := traceJSON
+	oldTOON := traceTOON
+	oldCompact := traceCompact
+	defer func() {
+		traceJSON = oldJSON
+		traceTOON = oldTOON
+		traceCompact = oldCompact
+	}()
+
+	traceJSON = false
+	traceTOON = false
+	traceCompact = true
+
+	err := validateTraceOutputFlags()
+	if err == nil {
+		t.Fatal("expected --compact without --json or --toon to fail")
+	}
+	if !strings.Contains(err.Error(), "--compact flag requires --json or --toon flag") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateTraceOutputFlags_should_allow_compact_json(t *testing.T) {
+	oldJSON := traceJSON
+	oldTOON := traceTOON
+	oldCompact := traceCompact
+	defer func() {
+		traceJSON = oldJSON
+		traceTOON = oldTOON
+		traceCompact = oldCompact
+	}()
+
+	traceJSON = true
+	traceTOON = false
+	traceCompact = true
+
+	if err := validateTraceOutputFlags(); err != nil {
+		t.Fatalf("expected compact JSON flags to be valid, got %v", err)
+	}
+}

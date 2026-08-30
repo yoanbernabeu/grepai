@@ -29,6 +29,21 @@ Use ` + "`grepai search`" + ` INSTEAD OF Grep/Glob/find for:
 Only use Grep/Glob when you need:
 - Exact text matching (variable names, imports, specific strings)
 - File path patterns (e.g., ` + "`**/*.go`" + `)
+- Intent with a canonical syntax anchor (` + "`@main`" + `, ` + "`func main(`" + `) - an exact-match query in disguise
+
+### Completeness Check (recall-safe)
+
+grepai returns the top ~10 ranked chunks - a ranking, not an exhaustive list.
+When completeness matters (audits, refactors, "find ALL X"), pair it with a
+file-names-only grep - exhaustive recall at almost no token cost:
+
+` + "```bash" + `
+grepai search "where errors are handled" --json --compact   # ranked starting points
+git grep -ilE 'error|handl|logg' | head -50                 # exhaustive checklist (names only)
+` + "```" + `
+
+Read ranked hits first, then any relevant-looking checklist file grepai did
+not rank. Never dump full grep content output for an intent query.
 
 ### Fallback
 
@@ -88,10 +103,11 @@ grepai refs writers "uid" --json
 ### Workflow
 
 1. Start with ` + "`grepai search`" + ` to find relevant code
-2. Use ` + "`grepai trace`" + ` to understand function relationships
-3. Use ` + "`grepai refs`" + ` for property/state readers and writers
-4. Use ` + "`Read`" + ` tool to examine files from results
-5. Only use Grep for exact string searches if needed
+2. Add ` + "`git grep -ilE '<keywords>'`" + ` for the exhaustive file checklist when completeness matters
+3. Use ` + "`grepai trace`" + ` to understand function relationships
+4. Use ` + "`grepai refs`" + ` for property/state readers and writers
+5. Use ` + "`Read`" + ` tool to examine files from results
+6. Use Grep directly for exact strings and syntax anchors
 
 `
 

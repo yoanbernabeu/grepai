@@ -1004,7 +1004,7 @@ func (s *Server) createWorkspaceStore(ctx context.Context, ws *config.Workspace)
 
 	switch ws.Store.Backend {
 	case "postgres":
-		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions())
+		return store.NewPostgresStore(ctx, ws.Store.Postgres.DSN, projectID, ws.Embedder.GetDimensions(), ws.Embedder.CacheNamespace())
 	case "qdrant":
 		collectionName := ws.Store.Qdrant.Collection
 		if collectionName == "" {
@@ -2046,7 +2046,7 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 		}
 		return gobStore, nil
 	case "postgres":
-		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, s.projectRoot, cfg.Embedder.GetDimensions())
+		return store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, s.projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
 	case "qdrant":
 		collectionName := cfg.Store.Qdrant.Collection
 		if collectionName == "" {

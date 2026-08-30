@@ -751,3 +751,90 @@ func TestOpenAIEmbedder_EmbedBatches_ParallelBatchFailure(t *testing.T) {
 		t.Errorf("expected status 401, got %d", retryErr.StatusCode)
 	}
 }
+
+// TestOpenAIEmbedder_SplitsOnMaxRequestSize verifies the recursive batch split
+// added in #226: when the API rejects a request with a 400 "maximum request
+// size" error, embedTexts halves the batch and retries until every sub-batch
+// fits. Token estimation can undershoot on dense or minified code, so reacting
+// to the API's own error is the only bound that always holds (issue #214).
+func TestOpenAIEmbedder_SplitsOnMaxRequestSize(t *testing.T) {
+	const maxAccepted = 2 // server rejects any request with more inputs than this
+
+	var mu sync.Mutex
+	var callSizes []int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openAIEmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		mu.Lock()
+		callSizes = append(callSizes, len(req.Input))
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(req.Input) > maxAccepted {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"message": "Requested 350000 tokens, max maximum request size is 300000 tokens.",
+					"type":    "invalid_request_error",
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(mockEmbeddingResponse(len(req.Input)))
+	}))
+	defer server.Close()
+
+	e, err := NewOpenAIEmbedder(
+		WithOpenAIKey("test-key"),
+		WithOpenAIEndpoint(server.URL),
+		WithOpenAIDimensions(3),
+	)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+
+	texts := make([]string, 8)
+	for i := range texts {
+		texts[i] = "chunk content"
+	}
+
+	embeddings, err := e.embedTexts(context.Background(), texts)
+	if err != nil {
+		t.Fatalf("embedTexts should recover by splitting, got: %v", err)
+	}
+	if len(embeddings) != len(texts) {
+		t.Fatalf("expected %d embeddings, got %d", len(texts), len(embeddings))
+	}
+	for i, emb := range embeddings {
+		if len(emb) != 3 {
+			t.Fatalf("embedding %d has %d dimensions, want 3", i, len(emb))
+		}
+	}
+
+	// The oversized attempts must actually have happened, otherwise the test
+	// would also pass against an implementation that never splits.
+	mu.Lock()
+	defer mu.Unlock()
+	var rejected, accepted int
+	for _, size := range callSizes {
+		if size > maxAccepted {
+			rejected++
+		} else {
+			accepted++
+		}
+	}
+	if rejected == 0 {
+		t.Fatalf("expected at least one oversized request to be rejected, call sizes: %v", callSizes)
+	}
+	if accepted != len(texts)/maxAccepted {
+		t.Fatalf("expected %d accepted sub-batches, got %d (call sizes: %v)",
+			len(texts)/maxAccepted, accepted, callSizes)
+	}
+	t.Logf("batch split path: %v", callSizes)
+}

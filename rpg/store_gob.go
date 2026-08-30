@@ -76,26 +76,25 @@ func (s *GOBRPGStore) loadUnlocked() error {
 
 	if data.Version != CurrentRPGIndexVersion {
 		hasData := len(data.Nodes) > 0 || len(data.Edges) > 0
-		s.graph.Nodes = make(map[string]*Node)
-		s.graph.Edges = make([]*Edge, 0)
-		s.graph.RebuildIndexes()
+		s.graph.Reset()
 		if hasData {
 			return ErrRPGIndexOutdated
 		}
 		return nil
 	}
 
+	if data.Nodes == nil {
+		data.Nodes = make(map[string]*Node)
+	}
+	if data.Edges == nil {
+		data.Edges = make([]*Edge, 0)
+	}
+
+	s.graph.mu.Lock()
 	s.graph.Nodes = data.Nodes
 	s.graph.Edges = data.Edges
-
-	if s.graph.Nodes == nil {
-		s.graph.Nodes = make(map[string]*Node)
-	}
-	if s.graph.Edges == nil {
-		s.graph.Edges = make([]*Edge, 0)
-	}
-
-	s.graph.RebuildIndexes()
+	s.graph.rebuildIndexesLocked()
+	s.graph.mu.Unlock()
 
 	return nil
 }
@@ -129,10 +128,21 @@ func (s *GOBRPGStore) Persist(ctx context.Context) error {
 }
 
 func (s *GOBRPGStore) persistUnlocked() error {
+	// Snapshot Nodes and Edges under the graph's read lock so no concurrent
+	// mutation can modify them while gob iterates the maps/slices.
+	s.graph.mu.RLock()
+	nodes := make(map[string]*Node, len(s.graph.Nodes))
+	for k, v := range s.graph.Nodes {
+		nodes[k] = v
+	}
+	edges := make([]*Edge, len(s.graph.Edges))
+	copy(edges, s.graph.Edges)
+	s.graph.mu.RUnlock()
+
 	data := gobRPGData{
 		Version: CurrentRPGIndexVersion,
-		Nodes:   s.graph.Nodes,
-		Edges:   s.graph.Edges,
+		Nodes:   nodes,
+		Edges:   edges,
 	}
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(s.indexPath), filepath.Base(s.indexPath)+".tmp-*")

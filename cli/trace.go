@@ -77,6 +77,7 @@ var (
 	traceDepth     int
 	traceJSON      bool
 	traceTOON      bool
+	traceCompact   bool
 	traceUI        bool
 	traceWorkspace string
 	traceProject   string
@@ -141,6 +142,7 @@ func init() {
 		cmd.Flags().StringVarP(&traceMode, "mode", "m", "fast", "Extraction mode: fast (regex) or precise (tree-sitter)")
 		cmd.Flags().BoolVar(&traceJSON, "json", false, "Output results in JSON format")
 		cmd.Flags().BoolVarP(&traceTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
+		cmd.Flags().BoolVarP(&traceCompact, "compact", "c", false, "Output minimal format without call-site context (requires --json or --toon)")
 		cmd.Flags().BoolVar(&traceUI, "ui", false, "Show interactive UI output")
 		cmd.MarkFlagsMutuallyExclusive("json", "toon")
 		cmd.MarkFlagsMutuallyExclusive("json", "ui")
@@ -157,9 +159,20 @@ func init() {
 	rootCmd.AddCommand(traceCmd)
 }
 
+func validateTraceOutputFlags() error {
+	if traceCompact && !traceJSON && !traceTOON {
+		return fmt.Errorf("--compact flag requires --json or --toon flag")
+	}
+	return nil
+}
+
 func runTraceCallers(cmd *cobra.Command, args []string) error {
 	symbolName := args[0]
 	ctx := context.Background()
+
+	if err := validateTraceOutputFlags(); err != nil {
+		return err
+	}
 
 	if traceProject != "" && traceWorkspace == "" {
 		return fmt.Errorf("--project requires --workspace")
@@ -323,6 +336,10 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 	symbolName := args[0]
 	ctx := context.Background()
 
+	if err := validateTraceOutputFlags(); err != nil {
+		return err
+	}
+
 	if traceProject != "" && traceWorkspace == "" {
 		return fmt.Errorf("--project requires --workspace")
 	}
@@ -472,6 +489,10 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 	symbolName := args[0]
 	ctx := context.Background()
 
+	if err := validateTraceOutputFlags(); err != nil {
+		return err
+	}
+
 	if traceProject != "" && traceWorkspace == "" {
 		return fmt.Errorf("--project requires --workspace")
 	}
@@ -585,12 +606,21 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 func outputAndRecord(result trace.TraceResult, view traceViewKind, projectRoot, commandType string, resultCount int) error {
 	if traceJSON {
 		outputStr := captureJSON(result)
+		if traceCompact {
+			outputStr = captureTraceCompactJSON(result)
+		}
 		fmt.Print(outputStr)
 		recordTraceStats(projectRoot, commandType, resultCount, outputStr)
 		return nil
 	}
 	if traceTOON {
-		outputStr, err := captureTOON(result)
+		var outputStr string
+		var err error
+		if traceCompact {
+			outputStr, err = captureTraceCompactTOON(result)
+		} else {
+			outputStr, err = captureTOON(result)
+		}
 		if err != nil {
 			return err
 		}
@@ -671,9 +701,21 @@ const (
 
 func outputTraceResult(result trace.TraceResult, view traceViewKind) error {
 	if traceJSON {
+		if traceCompact {
+			fmt.Print(captureTraceCompactJSON(result))
+			return nil
+		}
 		return outputJSON(result)
 	}
 	if traceTOON {
+		if traceCompact {
+			output, err := captureTraceCompactTOON(result)
+			if err != nil {
+				return err
+			}
+			fmt.Print(output)
+			return nil
+		}
 		return outputTOON(result)
 	}
 	if traceUI {
@@ -702,6 +744,80 @@ func showTraceActionCardUIError(displayErr error, title, why, action string) err
 		return fmt.Errorf("%w (failed to render trace UI card: %v)", displayErr, uiErr)
 	}
 	return displayErr
+}
+
+type traceCallSiteCompact struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+type traceCallerInfoCompact struct {
+	Symbol   trace.Symbol         `json:"symbol"`
+	CallSite traceCallSiteCompact `json:"call_site"`
+}
+
+type traceCalleeInfoCompact struct {
+	Symbol   trace.Symbol         `json:"symbol"`
+	CallSite traceCallSiteCompact `json:"call_site"`
+}
+
+type traceResultCompact struct {
+	Query   string                   `json:"query"`
+	Mode    string                   `json:"mode"`
+	Symbol  *trace.Symbol            `json:"symbol,omitempty"`
+	Callers []traceCallerInfoCompact `json:"callers,omitempty"`
+	Callees []traceCalleeInfoCompact `json:"callees,omitempty"`
+	Graph   *trace.CallGraph         `json:"graph,omitempty"`
+}
+
+func compactTraceResult(result trace.TraceResult) traceResultCompact {
+	compact := traceResultCompact{
+		Query:  result.Query,
+		Mode:   result.Mode,
+		Symbol: result.Symbol,
+		Graph:  result.Graph,
+	}
+	if len(result.Callers) > 0 {
+		compact.Callers = make([]traceCallerInfoCompact, 0, len(result.Callers))
+		for _, caller := range result.Callers {
+			compact.Callers = append(compact.Callers, traceCallerInfoCompact{
+				Symbol: caller.Symbol,
+				CallSite: traceCallSiteCompact{
+					File: caller.CallSite.File,
+					Line: caller.CallSite.Line,
+				},
+			})
+		}
+	}
+	if len(result.Callees) > 0 {
+		compact.Callees = make([]traceCalleeInfoCompact, 0, len(result.Callees))
+		for _, callee := range result.Callees {
+			compact.Callees = append(compact.Callees, traceCalleeInfoCompact{
+				Symbol: callee.Symbol,
+				CallSite: traceCallSiteCompact{
+					File: callee.CallSite.File,
+					Line: callee.CallSite.Line,
+				},
+			})
+		}
+	}
+	return compact
+}
+
+func captureTraceCompactJSON(result trace.TraceResult) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(compactTraceResult(result))
+	return buf.String()
+}
+
+func captureTraceCompactTOON(result trace.TraceResult) (string, error) {
+	output, err := gotoon.Encode(compactTraceResult(result))
+	if err != nil {
+		return "", fmt.Errorf("failed to encode TOON: %w", err)
+	}
+	return output + "\n", nil
 }
 
 // captureJSON serializes a TraceResult to a JSON string without writing to stdout.

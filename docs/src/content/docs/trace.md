@@ -117,10 +117,12 @@ grepai trace callers "MyFunction" --mode precise
 
 ### JSON Output
 
-For AI agents and scripts, use `--json` flag:
+For AI agents and scripts, use `--json` or `--toon`. Add `--compact` to omit verbose context fields while keeping symbol, file, and line data:
 
 ```bash
 grepai trace callers "Login" --json
+grepai trace callers "Login" --json --compact
+grepai refs readers "uid" --toon --compact
 ```
 
 Output format:
@@ -164,6 +166,7 @@ trace:
     - .hpp
     - .cc
     - .cxx
+    - .hxx
     - .rs
     - .zig
     - .cs

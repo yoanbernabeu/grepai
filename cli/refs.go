@@ -17,6 +17,7 @@ import (
 var (
 	refsJSON      bool
 	refsTOON      bool
+	refsCompact   bool
 	refsWorkspace string
 	refsProject   string
 )
@@ -25,6 +26,25 @@ type refsUsage struct {
 	Symbol   trace.Symbol   `json:"symbol"`
 	Access   string         `json:"access"`
 	AccessAt trace.CallSite `json:"access_at"`
+}
+
+type refsCallSiteCompact struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+type refsUsageCompact struct {
+	Symbol   trace.Symbol        `json:"symbol"`
+	Access   string              `json:"access"`
+	AccessAt refsCallSiteCompact `json:"access_at"`
+}
+
+type refsResultCompact struct {
+	Query   string             `json:"query"`
+	Kind    string             `json:"kind"`
+	Mode    string             `json:"mode"`
+	Readers []refsUsageCompact `json:"readers,omitempty"`
+	Writers []refsUsageCompact `json:"writers,omitempty"`
 }
 
 type refsResult struct {
@@ -60,6 +80,9 @@ var refsReadersCmd = &cobra.Command{
 	Short: "Find functions/components that read a property or data symbol",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateRefsOutputFlags(); err != nil {
+			return err
+		}
 		result, err := runRefs(args[0], true)
 		if err != nil {
 			return err
@@ -73,6 +96,9 @@ var refsWritersCmd = &cobra.Command{
 	Short: "Find functions/components that write a property or data symbol",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateRefsOutputFlags(); err != nil {
+			return err
+		}
 		result, err := runRefs(args[0], false)
 		if err != nil {
 			return err
@@ -86,6 +112,9 @@ var refsGraphCmd = &cobra.Command{
 	Short: "Show readers and writers graph for a property/data symbol",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateRefsOutputFlags(); err != nil {
+			return err
+		}
 		readersResult, err := runRefs(args[0], true)
 		if err != nil {
 			return err
@@ -110,6 +139,7 @@ func init() {
 	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd, refsGraphCmd} {
 		cmd.Flags().BoolVar(&refsJSON, "json", false, "Output results in JSON format")
 		cmd.Flags().BoolVarP(&refsTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
+		cmd.Flags().BoolVarP(&refsCompact, "compact", "c", false, "Output minimal format without access context (requires --json or --toon)")
 		cmd.MarkFlagsMutuallyExclusive("json", "toon")
 		cmd.Flags().StringVar(&refsWorkspace, "workspace", "", "Workspace name for cross-project refs")
 		cmd.Flags().StringVar(&refsProject, "project", "", "Project name within workspace (requires --workspace)")
@@ -119,6 +149,13 @@ func init() {
 	refsCmd.AddCommand(refsWritersCmd)
 	refsCmd.AddCommand(refsGraphCmd)
 	rootCmd.AddCommand(refsCmd)
+}
+
+func validateRefsOutputFlags() error {
+	if refsCompact && !refsJSON && !refsTOON {
+		return fmt.Errorf("--compact flag requires --json or --toon flag")
+	}
+	return nil
 }
 
 func runRefs(symbolName string, readers bool) (refsResult, error) {
@@ -192,6 +229,41 @@ func runRefs(symbolName string, readers bool) (refsResult, error) {
 	return result, nil
 }
 
+func compactRefsUsages(usages []refsUsage) []refsUsageCompact {
+	compact := make([]refsUsageCompact, 0, len(usages))
+	for _, usage := range usages {
+		compact = append(compact, refsUsageCompact{
+			Symbol: usage.Symbol,
+			Access: usage.Access,
+			AccessAt: refsCallSiteCompact{
+				File: usage.AccessAt.File,
+				Line: usage.AccessAt.Line,
+			},
+		})
+	}
+	return compact
+}
+
+func compactRefsResult(result refsResult) refsResultCompact {
+	return refsResultCompact{
+		Query:   result.Query,
+		Kind:    result.Kind,
+		Mode:    result.Mode,
+		Readers: compactRefsUsages(result.Readers),
+		Writers: compactRefsUsages(result.Writers),
+	}
+}
+
+func compactRefsGraphResult(result refsGraphResult) refsResultCompact {
+	return refsResultCompact{
+		Query:   result.Query,
+		Kind:    result.Kind,
+		Mode:    result.Mode,
+		Readers: compactRefsUsages(result.Readers),
+		Writers: compactRefsUsages(result.Writers),
+	}
+}
+
 func resolveRefCallerSymbol(ctx context.Context, ss trace.SymbolStore, ref trace.Reference) trace.Symbol {
 	if ref.CallerName == "" || ref.CallerName == "<top-level>" {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
@@ -212,10 +284,17 @@ func outputRefsResult(result refsResult, readers bool) error {
 	if refsJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
+		if refsCompact {
+			return enc.Encode(compactRefsResult(result))
+		}
 		return enc.Encode(result)
 	}
 	if refsTOON {
-		output, err := gotoon.Encode(result)
+		data := any(result)
+		if refsCompact {
+			data = compactRefsResult(result)
+		}
+		output, err := gotoon.Encode(data)
 		if err != nil {
 			return fmt.Errorf("failed to encode TOON: %w", err)
 		}
@@ -257,10 +336,17 @@ func outputRefsGraphResult(result refsGraphResult) error {
 	if refsJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
+		if refsCompact {
+			return enc.Encode(compactRefsGraphResult(result))
+		}
 		return enc.Encode(result)
 	}
 	if refsTOON {
-		output, err := gotoon.Encode(result)
+		data := any(result)
+		if refsCompact {
+			data = compactRefsGraphResult(result)
+		}
+		output, err := gotoon.Encode(data)
 		if err != nil {
 			return fmt.Errorf("failed to encode TOON: %w", err)
 		}

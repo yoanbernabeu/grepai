@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
@@ -152,5 +153,73 @@ func TestOutputRefsGraphResult_should_output_valid_json(t *testing.T) {
 	}
 	if len(decoded.Readers) != 1 || len(decoded.Writers) != 1 {
 		t.Fatalf("expected one reader and one writer, got %d/%d", len(decoded.Readers), len(decoded.Writers))
+	}
+}
+
+func TestOutputRefsResult_compact_json_should_omit_access_context(t *testing.T) {
+	oldJSON := refsJSON
+	oldTOON := refsTOON
+	oldCompact := refsCompact
+	refsJSON = true
+	refsTOON = false
+	refsCompact = true
+	defer func() {
+		refsJSON = oldJSON
+		refsTOON = oldTOON
+		refsCompact = oldCompact
+	}()
+
+	result := refsResult{
+		Query: "uid",
+		Kind:  "property",
+		Mode:  "fast",
+		Readers: []refsUsage{{
+			Symbol:   trace.Symbol{Name: "loggedIn", File: "src/Home.vue", Line: 10},
+			Access:   trace.RefKindRead,
+			AccessAt: trace.CallSite{File: "src/Home.vue", Line: 12, Context: "return store.uid"},
+		}},
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := outputRefsResult(result, true)
+	_ = w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatalf("outputRefsResult failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+	if strings.Contains(out, "return store.uid") || strings.Contains(out, "context") {
+		t.Fatalf("compact refs JSON should omit context, got:\n%s", out)
+	}
+	if !strings.Contains(out, "src/Home.vue") || !strings.Contains(out, "\"line\": 12") {
+		t.Fatalf("compact refs JSON should keep access file and line, got:\n%s", out)
+	}
+}
+
+func TestValidateRefsOutputFlags_should_require_structured_output_for_compact(t *testing.T) {
+	oldJSON := refsJSON
+	oldTOON := refsTOON
+	oldCompact := refsCompact
+	defer func() {
+		refsJSON = oldJSON
+		refsTOON = oldTOON
+		refsCompact = oldCompact
+	}()
+
+	refsJSON = false
+	refsTOON = false
+	refsCompact = true
+
+	err := validateRefsOutputFlags()
+	if err == nil {
+		t.Fatal("expected --compact without --json or --toon to fail")
+	}
+	if !strings.Contains(err.Error(), "--compact flag requires --json or --toon flag") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

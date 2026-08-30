@@ -102,11 +102,23 @@ This re-indexes only the files that differ from the copied seed index, keeping y
 
 If `config.yaml` is missing from the main worktree, auto-init will not proceed.
 
+### Disabling Worktree Discovery
+
+By default, `grepai watch` in the main worktree discovers all linked worktrees, auto-initializes them, and watches them alongside the main project. If you use many short-lived worktrees (e.g. AI-agent sessions) this multiplies indexing work and memory. Opt out in the **main worktree's** `.grepai/config.yaml`:
+
+```yaml
+watch:
+  discover_worktrees: false
+```
+
+The option is re-read on every discovery pass, so toggling it takes effect within seconds — no watcher restart needed. Worktrees already being watched are released on the next pass. The key is only consulted in the main worktree's config; setting it inside a linked worktree's copy has no effect. If the config can't be parsed, discovery is skipped for that pass (fail closed) and a warning is logged.
+
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| Auto-init doesn't trigger | Verify the main worktree has `.grepai/config.yaml`. Run `grepai init` in the main worktree first. |
+| Auto-init doesn't trigger | Verify the main worktree has `.grepai/config.yaml`. Run `grepai init` in the main worktree first. Check that `watch.discover_worktrees` is not set to `false`. |
 | Search returns stale results | Run `grepai watch` in the linked worktree to update the index with worktree-specific changes. |
 | "not a git repository" error | Ensure `git` is installed and the directory is a valid git worktree. |
 | Want shared indexing | Switch to `postgres` or `qdrant` backend for cross-worktree index sharing. |
+| Too many worktrees indexed / high memory | Set `watch.discover_worktrees: false` in the main worktree's config (see above), or prune stale worktrees with `git worktree remove` + `git worktree prune`. |

@@ -82,9 +82,7 @@ func (idx *RPGEncoder) BuildFull(ctx context.Context, symbolStore trace.SymbolSt
 	graph := idx.store.GetGraph()
 
 	// Clear existing graph data in-place (not reassigning the pointer)
-	graph.Nodes = make(map[string]*Node)
-	graph.Edges = make([]*Edge, 0)
-	graph.RebuildIndexes()
+	graph.Reset()
 
 	// Get all documents from vector store to know which files to process
 	docs, err := vectorStore.ListDocuments(ctx)

@@ -14,12 +14,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: true
 
       - name: golangci-lint
@@ -35,9 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ["1.22", "1.23"]
+        go-version: ["1.24", "1.25"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -53,8 +53,8 @@ jobs:
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.22'
-        uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24'
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           fail_ci_if_error: false
@@ -64,12 +64,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: true
 
       - name: Build

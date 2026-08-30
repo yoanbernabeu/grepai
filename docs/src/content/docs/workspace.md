@@ -278,6 +278,7 @@ When indexing via workspace, settings come from different sources:
 | `store` (backend, DSN) | **Workspace** | Shared store required |
 | `embedder` (provider, model) | **Workspace** | Ensures compatible vectors |
 | `chunking` (size, overlap) | **Project** | Can vary per project/language |
+| `chunking.custom_extensions` | **Workspace** + **Project** | Both lists are merged when scanning a project |
 | `ignore` patterns | **Project** | Project-specific exclusions |
 | `external_gitignore` | **Project** | Project-specific gitignore |
 

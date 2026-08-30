@@ -47,8 +47,10 @@ var SupportedExtensions = map[string]bool{
 	".c":      true,
 	".cpp":    true,
 	".cc":     true,
+	".cxx":    true,
 	".h":      true,
 	".hpp":    true,
+	".hxx":    true,
 	".cs":     true,
 	".php":    true,
 	".rs":     true,
@@ -112,8 +114,9 @@ type FileMeta struct {
 }
 
 type Scanner struct {
-	root   string
-	ignore *IgnoreMatcher
+	root      string
+	ignore    *IgnoreMatcher
+	extraExts map[string]bool
 }
 
 func NewScanner(root string, ignore *IgnoreMatcher) *Scanner {
@@ -121,6 +124,31 @@ func NewScanner(root string, ignore *IgnoreMatcher) *Scanner {
 		root:   root,
 		ignore: ignore,
 	}
+}
+
+// WithCustomExtensions returns the scanner with the given extensions added to
+// the set of extensions it will index, on top of SupportedExtensions. Entries
+// must include the leading dot ("." e.g., ".tengo"); they are normalized to
+// lowercase and entries missing the dot or empty are silently dropped.
+func (s *Scanner) WithCustomExtensions(exts []string) *Scanner {
+	for _, raw := range exts {
+		ext := strings.ToLower(strings.TrimSpace(raw))
+		if ext == "" || !strings.HasPrefix(ext, ".") {
+			continue
+		}
+		if s.extraExts == nil {
+			s.extraExts = make(map[string]bool)
+		}
+		s.extraExts[ext] = true
+	}
+	return s
+}
+
+func (s *Scanner) isSupported(ext string) bool {
+	if SupportedExtensions[ext] {
+		return true
+	}
+	return s.extraExts[ext]
 }
 
 // ScanMetadata scans indexable files and returns only file metadata.
@@ -154,7 +182,7 @@ func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
 
 		// Check extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if !SupportedExtensions[ext] {
+		if !s.isSupported(ext) {
 			return nil
 		}
 
@@ -216,7 +244,7 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 
 		// Check extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if !SupportedExtensions[ext] {
+		if !s.isSupported(ext) {
 			return nil
 		}
 

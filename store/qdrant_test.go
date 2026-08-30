@@ -30,6 +30,9 @@ func TestSanitizeCollectionName(t *testing.T) {
 		{"root path", "/", "_"},
 		{"multiple slashes", "///", "___"},
 		{"no slashes", "myproject", "myproject"},
+		{"windows drive path", "C:\\Users\\test\\project", "C__Users_test_project"},
+		{"windows drive colon", "C:", "C_"},
+		{"windows nested path", "C:\\Users\\test\\dev\\grepai", "C__Users_test_dev_grepai"},
 	}
 
 	for _, tt := range tests {
@@ -341,7 +344,7 @@ func TestQdrantStore_StructFields(t *testing.T) {
 	}
 }
 
-// TestQdrantStore_CollectionNameSanitization verifies / replacement with _
+// TestQdrantStore_CollectionNameSanitization verifies / \ : replacement with _
 func TestQdrantStore_CollectionNameSanitization(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -353,6 +356,9 @@ func TestQdrantStore_CollectionNameSanitization(t *testing.T) {
 		{"root path", "/", "_"},
 		{"multiple slashes", "///", "___"},
 		{"no slashes", "myproject", "myproject"},
+		{"windows drive path", "C:\\Users\\test\\project", "C__Users_test_project"},
+		{"windows drive colon", "C:", "C_"},
+		{"windows nested path", "C:\\Users\\test\\dev\\grepai", "C__Users_test_dev_grepai"},
 	}
 
 	for _, tt := range tests {

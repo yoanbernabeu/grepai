@@ -114,6 +114,17 @@ type EmbedderConfig struct {
 	APIKey      string `yaml:"api_key,omitempty"`
 	Dimensions  *int   `yaml:"dimensions,omitempty"`
 	Parallelism int    `yaml:"parallelism"` // Number of parallel workers for batch embedding (default: 4)
+	// RequestTimeoutSeconds is the HTTP client timeout for a single embedding
+	// request. 0 (the default) preserves the historical 60-second value.
+	// Raise this when running against slow self-hosted endpoints
+	// (e.g., ollama-cuda on a shared GPU) where embedding a full batch can
+	// take longer than a minute.
+	RequestTimeoutSeconds int `yaml:"request_timeout_seconds,omitempty"`
+	// MaxRetries caps the number of retry attempts for transient embedding
+	// failures (HTTP 429 / 5xx). 0 (the default) preserves the historical
+	// value of 5. Only consumed by providers that implement retry today
+	// (openai); other providers ignore it.
+	MaxRetries int `yaml:"max_retries,omitempty"`
 }
 
 // GetDimensions returns the configured dimensions or a default value.
@@ -136,6 +147,18 @@ func (e *EmbedderConfig) GetDimensions() int {
 	default:
 		return DefaultLocalEmbeddingDimensions
 	}
+}
+
+// CacheNamespace returns the semantic namespace used for embedding-cache reuse.
+// It intentionally excludes secrets such as API keys.
+func (e *EmbedderConfig) CacheNamespace() string {
+	return fmt.Sprintf(
+		"embedding-cache-v2:provider=%s:model=%s:dimensions=%d:endpoint=%s",
+		strings.TrimSpace(e.Provider),
+		strings.TrimSpace(e.Model),
+		e.GetDimensions(),
+		strings.TrimSpace(e.Endpoint),
+	)
 }
 
 func DefaultEmbedderForProvider(provider string) EmbedderConfig {
@@ -212,6 +235,12 @@ type QdrantConfig struct {
 type ChunkingConfig struct {
 	Size    int `yaml:"size"`
 	Overlap int `yaml:"overlap"`
+	// CustomExtensions extends the built-in SupportedExtensions list with
+	// additional file extensions to index (e.g. [".tengo", ".el"]). Each
+	// entry must include the leading dot and is matched case-insensitively.
+	// Binary detection (UTF-8 + null-byte check) still applies, so adding
+	// a binary extension here is safe.
+	CustomExtensions []string `yaml:"custom_extensions,omitempty"`
 }
 
 func DefaultStoreForBackend(backend string) StoreConfig {
@@ -293,6 +322,17 @@ type WatchConfig struct {
 	RPGDerivedDebounceMs        int       `yaml:"rpg_derived_debounce_ms,omitempty"`
 	RPGFullReconcileIntervalSec int       `yaml:"rpg_full_reconcile_interval_sec,omitempty"`
 	RPGMaxDirtyFilesPerBatch    int       `yaml:"rpg_max_dirty_files_per_batch,omitempty"`
+	// DiscoverWorktrees controls automatic discovery (and watching) of linked
+	// git worktrees. A pointer is used so that configs without the key keep
+	// the historical default (enabled). Only the main worktree's config is
+	// consulted — the key is ignored in linked-worktree config copies.
+	DiscoverWorktrees *bool `yaml:"discover_worktrees,omitempty"`
+}
+
+// WorktreeDiscoveryEnabled reports whether linked git worktrees should be
+// auto-discovered and watched. Defaults to true when the option is not set.
+func (w WatchConfig) WorktreeDiscoveryEnabled() bool {
+	return w.DiscoverWorktrees == nil || *w.DiscoverWorktrees
 }
 
 type TraceConfig struct {
@@ -429,7 +469,7 @@ func DefaultConfig() *Config {
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",
-				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hxx",
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#
 				".pas", ".dpr", // Pascal/Delphi
