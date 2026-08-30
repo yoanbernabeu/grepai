@@ -2763,7 +2763,15 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 	}
 	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime, processorRegistry)
 	extractor := trace.NewRegexExtractor()
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
+	// Workspace projects keep their local state (symbol index, RPG index)
+	// under the workspace-scoped state dir rather than inside the project
+	// root. This lets us index read-only trees like /usr/share/emacs/30.2/
+	// without needing write access to the project root.
+	projectStateDir := ws.ProjectStateDir(project.Name)
+	if err := os.MkdirAll(projectStateDir, 0755); err != nil {
+		log.Printf("Warning: failed to create state dir %s for %s: %v", projectStateDir, project.Name, err)
+	}
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectStateDir, config.SymbolIndexFileName))
 	if err := symbolStore.Load(ctx); err != nil {
 		log.Printf("Warning: failed to load symbol index for %s: %v", project.Path, err)
 	}
@@ -2789,7 +2797,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 	var rpgEncoder *rpg.RPGEncoder
 	var manager *rpgRealtimeManager
 	if projectCfg.RPG.Enabled {
-		rpgStore = rpg.NewGOBRPGStore(config.GetRPGIndexPath(project.Path))
+		rpgStore = rpg.NewGOBRPGStore(filepath.Join(projectStateDir, config.RPGIndexFileName))
 		if err := rpgStore.Load(ctx); err != nil {
 			log.Printf("Warning: failed to load RPG index for %s: %v", project.Path, err)
 		}

@@ -25,7 +25,43 @@ type Workspace struct {
 	Name     string         `yaml:"name"`
 	Store    StoreConfig    `yaml:"store"`
 	Embedder EmbedderConfig `yaml:"embedder"`
-	Projects []ProjectEntry `yaml:"projects"`
+	// LocalStateDir relocates each project's per-project local state
+	// (symbol index, RPG index, …) from `<projectRoot>/.grepai/` to a
+	// path under this directory. Use when a project root is read-only
+	// (e.g., /usr/share/emacs/<X.Y>/) so grepai cannot mkdir .grepai/
+	// inside it. A leading "~/" expands to the user's home. If empty,
+	// the default location is ~/.grepai/workspaces/<workspace-name>/.
+	LocalStateDir string         `yaml:"local_state_dir,omitempty"`
+	Projects      []ProjectEntry `yaml:"projects"`
+}
+
+// ResolvedLocalStateDir returns the workspace-level local state base
+// directory after expanding "~/" prefixes and applying defaults.
+func (ws *Workspace) ResolvedLocalStateDir() string {
+	base := ws.LocalStateDir
+	if base == "" {
+		// Default: ~/.grepai/workspaces/<workspace>/
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ConfigDir, "workspaces", ws.Name)
+		}
+		return filepath.Join(ConfigDir, "workspaces", ws.Name)
+	}
+	if strings.HasPrefix(base, "~/") || base == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			if base == "~" {
+				return home
+			}
+			return filepath.Join(home, base[2:])
+		}
+	}
+	return base
+}
+
+// ProjectStateDir returns the per-project local-state directory under the
+// workspace's resolved LocalStateDir. The caller is responsible for
+// MkdirAll-ing the result before writing to it.
+func (ws *Workspace) ProjectStateDir(projectName string) string {
+	return filepath.Join(ws.ResolvedLocalStateDir(), projectName)
 }
 
 // ProjectEntry represents a single project within a workspace.

@@ -278,6 +278,7 @@ When indexing via workspace, settings come from different sources:
 | `store` (backend, DSN) | **Workspace** | Shared store required |
 | `embedder` (provider, model) | **Workspace** | Ensures compatible vectors |
 | `chunking` (size, overlap) | **Project** | Can vary per project/language |
+| `local_state_dir` | **Workspace** | Where to keep per-project symbol/RPG indexes; defaults to `~/.grepai/workspaces/<name>/`. Override for read-only project roots. |
 | `ignore` patterns | **Project** | Project-specific exclusions |
 | `external_gitignore` | **Project** | Project-specific gitignore |
 

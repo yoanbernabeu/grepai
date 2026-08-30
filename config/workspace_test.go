@@ -516,3 +516,47 @@ func TestGetWorkspaceConfigPath(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, path)
 	}
 }
+
+func TestWorkspace_ResolvedLocalStateDir_Default(t *testing.T) {
+	tmpHome := t.TempDir()
+	defer setTestHomeDir(t, tmpHome)()
+
+	ws := &Workspace{Name: "emacs"}
+	got := ws.ResolvedLocalStateDir()
+	want := filepath.Join(tmpHome, ConfigDir, "workspaces", "emacs")
+	if got != want {
+		t.Errorf("default LocalStateDir: got %q, want %q", got, want)
+	}
+}
+
+func TestWorkspace_ResolvedLocalStateDir_TildeExpansion(t *testing.T) {
+	tmpHome := t.TempDir()
+	defer setTestHomeDir(t, tmpHome)()
+
+	ws := &Workspace{Name: "emacs", LocalStateDir: "~/grepai-state/emacs"}
+	got := ws.ResolvedLocalStateDir()
+	want := filepath.Join(tmpHome, "grepai-state", "emacs")
+	if got != want {
+		t.Errorf("tilde expansion: got %q, want %q", got, want)
+	}
+}
+
+func TestWorkspace_ResolvedLocalStateDir_AbsolutePassthrough(t *testing.T) {
+	ws := &Workspace{Name: "emacs", LocalStateDir: "/var/lib/grepai/emacs"}
+	got := ws.ResolvedLocalStateDir()
+	if got != "/var/lib/grepai/emacs" {
+		t.Errorf("absolute path should pass through, got %q", got)
+	}
+}
+
+func TestWorkspace_ProjectStateDir(t *testing.T) {
+	tmpHome := t.TempDir()
+	defer setTestHomeDir(t, tmpHome)()
+
+	ws := &Workspace{Name: "emacs"}
+	got := ws.ProjectStateDir("emacs-source")
+	want := filepath.Join(tmpHome, ConfigDir, "workspaces", "emacs", "emacs-source")
+	if got != want {
+		t.Errorf("project state dir: got %q, want %q", got, want)
+	}
+}
