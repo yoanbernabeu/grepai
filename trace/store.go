@@ -19,6 +19,7 @@ type GOBSymbolStore struct {
 	index             *SymbolIndex
 	fileIndex         map[string]bool
 	fileContentHashes map[string]string
+	extractorMode     string
 	mu                sync.RWMutex
 }
 
@@ -26,6 +27,12 @@ type gobSymbolData struct {
 	Index             SymbolIndex
 	FileIndex         map[string]bool
 	FileContentHashes map[string]string
+
+	// ExtractorMode records the trace.Mode the watcher was running in when
+	// these symbols were extracted. An index written before this field
+	// existed decodes as "", which callers must read as "unknown" rather
+	// than as any particular mode.
+	ExtractorMode string
 }
 
 // NewGOBSymbolStore creates a new GOB-based symbol store.
@@ -82,6 +89,7 @@ func (s *GOBSymbolStore) loadUnlocked() error {
 	s.index = &data.Index
 	s.fileIndex = data.FileIndex
 	s.fileContentHashes = data.FileContentHashes
+	s.extractorMode = data.ExtractorMode
 
 	if s.index.Symbols == nil {
 		s.index.Symbols = make(map[string][]Symbol)
@@ -132,6 +140,7 @@ func (s *GOBSymbolStore) persistUnlocked() error {
 		Index:             *s.index,
 		FileIndex:         s.fileIndex,
 		FileContentHashes: s.fileContentHashes,
+		ExtractorMode:     s.extractorMode,
 	}
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(s.indexPath), filepath.Base(s.indexPath)+".tmp-*")
@@ -164,6 +173,24 @@ func (s *GOBSymbolStore) persistUnlocked() error {
 	cleanupTemp = false
 
 	return nil
+}
+
+// SetExtractorMode records which extraction mode produced the symbols in
+// this store. The watcher calls it once per run; it is persisted so that
+// `grepai trace --mode X` can tell whether the index can answer the
+// question or has to be rebuilt.
+func (s *GOBSymbolStore) SetExtractorMode(mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.extractorMode = mode
+}
+
+// ExtractorMode returns the mode recorded by the last watcher run, or ""
+// for an index written before the mode was tracked.
+func (s *GOBSymbolStore) ExtractorMode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.extractorMode
 }
 
 // SaveFile persists symbols and references for a file.

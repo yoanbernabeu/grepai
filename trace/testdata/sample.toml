@@ -1,0 +1,8 @@
+name = "foo"
+version = "1.0"
+
+[deps]
+ruby = "3"
+
+[deps.optional]
+extra = true

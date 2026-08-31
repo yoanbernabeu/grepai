@@ -33,7 +33,11 @@ func SupportedExtensions() []string {
 var languagePatterns = map[string]*LanguagePatterns{
 	".go":   goPatterns,
 	".js":   jsPatterns,
+	".mjs":  jsPatterns,
+	".cjs":  jsPatterns,
 	".ts":   tsPatterns,
+	".mts":  tsPatterns,
+	".cts":  tsPatterns,
 	".jsx":  jsxPatterns,
 	".tsx":  tsxPatterns,
 	".py":   pythonPatterns,

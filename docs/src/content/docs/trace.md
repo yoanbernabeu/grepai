@@ -29,7 +29,7 @@ grepai refs graph "uid"
 - **Find callees**: See what functions a symbol calls
 - **Build call graphs**: Visualize call relationships with configurable depth
 - **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP, Java, C/C++, Rust, Zig, C#, F#
-- **Two extraction modes**: Fast (regex) and Precise (tree-sitter AST)
+- **Three extraction modes**: Auto (tree-sitter where available, default), Fast (regex) and Precise (tree-sitter AST)
 - **JSON output**: Perfect for AI agents and automation
 
 ### Quick Start
@@ -72,12 +72,21 @@ When `--workspace` is specified without `--project`, results are aggregated from
 
 ### Extraction Modes
 
-#### Fast Mode (default)
+#### Auto Mode (default)
 
-Uses regex patterns for quick symbol extraction. Best for:
-- Large codebases where speed matters
-- Most common use cases
-- No additional dependencies
+Uses tree-sitter where a grammar is compiled in for the file's extension and
+falls back to regex for everything else. This is what you want unless you have
+a specific reason not to.
+
+```bash
+grepai trace callers "MyFunction" --mode auto
+```
+
+#### Fast Mode
+
+Forces regex extraction for every file. Best for:
+- Deterministic per-file timing
+- Working around a misbehaving grammar
 
 ```bash
 grepai trace callers "MyFunction" --mode fast
@@ -85,7 +94,8 @@ grepai trace callers "MyFunction" --mode fast
 
 #### Precise Mode
 
-Uses tree-sitter AST parsing for accurate extraction. Best for:
+Forces tree-sitter AST parsing. Files whose extension has no compiled-in
+grammar are skipped with a warning. Best for:
 - Complex code patterns
 - Edge cases not handled by regex
 - When accuracy is critical
@@ -94,26 +104,76 @@ Uses tree-sitter AST parsing for accurate extraction. Best for:
 grepai trace callers "MyFunction" --mode precise
 ```
 
-> **Note**: Precise mode requires building with the `treesitter` build tag and installs CGO dependencies.
+#### Mode is normally a `watch`-time setting
+
+`grepai trace` answers from the symbol index that `grepai watch` built, and
+that index contains whatever the extractor configured at watch time produced.
+The mode that matters, therefore, is `trace.mode` in `.grepai/config.yaml`:
+
+```yaml
+trace:
+  mode: auto
+```
+
+Passing `--mode` to a trace command still works, and it is honest about it: if
+the requested mode differs from the one the index was built with, grepai
+re-extracts the project on the spot with the requested extractor and answers
+from that. It prints a note to stderr when it does, because the cost is
+proportional to the size of the repository:
+
+```console
+$ grepai trace callers validate --mode precise
+Note: index was built in "fast" mode; re-extracting /path/to/repo in "precise" mode
+      (set trace.mode and re-run `grepai watch` to make this permanent)
+```
+
+When `--mode` is omitted, or when it names the mode the index already used,
+nothing is re-extracted. The `mode` field in `--json` output always names the
+extractor the answer actually came from, not the flag you passed.
 
 ### Supported Languages
 
-| Language | Extensions | Extraction Quality |
-|----------|------------|-------------------|
-| Go | `.go` | Excellent |
-| TypeScript | `.ts`, `.tsx` | Excellent |
-| JavaScript | `.js`, `.jsx` | Excellent |
-| Python | `.py` | Good |
-| PHP | `.php` | Good |
-| Lua | `.lua` | Good |
-| Java | `.java` | Good |
-| C | `.c`, `.h` | Good |
-| C++ | `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx` | Good |
-| Zig | `.zig` | Good |
-| Rust | `.rs` | Good |
-| C# | `.cs` | Good |
-| F# | `.fs`, `.fsx`, `.fsi` | Good |
-| Pascal/Delphi | `.pas`, `.dpr` | Good |
+Every extension below is extracted by default — `trace.enabled_languages` in
+`.grepai/config.yaml` ships covering all of them. "Call graph" says whether
+`trace callers` / `trace callees` work for the language, or whether it gets
+symbol extraction only.
+
+| Language | Extensions | Symbols | Call graph |
+|----------|------------|---------|------------|
+| Go | `.go` | tree-sitter | yes |
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` | tree-sitter | yes |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter | yes |
+| Python | `.py` | tree-sitter | yes |
+| PHP | `.php` | tree-sitter | yes |
+| C# | `.cs` | tree-sitter | yes |
+| F# | `.fs`, `.fsx`, `.fsi` | tree-sitter | yes |
+| Ruby | `.rb` | tree-sitter | yes (parenthesized or receiver calls only) |
+| Rust | `.rs` | tree-sitter | yes |
+| Java | `.java` | tree-sitter | yes |
+| Scala | `.scala`, `.sc`, `.mill` | tree-sitter | yes |
+| C | `.c`, `.h` | tree-sitter | yes |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx` | tree-sitter | yes |
+| Bash | `.sh`, `.bash`, `.zsh` | tree-sitter | yes (every command counts as a call) |
+| Lua | `.lua` | tree-sitter | yes |
+| Kotlin | `.kt`, `.kts` | tree-sitter | yes |
+| Swift | `.swift` | tree-sitter | yes |
+| SQL | `.sql` | tree-sitter | no |
+| Protobuf | `.proto` | tree-sitter | no |
+| HCL / Terraform | `.hcl`, `.tf` | tree-sitter | no |
+| Elm | `.elm` | tree-sitter | no |
+| TOML | `.toml` | tree-sitter | no |
+| Elixir | `.ex`, `.exs` | tree-sitter | no |
+| Emacs Lisp | `.el` | tree-sitter | no |
+| Vue | `.vue` | regex | no |
+| Zig | `.zig` | regex | limited |
+| Pascal/Delphi | `.pas`, `.dpr` | regex | limited |
+
+Languages marked "no" for the call graph are either declarative (SQL, HCL,
+Protobuf, TOML, Elm) or homoiconic: in Emacs Lisp a call is an ordinary `list`,
+indistinguishable from `if`/`let`/`when`, and in Elixir `defmodule`, `def` and
+a real call are all the same `call` node. Extracting those would be mostly
+false positives. They still contribute symbol definitions, so `grepai search`
+and symbol lookup work.
 
 ### JSON Output
 
@@ -149,7 +209,7 @@ Configure trace behavior in `.grepai/config.yaml`:
 
 ```yaml
 trace:
-  mode: fast                    # fast | precise
+  mode: auto                    # auto | fast | precise
   enabled_languages:
     - .go
     - .js

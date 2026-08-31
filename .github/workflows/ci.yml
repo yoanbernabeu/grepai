@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# The tree-sitter grammars are C. Native runners (ubuntu, macos, windows)
+# all ship a C toolchain, so `go build`/`go test` work as-is — but be
+# explicit rather than rely on the default, since a CGO-disabled build
+# fails with a confusing "build constraints exclude all Go files" instead
+# of a missing-compiler error.
+env:
+  CGO_ENABLED: "1"
+
 jobs:
   lint:
     name: Lint
@@ -72,13 +80,14 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # Native build only. The tree-sitter grammars are C, so every target
+      # is a CGO build and cross-compiling one needs that target's C
+      # toolchain — which the bare runner does not have. The Test job above
+      # already builds and runs the full suite natively on ubuntu, macos and
+      # windows; the cross-compiled release binaries are produced by
+      # release.yml inside the goreleaser-cross image.
       - name: Build
-        run: |
-          GOOS=linux GOARCH=amd64 go build -o grepai-linux-amd64 ./cmd/grepai
-          GOOS=linux GOARCH=arm64 go build -o grepai-linux-arm64 ./cmd/grepai
-          GOOS=darwin GOARCH=amd64 go build -o grepai-darwin-amd64 ./cmd/grepai
-          GOOS=darwin GOARCH=arm64 go build -o grepai-darwin-arm64 ./cmd/grepai
-          GOOS=windows GOARCH=amd64 go build -o grepai-windows-amd64.exe ./cmd/grepai
+        run: go build -o grepai-linux-amd64 ./cmd/grepai
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

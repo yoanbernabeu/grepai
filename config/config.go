@@ -341,6 +341,31 @@ type TraceConfig struct {
 	ExcludePatterns  []string `yaml:"exclude_patterns"`  // Patterns to exclude
 }
 
+// DefaultTracedLanguages is the canonical set of file extensions that get
+// symbol/trace extraction by default. It is the single source of truth for
+// the DefaultConfig() Trace.EnabledLanguages value and for the in-code
+// fallbacks in cli/watch.go (used when a project config carries an empty
+// EnabledLanguages list).
+//
+// Keep this in sync with trace/languages.go (the compiled-in tree-sitter
+// grammars) and trace/patterns.go (the regex-only extras). The trace package
+// imports config, so config cannot import trace to derive this automatically
+// — hence the hand-maintained list. Every extension here is either backed by
+// a tree-sitter grammar or a regex pattern set; extensions with neither
+// (e.g. .vue) are harmless no-ops left in for forward-compat.
+var DefaultTracedLanguages = []string{
+	// Tree-sitter, walk-based (legacy nine).
+	".go", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".py", ".php",
+	".cs", ".fs", ".fsx", ".fsi",
+	// Tree-sitter, query-based.
+	".rb", ".rs", ".java", ".scala", ".sc", ".mill",
+	".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx",
+	".sh", ".bash", ".zsh", ".lua", ".kt", ".kts", ".swift",
+	".sql", ".proto", ".hcl", ".tf", ".elm", ".ex", ".exs", ".toml", ".el",
+	// Regex-only extras (no tree-sitter grammar).
+	".vue", ".zig", ".pas", ".dpr",
+}
+
 type RPGConfig struct {
 	Enabled              bool    `yaml:"enabled"`
 	StorePath            string  `yaml:"store_path,omitempty"`
@@ -465,15 +490,8 @@ func DefaultConfig() *Config {
 			},
 		},
 		Trace: TraceConfig{
-			Mode: "fast",
-			EnabledLanguages: []string{
-				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
-				".lua",
-				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hxx",
-				".rs", ".zig", ".cs", ".java",
-				".fs", ".fsx", ".fsi", // F#
-				".pas", ".dpr", // Pascal/Delphi
-			},
+			Mode:             "auto",
+			EnabledLanguages: DefaultTracedLanguages,
 			ExcludePatterns: []string{
 				"*_test.go",
 				"*.spec.ts",
