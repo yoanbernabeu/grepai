@@ -71,8 +71,11 @@ watch:
 
 # Call graph tracing configuration
 trace:
-  # Extraction mode: "fast" (regex) or "precise" (tree-sitter)
-  mode: fast
+  # Extraction mode: "auto" (tree-sitter where a grammar exists, regex
+  # otherwise), "fast" (regex everywhere) or "precise" (tree-sitter only).
+  # This is the mode `grepai watch` extracts with, and therefore the mode
+  # `grepai trace` answers from.
+  mode: auto
   # File extensions to index for symbols
   enabled_languages:
     - .go

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Tree-sitter symbol extraction is now always compiled in** — the `treesitter` build tag is gone. Stock `go build`/`make build` ships with grammars for the existing 9 languages (Go, JS/JSX, TS/TSX, Python, PHP, C#, F#). Binary size grows from ~23 MB to ~48 MB.
+- **`--mode` flag is now wired up.** Previously `--mode fast`/`--mode precise` was a cosmetic label that never actually selected an extractor; both code paths ran the regex extractor. Three values are now meaningful:
+  - `auto` (new default) — tree-sitter for languages with a compiled-in grammar; regex everywhere else
+  - `fast` — force every file through the regex extractor
+  - `precise` — force every file through the tree-sitter extractor; errors on extensions without a grammar (testing aid)
+- **`grepai watch` (single-project and workspace modes) now uses the compound extractor by default.** Symbol indexes built by the watcher gain whatever tree-sitter sees that regex missed. No user action required.
+
+### Added
+
+- New `trace.CompoundExtractor` that routes per-file between the tree-sitter and regex extractors per the configured mode.
+- New `trace.ParseMode` helper that normalizes user input and falls back to `auto` with a stderr warning on unknown values.
+- New `trace.HasTreeSitterGrammar` / `trace.TreeSitterExtensions` helpers — the single source of truth for which extensions are tree-sitter-backed in this build.
+
 ## [0.36.0] - 2026-08-30
 
 ### Added

@@ -4,18 +4,70 @@ before:
   hooks:
     - go mod download
 
+# The tree-sitter grammars are C, so releases build with CGO_ENABLED=1 and
+# every target needs its own cross toolchain. Those toolchains come from the
+# ghcr.io/goreleaser/goreleaser-cross image that release.yml runs this config
+# inside — osxcross for darwin, aarch64 cross-gcc for linux/arm64, mingw-w64
+# for windows. One build entry per target keeps each CC/CXX pairing visible
+# rather than hidden in a nested template.
 builds:
-  - main: ./cmd/grepai
+  - id: linux-amd64
+    main: ./cmd/grepai
     binary: grepai
+    goos: [linux]
+    goarch: [amd64]
     env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: linux-arm64
+    main: ./cmd/grepai
+    binary: grepai
+    goos: [linux]
+    goarch: [arm64]
+    env:
+      - CGO_ENABLED=1
+      - CC=aarch64-linux-gnu-gcc
+      - CXX=aarch64-linux-gnu-g++
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: darwin-amd64
+    main: ./cmd/grepai
+    binary: grepai
+    goos: [darwin]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
+      - CC=o64-clang
+      - CXX=o64-clang++
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: darwin-arm64
+    main: ./cmd/grepai
+    binary: grepai
+    goos: [darwin]
+    goarch: [arm64]
+    env:
+      - CGO_ENABLED=1
+      - CC=oa64-clang
+      - CXX=oa64-clang++
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: windows-amd64
+    main: ./cmd/grepai
+    binary: grepai
+    goos: [windows]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - CXX=x86_64-w64-mingw32-g++
     ldflags:
       - -s -w -X main.version={{.Version}}
 

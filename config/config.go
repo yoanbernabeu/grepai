@@ -465,7 +465,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Trace: TraceConfig{
-			Mode: "fast",
+			Mode: "auto",
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",

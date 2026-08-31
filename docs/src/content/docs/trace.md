@@ -29,7 +29,7 @@ grepai refs graph "uid"
 - **Find callees**: See what functions a symbol calls
 - **Build call graphs**: Visualize call relationships with configurable depth
 - **Multi-language support**: Go, TypeScript/JavaScript, Python, PHP, Java, C/C++, Rust, Zig, C#, F#
-- **Two extraction modes**: Fast (regex) and Precise (tree-sitter AST)
+- **Three extraction modes**: Auto (tree-sitter where available, default), Fast (regex) and Precise (tree-sitter AST)
 - **JSON output**: Perfect for AI agents and automation
 
 ### Quick Start
@@ -72,12 +72,21 @@ When `--workspace` is specified without `--project`, results are aggregated from
 
 ### Extraction Modes
 
-#### Fast Mode (default)
+#### Auto Mode (default)
 
-Uses regex patterns for quick symbol extraction. Best for:
-- Large codebases where speed matters
-- Most common use cases
-- No additional dependencies
+Uses tree-sitter where a grammar is compiled in for the file's extension and
+falls back to regex for everything else. This is what you want unless you have
+a specific reason not to.
+
+```bash
+grepai trace callers "MyFunction" --mode auto
+```
+
+#### Fast Mode
+
+Forces regex extraction for every file. Best for:
+- Deterministic per-file timing
+- Working around a misbehaving grammar
 
 ```bash
 grepai trace callers "MyFunction" --mode fast
@@ -85,7 +94,8 @@ grepai trace callers "MyFunction" --mode fast
 
 #### Precise Mode
 
-Uses tree-sitter AST parsing for accurate extraction. Best for:
+Forces tree-sitter AST parsing. Files whose extension has no compiled-in
+grammar are skipped with a warning. Best for:
 - Complex code patterns
 - Edge cases not handled by regex
 - When accuracy is critical
@@ -94,7 +104,32 @@ Uses tree-sitter AST parsing for accurate extraction. Best for:
 grepai trace callers "MyFunction" --mode precise
 ```
 
-> **Note**: Precise mode requires building with the `treesitter` build tag and installs CGO dependencies.
+#### Mode is normally a `watch`-time setting
+
+`grepai trace` answers from the symbol index that `grepai watch` built, and
+that index contains whatever the extractor configured at watch time produced.
+The mode that matters, therefore, is `trace.mode` in `.grepai/config.yaml`:
+
+```yaml
+trace:
+  mode: auto
+```
+
+Passing `--mode` to a trace command still works, and it is honest about it: if
+the requested mode differs from the one the index was built with, grepai
+re-extracts the project on the spot with the requested extractor and answers
+from that. It prints a note to stderr when it does, because the cost is
+proportional to the size of the repository:
+
+```console
+$ grepai trace callers validate --mode precise
+Note: index was built in "fast" mode; re-extracting /path/to/repo in "precise" mode
+      (set trace.mode and re-run `grepai watch` to make this permanent)
+```
+
+When `--mode` is omitted, or when it names the mode the index already used,
+nothing is re-extracted. The `mode` field in `--json` output always names the
+extractor the answer actually came from, not the flag you passed.
 
 ### Supported Languages
 
@@ -149,7 +184,7 @@ Configure trace behavior in `.grepai/config.yaml`:
 
 ```yaml
 trace:
-  mode: fast                    # fast | precise
+  mode: auto                    # auto | fast | precise
   enabled_languages:
     - .go
     - .js
