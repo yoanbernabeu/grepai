@@ -37,7 +37,7 @@ jobs:
         run: go run cmd/gendocs/main.go
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
