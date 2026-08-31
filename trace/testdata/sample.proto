@@ -1,0 +1,9 @@
+syntax = "proto3";
+package foo;
+message Greeter {
+    string name = 1;
+}
+service Hello {
+    rpc Say(Greeter) returns (Greeter);
+}
+enum Color { RED = 0; GREEN = 1; }

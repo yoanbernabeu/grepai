@@ -139,7 +139,7 @@ Examples:
 func init() {
 	// Add flags to all trace subcommands
 	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd} {
-		cmd.Flags().StringVarP(&traceMode, "mode", "m", "fast", "Extraction mode: fast (regex) or precise (tree-sitter)")
+		cmd.Flags().StringVarP(&traceMode, "mode", "m", "auto", "Extraction mode: auto (tree-sitter where available, regex otherwise; default), fast (regex everywhere), precise (tree-sitter, errors on unsupported extensions). Passing this explicitly re-extracts the project when the index was built in a different mode; set trace.mode in .grepai/config.yaml to make it permanent")
 		cmd.Flags().BoolVar(&traceJSON, "json", false, "Output results in JSON format")
 		cmd.Flags().BoolVarP(&traceTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
 		cmd.Flags().BoolVarP(&traceCompact, "compact", "c", false, "Output minimal format without call-site context (requires --json or --toon)")
@@ -185,6 +185,12 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer trace.CloseSymbolStores(stores)
+
+		stores, modeCleanup, err := applyTraceModeWorkspace(ctx, cmd, stores)
+		if err != nil {
+			return err
+		}
+		defer modeCleanup()
 
 		result := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		for _, ss := range stores {
@@ -251,6 +257,12 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load symbol index: %w", err)
 	}
 	defer symbolStore.Close()
+
+	symbolStore, modeCleanup, err := applyTraceModeSingle(ctx, cmd, projectRoot, symbolStore)
+	if err != nil {
+		return err
+	}
+	defer modeCleanup()
 
 	// Check if index exists
 	stats, err := symbolStore.GetStats(ctx)
@@ -352,6 +364,12 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 		}
 		defer trace.CloseSymbolStores(stores)
 
+		stores, modeCleanup, err := applyTraceModeWorkspace(ctx, cmd, stores)
+		if err != nil {
+			return err
+		}
+		defer modeCleanup()
+
 		result := trace.TraceResult{Query: symbolName, Mode: traceMode}
 		for _, ss := range stores {
 			symbols, err := ss.LookupSymbol(ctx, symbolName)
@@ -414,6 +432,12 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load symbol index: %w", err)
 	}
 	defer symbolStore.Close()
+
+	symbolStore, modeCleanup, err := applyTraceModeSingle(ctx, cmd, projectRoot, symbolStore)
+	if err != nil {
+		return err
+	}
+	defer modeCleanup()
 
 	// Check if index exists
 	stats, err := symbolStore.GetStats(ctx)
@@ -505,6 +529,12 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		}
 		defer trace.CloseSymbolStores(stores)
 
+		stores, modeCleanup, err := applyTraceModeWorkspace(ctx, cmd, stores)
+		if err != nil {
+			return err
+		}
+		defer modeCleanup()
+
 		// Merge graphs from all project stores
 		merged := &trace.CallGraph{
 			Root:  symbolName,
@@ -560,6 +590,12 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load symbol index: %w", err)
 	}
 	defer symbolStore.Close()
+
+	symbolStore, modeCleanup, err := applyTraceModeSingle(ctx, cmd, projectRoot, symbolStore)
+	if err != nil {
+		return err
+	}
+	defer modeCleanup()
 
 	// Check if index exists
 	stats, err := symbolStore.GetStats(ctx)

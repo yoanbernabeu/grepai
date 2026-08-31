@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package trace
 
 import (
@@ -9,13 +7,6 @@ import (
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
-	"github.com/smacker/go-tree-sitter/csharp"
-	"github.com/smacker/go-tree-sitter/golang"
-	"github.com/smacker/go-tree-sitter/javascript"
-	"github.com/smacker/go-tree-sitter/php"
-	"github.com/smacker/go-tree-sitter/python"
-	"github.com/smacker/go-tree-sitter/typescript/typescript"
-	"github.com/yoanbernabeu/grepai/fsharp"
 )
 
 // TreeSitterExtractor implements SymbolExtractor using tree-sitter AST parsing.
@@ -23,32 +14,21 @@ type TreeSitterExtractor struct {
 	parsers map[string]*sitter.Parser
 }
 
-// NewTreeSitterExtractor creates a new tree-sitter based extractor.
+// NewTreeSitterExtractor creates a new tree-sitter based extractor. It
+// initializes one parser per extension declared in treeSitterLanguages —
+// the single registry that languages.go also exposes via
+// HasTreeSitterGrammar.
 func NewTreeSitterExtractor() (*TreeSitterExtractor, error) {
 	ext := &TreeSitterExtractor{
 		parsers: make(map[string]*sitter.Parser),
 	}
-
-	languages := map[string]*sitter.Language{
-		".go":  golang.GetLanguage(),
-		".js":  javascript.GetLanguage(),
-		".jsx": javascript.GetLanguage(),
-		".ts":  typescript.GetLanguage(),
-		".tsx": typescript.GetLanguage(),
-		".py":  python.GetLanguage(),
-		".php": php.GetLanguage(),
-		".cs":  csharp.GetLanguage(),
-		".fs":  fsharp.GetLanguage(),
-		".fsx": fsharp.GetLanguage(),
-		".fsi": fsharp.GetLanguage(),
-	}
-
-	for extension, lang := range languages {
+	for _, spec := range treeSitterLanguages {
 		parser := sitter.NewParser()
-		parser.SetLanguage(lang)
-		ext.parsers[extension] = parser
+		parser.SetLanguage(spec.GetLanguage())
+		for _, e := range spec.Extensions {
+			ext.parsers[e] = parser
+		}
 	}
-
 	return ext, nil
 }
 
@@ -80,10 +60,72 @@ func (e *TreeSitterExtractor) ExtractSymbols(ctx context.Context, filePath strin
 	}
 	defer tree.Close()
 
+	// If the language declares S-expression queries, prefer the query-based
+	// path — it's terser to author and more efficient than walking the full
+	// tree. The legacy nine languages (Go, JS, TS, Python, PHP, C#, F#)
+	// have Queries empty and fall through to walkNodeForSymbols.
+	if spec := langSpecByExt(ext); spec != nil && len(spec.Queries) > 0 {
+		return e.extractViaQueries(tree, []byte(content), filePath, spec)
+	}
+
 	var symbols []Symbol
 	root := tree.RootNode()
-
 	e.walkNodeForSymbols(root, []byte(content), filePath, ext, &symbols)
+	return symbols, nil
+}
+
+// extractViaQueries runs each NamedQuery in spec.Queries against the parse
+// tree and emits one Symbol per @name capture. The Kind comes verbatim
+// from the corresponding NamedQuery; the Language tag comes from spec.Name.
+//
+// Queries are expected to contain a (@name) capture; other captures are
+// ignored. This is the common path for new languages added in PR 2 — no
+// per-language Go code beyond declaring the queries.
+func (e *TreeSitterExtractor) extractViaQueries(tree *sitter.Tree, content []byte, filePath string, spec *LangSpec) ([]Symbol, error) {
+	var symbols []Symbol
+	lang := spec.GetLanguage()
+	root := tree.RootNode()
+
+	for _, nq := range spec.Queries {
+		q, err := sitter.NewQuery([]byte(nq.Query), lang)
+		if err != nil {
+			return nil, fmt.Errorf("trace: %s/%s: invalid query: %w", spec.Name, nq.Kind, err)
+		}
+		cursor := sitter.NewQueryCursor()
+		cursor.Exec(q, root)
+
+		for {
+			match, ok := cursor.NextMatch()
+			if !ok {
+				break
+			}
+			// Apply #eq? / #match? / #not-eq? predicates declared in the
+			// query. Predicates are how queries discriminate by token
+			// content (e.g. "this @kind capture equals defvar"). When the
+			// match fails its predicates, FilterPredicates returns nil.
+			match = cursor.FilterPredicates(match, content)
+			if match == nil {
+				continue
+			}
+			for _, capture := range match.Captures {
+				if q.CaptureNameForId(capture.Index) != "name" {
+					continue
+				}
+				name := capture.Node.Content(content)
+				symbols = append(symbols, Symbol{
+					Name:     name,
+					Kind:     SymbolKind(nq.Kind),
+					File:     filePath,
+					Line:     int(capture.Node.StartPoint().Row) + 1,
+					EndLine:  int(capture.Node.EndPoint().Row) + 1,
+					Language: spec.Name,
+					Exported: isExported(name, spec.Name),
+				})
+			}
+		}
+		cursor.Close()
+		q.Close()
+	}
 
 	return symbols, nil
 }
@@ -94,9 +136,9 @@ func (e *TreeSitterExtractor) walkNodeForSymbols(node *sitter.Node, content []by
 	switch ext {
 	case ".go":
 		e.extractGoSymbol(node, nodeType, content, filePath, symbols)
-	case ".js", ".jsx":
+	case ".js", ".jsx", ".mjs", ".cjs":
 		e.extractJSSymbol(node, nodeType, content, filePath, "javascript", symbols)
-	case ".ts", ".tsx":
+	case ".ts", ".tsx", ".mts", ".cts":
 		e.extractJSSymbol(node, nodeType, content, filePath, "typescript", symbols)
 	case ".py":
 		e.extractPythonSymbol(node, nodeType, content, filePath, symbols)
@@ -661,19 +703,9 @@ func (e *TreeSitterExtractor) walkNodeForReferences(node *sitter.Node, content [
 	case ".fs", ".fsx", ".fsi":
 		e.walkFSharpCalls(node, nodeType, content, filePath, refs)
 	default:
-		if nodeType == "call_expression" || nodeType == "invocation_expression" {
-			funcNode := node.ChildByFieldName("function")
-			if funcNode == nil {
-				funcNode = node.ChildByFieldName("expression")
-			}
-			if funcNode != nil {
-				name := funcNode.Content(content)
-				if idx := strings.LastIndex(name, "."); idx >= 0 {
-					name = name[idx+1:]
-				}
-
-				caller := e.findContainingFunction(node, content, ext)
-
+		spec := langSpecByExt(ext)
+		if containsString(callNodesFor(spec), nodeType) {
+			if name := baseSymbolName(calleeExpression(node, content, calleeFieldsFor(spec))); name != "" {
 				*refs = append(*refs, Reference{
 					SymbolName: name,
 					Kind:       RefKindCall,
@@ -681,7 +713,7 @@ func (e *TreeSitterExtractor) walkNodeForReferences(node *sitter.Node, content [
 					Line:       int(node.StartPoint().Row) + 1,
 					Column:     int(node.StartPoint().Column),
 					Context:    truncateContext(string(content[node.StartByte():node.EndByte()])),
-					CallerName: caller,
+					CallerName: e.findContainingFunction(node, content, ext),
 					CallerFile: filePath,
 				})
 			}
@@ -804,9 +836,7 @@ func extractJSRootFromNodeContent(objExpr string) string {
 	if objExpr == "" {
 		return ""
 	}
-	if strings.HasPrefix(objExpr, "this.") {
-		objExpr = objExpr[len("this."):]
-	}
+	objExpr = strings.TrimPrefix(objExpr, "this.")
 	for i, r := range objExpr {
 		if r == '.' || r == '[' || r == '(' || r == ' ' || r == '\t' || r == '\n' {
 			if i == 0 {
@@ -898,11 +928,10 @@ func (e *TreeSitterExtractor) findContainingFunction(node *sitter.Node, content 
 				}
 			}
 		default:
-			switch parent.Type() {
-			case "function_declaration", "method_declaration", "constructor_declaration", "function_definition", "local_function_statement":
-				nameNode := parent.ChildByFieldName("name")
-				if nameNode != nil {
-					return nameNode.Content(content)
+			spec := langSpecByExt(ext)
+			if containsString(functionNodesFor(spec), parent.Type()) {
+				if name := functionNodeName(parent, content, functionNameFieldsFor(spec)); name != "" {
+					return name
 				}
 			}
 		}
@@ -940,4 +969,102 @@ func truncateContext(s string) string {
 		s = s[:100] + "..."
 	}
 	return s
+}
+
+// containsString reports whether needle appears in haystack. The slices here
+// are a handful of node-type strings, so a linear scan is the whole story.
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// calleeExpression returns the source text of the expression being called by
+// node. It tries each field in order and concatenates every child carrying
+// that field — Lua's `t.helper(1)` is three sibling `prefix` children — then
+// falls back to the first named child for grammars whose call node has no
+// fields at all (Kotlin, Swift).
+func calleeExpression(node *sitter.Node, content []byte, fields []string) string {
+	for _, field := range fields {
+		var parts []string
+		for i := 0; i < int(node.ChildCount()); i++ {
+			if node.FieldNameForChild(i) == field {
+				parts = append(parts, node.Child(i).Content(content))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "")
+		}
+	}
+	if first := node.NamedChild(0); first != nil {
+		return first.Content(content)
+	}
+	return ""
+}
+
+// baseSymbolName strips any receiver or namespace qualification from a called
+// expression: `other.helper` → `helper`, `foo::bar` → `bar`, `p->m` → `m`.
+// Anything with whitespace or a newline in it is not a plain callee (a
+// computed callee, a multi-line expression) and is dropped.
+func baseSymbolName(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" || strings.ContainsAny(expr, " \t\n\r()[]{}") {
+		return ""
+	}
+	for _, sep := range []string{"::", "->", ".", ":"} {
+		if idx := strings.LastIndex(expr, sep); idx >= 0 {
+			expr = expr[idx+len(sep):]
+		}
+	}
+	return expr
+}
+
+// functionNodeName resolves the name of a function-like node. It tries each
+// field in order, descending for the first identifier-shaped node beneath it
+// (C and C++ bury the name under a function_declarator), and falls back to the
+// node's first named child for grammars that expose no name field at all.
+func functionNodeName(node *sitter.Node, content []byte, fields []string) string {
+	for _, field := range fields {
+		if child := node.ChildByFieldName(field); child != nil {
+			if name := identifierUnder(child, content); name != "" {
+				return name
+			}
+		}
+	}
+	if first := node.NamedChild(0); first != nil {
+		return identifierUnder(first, content)
+	}
+	return ""
+}
+
+// identifierUnder returns node's text when node is an identifier-shaped leaf,
+// otherwise the first such node beneath it.
+func identifierUnder(node *sitter.Node, content []byte) string {
+	if isIdentifierNodeType(node.Type()) {
+		return node.Content(content)
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		if name := identifierUnder(node.NamedChild(i), content); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// isIdentifierNodeType covers the identifier node names used across the
+// compiled-in grammars: `identifier`, `simple_identifier`, `type_identifier`,
+// `field_identifier`, `property_identifier`, plus PHP's `name`, Bash's
+// `word`/`command_name` and Emacs Lisp's `symbol`.
+func isIdentifierNodeType(nodeType string) bool {
+	if strings.HasSuffix(nodeType, "identifier") {
+		return true
+	}
+	switch nodeType {
+	case "name", "word", "command_name", "symbol":
+		return true
+	}
+	return false
 }

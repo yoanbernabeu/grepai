@@ -12,7 +12,11 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 	expected := map[string]bool{
 		".go":   true,
 		".js":   true,
+		".mjs":  true,
+		".cjs":  true,
 		".ts":   true,
+		".mts":  true,
+		".cts":  true,
 		".jsx":  true,
 		".tsx":  true,
 		".py":   true,

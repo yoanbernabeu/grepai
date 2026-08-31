@@ -17,18 +17,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      # The tree-sitter grammars are C, so every release target is a CGO
+      # build and needs its own C toolchain. goreleaser-action runs on the
+      # bare runner, which only has the host toolchain, so GoReleaser runs
+      # inside goreleaser-cross instead: it bundles osxcross for darwin,
+      # aarch64 cross-gcc for linux/arm64 and mingw-w64 for windows. The
+      # image tag pins both the Go version (must track go.mod) and the
+      # GoReleaser version.
+      #
+      # Note: windows/arm64 is no longer produced. goreleaser-cross ships no
+      # arm64 mingw toolchain, so that target cannot be a CGO build.
+      - name: Run GoReleaser (CGO cross)
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -w /src \
+            -e GITHUB_TOKEN \
+            -e HOMEBREW_TAP_GITHUB_TOKEN \
+            ghcr.io/goreleaser/goreleaser-cross:v1.25.v2.12.7 \
+            release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.GH_PAT }}
