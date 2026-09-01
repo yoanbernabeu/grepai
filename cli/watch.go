@@ -2079,9 +2079,24 @@ func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtr
 }
 
 func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
+	// An atomic write -- write to a temp file, then rename it over the target
+	// -- surfaces on the destination path as RENAME/REMOVE with no follow-up
+	// CREATE or WRITE. Editors and coding agents (Claude Code, Cursor) save
+	// this way, so taking the event at face value would drop a file that is
+	// still on disk from the index, silently, until the next manual save or
+	// watcher restart. Re-qualify the event whenever the path still resolves
+	// to a regular file; a genuine delete leaves nothing to stat.
+	eventType := event.Type
+	if eventType == watcher.EventDelete || eventType == watcher.EventRename {
+		if info, err := os.Stat(filepath.Join(projectRoot, event.Path)); err == nil && info.Mode().IsRegular() {
+			log.Printf("Treating %s of %s as a modification: file is still on disk (atomic write)", eventType.String(), event.Path)
+			eventType = watcher.EventModify
+		}
+	}
+
 	if onActivity != nil {
 		op := "processing"
-		if event.Type == watcher.EventDelete {
+		if eventType == watcher.EventDelete {
 			op = "removing"
 		}
 		onActivity(op, event.Path)
@@ -2105,7 +2120,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		}
 	}
 
-	switch event.Type {
+	switch eventType {
 	case watcher.EventCreate, watcher.EventModify:
 		start := time.Now()
 		fileInfo, err := scanner.ScanFile(event.Path)
@@ -2176,11 +2191,11 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 
 				// Update RPG graph.
 				if rpgEncoder != nil {
-					eventType := "create"
-					if event.Type == watcher.EventModify {
-						eventType = "modify"
+					rpgEventType := "create"
+					if eventType == watcher.EventModify {
+						rpgEventType = "modify"
 					}
-					if err := rpgEncoder.HandleFileEvent(ctx, eventType, fileInfo.Path, symbols); err != nil {
+					if err := rpgEncoder.HandleFileEvent(ctx, rpgEventType, fileInfo.Path, symbols); err != nil {
 						log.Printf("Warning: failed to update RPG for %s: %v", event.Path, err)
 					}
 					if vectorStore != nil {
@@ -2196,7 +2211,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 						log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
 							time.Since(start).Milliseconds(),
 							fileInfo.Path,
-							event.Type.String(),
+							eventType.String(),
 							dirtyCount,
 						)
 					}
@@ -2232,7 +2247,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 				log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
 					time.Since(start).Milliseconds(),
 					event.Path,
-					event.Type.String(),
+					eventType.String(),
 					dirtyCount,
 				)
 			}
