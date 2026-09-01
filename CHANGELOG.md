@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stale Symbols After Upgrade**: Pair each persisted symbol entry with the extractor version that produced it, so a release shipping improved symbol extraction re-processes unchanged files instead of leaving stale symbols in place until `.grepai/symbols.gob` is deleted by hand (#264) - @kryptt
+  - The first `grepai watch` after upgrading re-extracts symbols for every traced file once, then returns to normal incremental behaviour
+  - Symbol extraction only: the vector index is untouched and **no re-embedding occurs**, so there is no API cost and no reindexing to plan
+  - Existing `symbols.gob` files load unchanged, and remain readable if you downgrade
+
 ## [0.36.0] - 2026-08-30
 
 ### Added
