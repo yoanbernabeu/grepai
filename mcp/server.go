@@ -1010,7 +1010,7 @@ func (s *Server) createWorkspaceStore(ctx context.Context, ws *config.Workspace)
 		if collectionName == "" {
 			collectionName = "workspace_" + ws.Name
 		}
-		return store.NewQdrantStore(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, ws.Store.Qdrant.APIKey, ws.Embedder.GetDimensions())
+		return store.NewQdrantStoreWithNamespace(ctx, ws.Store.Qdrant.Endpoint, ws.Store.Qdrant.Port, ws.Store.Qdrant.UseTLS, collectionName, projectID, ws.Store.Qdrant.APIKey, ws.Embedder.GetDimensions())
 	default:
 		return nil, fmt.Errorf("unsupported backend for workspace: %s", ws.Store.Backend)
 	}
@@ -2052,7 +2052,7 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 		if collectionName == "" {
 			collectionName = store.SanitizeCollectionName(s.projectRoot)
 		}
-		return store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions())
+		return store.NewQdrantStoreWithNamespace(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, s.projectRoot, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions())
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
 	}
