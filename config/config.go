@@ -463,6 +463,7 @@ func DefaultConfig() *Config {
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",
+				".gd", // GDScript (Godot)
 				".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hxx",
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#

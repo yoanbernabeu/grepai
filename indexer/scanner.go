@@ -38,6 +38,7 @@ func isMinifiedFile(path string) bool {
 // SupportedExtensions lists file extensions to index
 var SupportedExtensions = map[string]bool{
 	".go":     true,
+	".gd":     true,
 	".js":     true,
 	".ts":     true,
 	".jsx":    true,

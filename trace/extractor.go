@@ -31,7 +31,7 @@ func (e *RegexExtractor) Mode() string {
 // invalidates every persisted RegexExtractor symbol cache entry on the
 // next scan, forcing fresh extraction. Use semver-ish strings ("regex-v2",
 // "regex-v2-lua-funcs") so the bump intent is visible in diffs.
-const regexExtractorVersion = "regex-v2-python-comments"
+const regexExtractorVersion = "regex-v3-python-gdscript"
 
 // Version returns the extractor's signature used for dedup
 // invalidation. See SymbolExtractor.Version.
@@ -927,8 +927,8 @@ func findFunctionEnd(content string, start int, lang string) int {
 				}
 			}
 		}
-	case "python":
-		// Python uses indentation - find next line with same or less indentation
+	case "python", "gdscript":
+		// Python and GDScript use indentation - find next line with same or less indentation
 		startLine := countLines(content[:start])
 		lines := strings.Split(content, "\n")
 		if startLine >= len(lines) {
@@ -1028,7 +1028,7 @@ func isExported(name string, lang string) bool {
 	switch lang {
 	case "go":
 		return unicode.IsUpper(rune(name[0]))
-	case "python":
+	case "python", "gdscript":
 		return !strings.HasPrefix(name, "_")
 	default:
 		return true

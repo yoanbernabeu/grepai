@@ -34,6 +34,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".fs":   true,
 		".fsx":  true,
 		".fsi":  true,
+		".gd":   true,
 	}
 
 	for _, lang := range langs {
@@ -1467,5 +1468,105 @@ func TestRegexExtractor_ExtractReferences_FiltersBuiltinAndVueInternalNoise(t *t
 	}
 	if hasMax || hasLog || hasKeys || hasRefs {
 		t.Fatalf("expected builtins/vue internals filtered, got max=%v log=%v keys=%v $refs=%v", hasMax, hasLog, hasKeys, hasRefs)
+	}
+}
+
+func TestRegexExtractor_ExtractSymbols_GDScript(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `class_name PlayerStats
+extends Node
+
+signal stats_changed
+
+var total_likes := 0
+
+func _ready():
+	activate_node()
+
+static func create_default() -> PlayerStats:
+	return PlayerStats.new()
+
+func get_total_likes() -> int:
+	return total_likes
+
+class InnerHelper extends RefCounted:
+	func assist(value):
+		return value + 1
+`
+
+	symbols, err := extractor.ExtractSymbols(ctx, "test.gd", content)
+	if err != nil {
+		t.Fatalf("ExtractSymbols failed: %v", err)
+	}
+
+	foundFunctions := make(map[string]bool)
+	foundMethods := make(map[string]bool)
+	foundClasses := make(map[string]bool)
+	exported := make(map[string]bool)
+	for _, sym := range symbols {
+		switch sym.Kind {
+		case KindFunction:
+			foundFunctions[sym.Name] = true
+		case KindMethod:
+			foundMethods[sym.Name] = true
+		case KindClass:
+			foundClasses[sym.Name] = true
+		}
+		exported[sym.Name] = sym.Exported
+	}
+
+	for _, name := range []string{"_ready", "create_default", "get_total_likes"} {
+		if !foundFunctions[name] {
+			t.Errorf("missing function: %s", name)
+		}
+	}
+	if !foundMethods["assist"] {
+		t.Errorf("missing inner-class method: assist")
+	}
+	for _, name := range []string{"PlayerStats", "InnerHelper"} {
+		if !foundClasses[name] {
+			t.Errorf("missing class: %s", name)
+		}
+	}
+	if exported["_ready"] {
+		t.Errorf("underscore-prefixed _ready should not be exported")
+	}
+	if !exported["get_total_likes"] {
+		t.Errorf("get_total_likes should be exported")
+	}
+}
+
+func TestRegexExtractor_ExtractReferences_GDScript(t *testing.T) {
+	extractor := NewRegexExtractor()
+	ctx := context.Background()
+
+	content := `func _ready():
+	activate_node()
+	update_hud()
+
+func refresh():
+	activate_node()
+`
+
+	_, refs, err := extractor.ExtractAll(ctx, "test.gd", content)
+	if err != nil {
+		t.Fatalf("ExtractAll failed: %v", err)
+	}
+
+	counts := make(map[string]int)
+	callers := make(map[string]bool)
+	for _, ref := range refs {
+		counts[ref.SymbolName]++
+		if ref.SymbolName == "update_hud" {
+			callers[ref.CallerName] = true
+		}
+	}
+	if counts["activate_node"] != 2 {
+		t.Errorf("expected 2 activate_node references, got %d", counts["activate_node"])
+	}
+	if !callers["_ready"] {
+		t.Errorf("expected update_hud called from _ready, got callers %v", callers)
 	}
 }

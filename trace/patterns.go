@@ -55,6 +55,7 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".fs":   fsharpPatterns,
 	".fsx":  fsharpPatterns,
 	".fsi":  fsharpPatterns,
+	".gd":   gdscriptPatterns,
 }
 
 // Go patterns
@@ -205,6 +206,30 @@ var phpPatterns = &LanguagePatterns{
 	MethodCall:   regexp.MustCompile(`(?:->|::)([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 }
 
+// GDScript patterns (Godot 4)
+var gdscriptPatterns = &LanguagePatterns{
+	Extension: ".gd",
+	Language:  "gdscript",
+	Functions: []*regexp.Regexp{
+		// func function_name(params) -> ReturnType:
+		regexp.MustCompile(`(?m)^func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// static func function_name(params):
+		regexp.MustCompile(`(?m)^static\s+func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	},
+	Methods: []*regexp.Regexp{
+		// func method_name(params): inside an inner class (indented)
+		regexp.MustCompile(`(?m)^[ \t]+(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	},
+	Classes: []*regexp.Regexp{
+		// class_name ClassName
+		regexp.MustCompile(`(?m)^class_name\s+([A-Za-z_][A-Za-z0-9_]*)`),
+		// class InnerClass extends Base:
+		regexp.MustCompile(`(?m)^[ \t]*class\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+extends\s+[A-Za-z_][A-Za-z0-9_.]*)?\s*:`),
+	},
+	FunctionCall: regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+}
+
 // Lua patterns
 var luaPatterns = &LanguagePatterns{
 	Extension: ".lua",
@@ -267,6 +292,19 @@ var languageKeywords = map[string]map[string]bool{
 		"and": true, "or": true, "is": true, "import": true, "from": true,
 		"lambda": true, "del": true, "await": true, "async": true, "def": true,
 		"class": true, "try": true, "finally": true, "global": true, "nonlocal": true,
+	},
+	"gdscript": {
+		"if": true, "elif": true, "else": true, "for": true, "while": true,
+		"match": true, "return": true, "await": true, "func": true, "class": true,
+		"class_name": true, "extends": true, "signal": true, "enum": true,
+		"var": true, "const": true, "static": true, "pass": true, "break": true,
+		"continue": true, "new": true, "super": true, "self": true, "in": true,
+		"as": true, "is": true, "assert": true, "print": true, "str": true,
+		"int": true, "float": true, "bool": true, "len": true, "range": true,
+		"typeof": true, "preload": true, "load": true, "get_node": true,
+		"get_parent": true, "queue_free": true, "connect": true,
+		"emit_signal": true, "call": true, "callv": true, "call_deferred": true,
+		"has_method": true,
 	},
 	"php": {
 		"if": true, "for": true, "foreach": true, "while": true, "switch": true,
