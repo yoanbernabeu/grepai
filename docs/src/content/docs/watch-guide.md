@@ -25,6 +25,43 @@ grepai init
 grepai watch
 ```
 
+### One-Time Indexing
+
+Use `grepai index` when you want to update the index without starting a
+long-running watcher. It performs the same initial synchronization as
+`grepai watch`—including vector, symbol, and optional RPG indexes—and exits.
+Unchanged files are scanned but are not re-embedded.
+
+```bash
+# Update only the current project, then exit
+grepai index
+
+# Update every project in a configured workspace, then exit
+grepai index --workspace myworkspace
+```
+
+This is useful in Git hooks when a watcher would interfere with temporary
+files created by tests or build tools. For example, `.git/hooks/pre-commit`:
+
+```sh
+#!/bin/sh
+grepai index
+```
+
+`grepai index` synchronizes the current working tree, including unstaged
+changes; it does not index only the files or snapshots staged for commit.
+
+To initialize and index a newly created linked worktree without leaving a
+watcher behind:
+
+```bash
+git worktree add ../my-feature feature/my-feature
+(cd ../my-feature && grepai index)
+```
+
+Each linked worktree keeps its own index. A one-time project index does not
+discover or update other linked worktrees.
+
 In interactive terminals, `grepai watch` now opens a Bubble Tea monitoring UI by default (foreground mode).
 Use `--no-ui` to force plain text output:
 
@@ -317,8 +354,7 @@ grepai search "current feature implementation"
 For CI environments, run a one-time index:
 
 ```bash
-grepai watch &
-sleep 60  # Wait for initial indexing
+grepai index
 grepai search "security vulnerabilities" --json --compact
 ```
 
