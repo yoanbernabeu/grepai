@@ -61,10 +61,16 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 		return nil
 	}
 
+	removed := false
 	for _, chunkID := range doc.ChunkIDs {
-		delete(s.chunks, chunkID)
+		if _, ok := s.chunks[chunkID]; ok {
+			delete(s.chunks, chunkID)
+			removed = true
+		}
 	}
-	s.dirty = true
+	if removed {
+		s.dirty = true
+	}
 
 	return nil
 }
@@ -146,8 +152,9 @@ func (s *GOBStore) ListDocuments(ctx context.Context) ([]string, error) {
 func (s *GOBStore) Load(ctx context.Context) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	loaded := false
 	defer func() {
-		if err == nil {
+		if err == nil && loaded {
 			s.dirty = false
 		}
 	}()
@@ -156,29 +163,32 @@ func (s *GOBStore) Load(ctx context.Context) (err error) {
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		// If we can't create lock file, proceed without locking (backward compat)
-		return s.loadUnlocked()
+		loaded, err = s.loadUnlocked()
+		return err
 	}
 	defer lockFile.Close()
 
 	if err := fileutil.FlockShared(lockFile, false); err != nil {
 		// If locking fails, proceed without locking (backward compat)
-		return s.loadUnlocked()
+		loaded, err = s.loadUnlocked()
+		return err
 	}
 	defer func() {
 		_ = fileutil.Funlock(lockFile)
 	}()
 
-	return s.loadUnlocked()
+	loaded, err = s.loadUnlocked()
+	return err
 }
 
 // loadUnlocked performs the actual load without any locking.
-func (s *GOBStore) loadUnlocked() error {
+func (s *GOBStore) loadUnlocked() (bool, error) {
 	file, err := os.Open(s.indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("failed to open index file: %w", err)
+		return false, fmt.Errorf("failed to open index file: %w", err)
 	}
 	defer file.Close()
 
@@ -213,11 +223,11 @@ func (s *GOBStore) loadUnlocked() error {
 		default:
 			// Self-heal failed (e.g. read-only directory): keep the fatal
 			// behavior but surface the failed quarantine so it is diagnosable.
-			return fmt.Errorf("failed to decode index: %w (quarantine to %s failed: %v)", err, corruptPath, renameErr)
+			return false, fmt.Errorf("failed to decode index: %w (quarantine to %s failed: %v)", err, corruptPath, renameErr)
 		}
 		s.chunks = make(map[string]Chunk)
 		s.documents = make(map[string]Document)
-		return nil
+		return false, nil
 	}
 
 	s.chunks = data.Chunks
@@ -230,7 +240,7 @@ func (s *GOBStore) loadUnlocked() error {
 		s.documents = make(map[string]Document)
 	}
 
-	return nil
+	return true, nil
 }
 
 func (s *GOBStore) Persist(ctx context.Context) error {

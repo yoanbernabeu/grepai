@@ -161,11 +161,23 @@ func TestGOBStore_PersistAndLoad(t *testing.T) {
 
 func TestGOBStore_CleanPersistIsNoOp(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), "index.gob")
-	store := NewGOBStore(indexPath)
 	ctx := context.Background()
 
+	seed := NewGOBStore(indexPath)
+	if err := seed.SaveDocument(ctx, Document{Path: "main.go"}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+	if err := seed.Persist(ctx); err != nil {
+		t.Fatalf("seed Persist failed: %v", err)
+	}
+
+	store := NewGOBStore(indexPath)
 	if err := store.Load(ctx); err != nil {
 		t.Fatalf("Load failed: %v", err)
+	}
+	oldTime := time.Unix(1, 0)
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
 	}
 	if err := store.Persist(ctx); err != nil {
 		t.Fatalf("first clean Persist failed: %v", err)
@@ -173,8 +185,74 @@ func TestGOBStore_CleanPersistIsNoOp(t *testing.T) {
 	if err := store.Persist(ctx); err != nil {
 		t.Fatalf("second clean Persist failed: %v", err)
 	}
-	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
-		t.Fatalf("clean Persist wrote index, Stat error = %v", err)
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatal("clean Persist rewrote index")
+	}
+}
+
+func TestGOBStore_LoadMissingIndexPreservesPendingChanges(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	ctx := context.Background()
+	store := NewGOBStore(indexPath)
+
+	if err := store.SaveDocument(ctx, Document{Path: "main.go", Hash: "hash"}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+	if err := store.Load(ctx); err != nil {
+		t.Fatalf("Load missing index failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reloaded := NewGOBStore(indexPath)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	doc, err := reloaded.GetDocument(ctx, "main.go")
+	if err != nil {
+		t.Fatalf("GetDocument failed: %v", err)
+	}
+	if doc == nil || doc.Hash != "hash" {
+		t.Fatalf("pending document was lost: %#v", doc)
+	}
+}
+
+func TestGOBStore_DeleteByFileWithoutChunksDoesNotRewrite(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	ctx := context.Background()
+	seed := NewGOBStore(indexPath)
+	if err := seed.SaveDocument(ctx, Document{Path: "main.go"}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+	if err := seed.Persist(ctx); err != nil {
+		t.Fatalf("seed Persist failed: %v", err)
+	}
+
+	store := NewGOBStore(indexPath)
+	if err := store.Load(ctx); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	oldTime := time.Unix(1, 0)
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+	if err := store.DeleteByFile(ctx, "main.go"); err != nil {
+		t.Fatalf("DeleteByFile failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatal("no-op DeleteByFile rewrote index")
 	}
 }
 

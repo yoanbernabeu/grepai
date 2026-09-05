@@ -283,11 +283,23 @@ func TestGOBSymbolStore_should_persist_and_reload(t *testing.T) {
 
 func TestGOBSymbolStore_CleanPersistIsNoOp(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
-	store := NewGOBSymbolStore(indexPath)
 	ctx := context.Background()
 
+	seed := NewGOBSymbolStore(indexPath)
+	if err := seed.SaveFile(ctx, "main.go", []Symbol{{Name: "main", File: "main.go"}}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+	if err := seed.Persist(ctx); err != nil {
+		t.Fatalf("seed Persist failed: %v", err)
+	}
+
+	store := NewGOBSymbolStore(indexPath)
 	if err := store.Load(ctx); err != nil {
 		t.Fatalf("Load failed: %v", err)
+	}
+	oldTime := time.Unix(1, 0)
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
 	}
 	if err := store.Persist(ctx); err != nil {
 		t.Fatalf("first clean Persist failed: %v", err)
@@ -295,8 +307,89 @@ func TestGOBSymbolStore_CleanPersistIsNoOp(t *testing.T) {
 	if err := store.Persist(ctx); err != nil {
 		t.Fatalf("second clean Persist failed: %v", err)
 	}
-	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
-		t.Fatalf("clean Persist wrote index, Stat error = %v", err)
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatal("clean Persist rewrote index")
+	}
+}
+
+func TestGOBSymbolStore_LoadMissingIndexPreservesPendingChanges(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
+	ctx := context.Background()
+	store := NewGOBSymbolStore(indexPath)
+
+	if err := store.SaveFile(ctx, "main.go", []Symbol{{Name: "main", File: "main.go"}}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+	if err := store.Load(ctx); err != nil {
+		t.Fatalf("Load missing index failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reloaded := NewGOBSymbolStore(indexPath)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	symbols, err := reloaded.LookupSymbol(ctx, "main")
+	if err != nil {
+		t.Fatalf("LookupSymbol failed: %v", err)
+	}
+	if len(symbols) != 1 || symbols[0].File != "main.go" {
+		t.Fatalf("pending symbols were lost: %#v", symbols)
+	}
+}
+
+func TestGOBSymbolStore_DeleteFileRemovesExtractorVersion(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
+	ctx := context.Background()
+	store := NewGOBSymbolStore(indexPath)
+
+	if err := store.SaveFileWithSignature(ctx, "main.go", "hash", "extractor-v1", nil, nil); err != nil {
+		t.Fatalf("SaveFileWithSignature failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("initial Persist failed: %v", err)
+	}
+	if err := store.DeleteFile(ctx, "main.go"); err != nil {
+		t.Fatalf("DeleteFile failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("delete Persist failed: %v", err)
+	}
+
+	reloaded := NewGOBSymbolStore(indexPath)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if _, ok := reloaded.GetFileExtractorVersion("main.go"); ok {
+		t.Fatal("extractor version survived DeleteFile")
+	}
+}
+
+func TestGOBSymbolStore_SaveFileWithSignaturePersistsBothFingerprints(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
+	ctx := context.Background()
+	store := NewGOBSymbolStore(indexPath)
+
+	if err := store.SaveFileWithSignature(ctx, "main.go", "hash", "extractor-v1", nil, nil); err != nil {
+		t.Fatalf("SaveFileWithSignature failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+	reloaded := NewGOBSymbolStore(indexPath)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	hash, hashOK := reloaded.GetFileContentHash("main.go")
+	version, versionOK := reloaded.GetFileExtractorVersion("main.go")
+	if !hashOK || hash != "hash" || !versionOK || version != "extractor-v1" {
+		t.Fatalf("fingerprints = hash(%q,%v) version(%q,%v)", hash, hashOK, version, versionOK)
 	}
 }
 
