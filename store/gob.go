@@ -21,6 +21,7 @@ type GOBStore struct {
 	lockPath  string
 	chunks    map[string]Chunk    // id -> chunk
 	documents map[string]Document // path -> document
+	dirty     bool
 	mu        sync.RWMutex
 }
 
@@ -35,12 +36,14 @@ func NewGOBStore(indexPath string) *GOBStore {
 		lockPath:  indexPath + ".lock",
 		chunks:    make(map[string]Chunk),
 		documents: make(map[string]Document),
+		dirty:     true,
 	}
 }
 
 func (s *GOBStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.dirty = true
 
 	for _, chunk := range chunks {
 		s.chunks[chunk.ID] = chunk
@@ -61,6 +64,7 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 	for _, chunkID := range doc.ChunkIDs {
 		delete(s.chunks, chunkID)
 	}
+	s.dirty = true
 
 	return nil
 }
@@ -112,6 +116,7 @@ func (s *GOBStore) SaveDocument(ctx context.Context, doc Document) error {
 	defer s.mu.Unlock()
 
 	s.documents[doc.Path] = doc
+	s.dirty = true
 	return nil
 }
 
@@ -119,7 +124,10 @@ func (s *GOBStore) DeleteDocument(ctx context.Context, filePath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.documents, filePath)
+	if _, ok := s.documents[filePath]; ok {
+		delete(s.documents, filePath)
+		s.dirty = true
+	}
 	return nil
 }
 
@@ -135,9 +143,14 @@ func (s *GOBStore) ListDocuments(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
-func (s *GOBStore) Load(ctx context.Context) error {
+func (s *GOBStore) Load(ctx context.Context) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		if err == nil {
+			s.dirty = false
+		}
+	}()
 
 	// Acquire shared (read) file lock for cross-process safety
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
@@ -221,8 +234,11 @@ func (s *GOBStore) loadUnlocked() error {
 }
 
 func (s *GOBStore) Persist(ctx context.Context) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dirty {
+		return nil
+	}
 
 	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare index directory: %w", err)
@@ -284,6 +300,7 @@ func (s *GOBStore) persistUnlocked() error {
 		return fmt.Errorf("failed to replace index file: %w", err)
 	}
 	cleanupTemp = false
+	s.dirty = false
 
 	return nil
 }

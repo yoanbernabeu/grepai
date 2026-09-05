@@ -159,6 +159,122 @@ func TestGOBStore_PersistAndLoad(t *testing.T) {
 	}
 }
 
+func TestGOBStore_CleanPersistIsNoOp(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	store := NewGOBStore(indexPath)
+	ctx := context.Background()
+
+	if err := store.Load(ctx); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("first clean Persist failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("second clean Persist failed: %v", err)
+	}
+	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
+		t.Fatalf("clean Persist wrote index, Stat error = %v", err)
+	}
+}
+
+func TestGOBStore_DirtyPersistWritesOnce(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	store := NewGOBStore(indexPath)
+	ctx := context.Background()
+
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("initial Persist failed: %v", err)
+	}
+	oldTime := time.Unix(1, 0)
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+	if err := store.SaveChunks(ctx, []Chunk{{ID: "chunk-1", FilePath: "main.go"}}); err != nil {
+		t.Fatalf("SaveChunks failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("dirty Persist failed: %v", err)
+	}
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if info.ModTime().Equal(oldTime) {
+		t.Fatal("dirty Persist did not rewrite index")
+	}
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("clean Persist failed: %v", err)
+	}
+	info, err = os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatal("clean Persist rewrote index")
+	}
+}
+
+func TestGOBStore_FailedPersistStaysDirty(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "index.gob")
+	ctx := context.Background()
+	store := NewGOBStore(indexPath)
+
+	if err := store.SaveChunks(ctx, []Chunk{{ID: "chunk-1", FilePath: "main.go"}}); err != nil {
+		t.Fatalf("SaveChunks failed: %v", err)
+	}
+	if err := os.Mkdir(indexPath, 0o755); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+	blocker := filepath.Join(indexPath, "blocker")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if err := store.Persist(ctx); err == nil {
+		t.Fatal("Persist should fail when target is a non-empty directory")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatalf("Remove blocker failed: %v", err)
+	}
+	if err := os.Remove(indexPath); err != nil {
+		t.Fatalf("Remove target directory failed: %v", err)
+	}
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("retry Persist failed: %v", err)
+	}
+	if _, err := os.Stat(indexPath); err != nil {
+		t.Fatalf("retry Persist did not write index: %v", err)
+	}
+}
+
+func TestGOBStore_CleanCloseIsNoOp(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.gob")
+	store := NewGOBStore(indexPath)
+	ctx := context.Background()
+
+	if err := store.Persist(ctx); err != nil {
+		t.Fatalf("Persist failed: %v", err)
+	}
+	oldTime := time.Unix(1, 0)
+	if err := os.Chtimes(indexPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatal("clean Close rewrote index")
+	}
+}
+
 func TestGOBStore_PersistCreatesMissingParentDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "missing", ".grepai", "index.gob")
