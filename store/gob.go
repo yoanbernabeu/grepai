@@ -21,6 +21,7 @@ type GOBStore struct {
 	lockPath  string
 	chunks    map[string]Chunk    // id -> chunk
 	documents map[string]Document // path -> document
+	dirty     bool
 	mu        sync.RWMutex
 }
 
@@ -35,12 +36,14 @@ func NewGOBStore(indexPath string) *GOBStore {
 		lockPath:  indexPath + ".lock",
 		chunks:    make(map[string]Chunk),
 		documents: make(map[string]Document),
+		dirty:     true,
 	}
 }
 
 func (s *GOBStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.dirty = true
 
 	for _, chunk := range chunks {
 		s.chunks[chunk.ID] = chunk
@@ -58,8 +61,15 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 		return nil
 	}
 
+	removed := false
 	for _, chunkID := range doc.ChunkIDs {
-		delete(s.chunks, chunkID)
+		if _, ok := s.chunks[chunkID]; ok {
+			delete(s.chunks, chunkID)
+			removed = true
+		}
+	}
+	if removed {
+		s.dirty = true
 	}
 
 	return nil
@@ -112,6 +122,7 @@ func (s *GOBStore) SaveDocument(ctx context.Context, doc Document) error {
 	defer s.mu.Unlock()
 
 	s.documents[doc.Path] = doc
+	s.dirty = true
 	return nil
 }
 
@@ -119,7 +130,10 @@ func (s *GOBStore) DeleteDocument(ctx context.Context, filePath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.documents, filePath)
+	if _, ok := s.documents[filePath]; ok {
+		delete(s.documents, filePath)
+		s.dirty = true
+	}
 	return nil
 }
 
@@ -135,37 +149,46 @@ func (s *GOBStore) ListDocuments(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
-func (s *GOBStore) Load(ctx context.Context) error {
+func (s *GOBStore) Load(ctx context.Context) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	loaded := false
+	defer func() {
+		if err == nil && loaded {
+			s.dirty = false
+		}
+	}()
 
 	// Acquire shared (read) file lock for cross-process safety
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		// If we can't create lock file, proceed without locking (backward compat)
-		return s.loadUnlocked()
+		loaded, err = s.loadUnlocked()
+		return err
 	}
 	defer lockFile.Close()
 
 	if err := fileutil.FlockShared(lockFile, false); err != nil {
 		// If locking fails, proceed without locking (backward compat)
-		return s.loadUnlocked()
+		loaded, err = s.loadUnlocked()
+		return err
 	}
 	defer func() {
 		_ = fileutil.Funlock(lockFile)
 	}()
 
-	return s.loadUnlocked()
+	loaded, err = s.loadUnlocked()
+	return err
 }
 
 // loadUnlocked performs the actual load without any locking.
-func (s *GOBStore) loadUnlocked() error {
+func (s *GOBStore) loadUnlocked() (bool, error) {
 	file, err := os.Open(s.indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("failed to open index file: %w", err)
+		return false, fmt.Errorf("failed to open index file: %w", err)
 	}
 	defer file.Close()
 
@@ -200,11 +223,11 @@ func (s *GOBStore) loadUnlocked() error {
 		default:
 			// Self-heal failed (e.g. read-only directory): keep the fatal
 			// behavior but surface the failed quarantine so it is diagnosable.
-			return fmt.Errorf("failed to decode index: %w (quarantine to %s failed: %v)", err, corruptPath, renameErr)
+			return false, fmt.Errorf("failed to decode index: %w (quarantine to %s failed: %v)", err, corruptPath, renameErr)
 		}
 		s.chunks = make(map[string]Chunk)
 		s.documents = make(map[string]Document)
-		return nil
+		return false, nil
 	}
 
 	s.chunks = data.Chunks
@@ -217,12 +240,15 @@ func (s *GOBStore) loadUnlocked() error {
 		s.documents = make(map[string]Document)
 	}
 
-	return nil
+	return true, nil
 }
 
 func (s *GOBStore) Persist(ctx context.Context) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dirty {
+		return nil
+	}
 
 	if err := fileutil.EnsureParentDir(s.indexPath); err != nil {
 		return fmt.Errorf("failed to prepare index directory: %w", err)
@@ -284,6 +310,7 @@ func (s *GOBStore) persistUnlocked() error {
 		return fmt.Errorf("failed to replace index file: %w", err)
 	}
 	cleanupTemp = false
+	s.dirty = false
 
 	return nil
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Idle GOB Index Rewrites**: Symbol and vector GOB stores now persist only when modified, eliminating full-index rewrites every 30 seconds when idle (#298)
+
 ## [0.36.1] - 2026-09-01
 
 ### Fixed
