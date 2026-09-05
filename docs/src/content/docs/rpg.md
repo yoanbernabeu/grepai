@@ -7,7 +7,7 @@ grepai's Repository Planning Graph (RPG) connects files, symbols, chunks, and fe
 
 ## Prerequisites
 
-RPG data is built by the watcher. Enable RPG in `.grepai/config.yaml`, then rebuild the index:
+RPG data is built during indexing. Enable RPG in `.grepai/config.yaml`, then rebuild the index:
 
 ```yaml
 rpg:
@@ -15,10 +15,10 @@ rpg:
 ```
 
 ```bash
-grepai watch
+grepai index
 ```
 
-If the RPG index is missing or stale, CLI commands will tell you to rebuild with `grepai watch`.
+If the RPG index is missing or stale, rebuild it with `grepai index`. Starting `grepai watch` also performs the same initial rebuild before watching for changes.
 
 ## Search RPG Nodes
 

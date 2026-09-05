@@ -156,7 +156,11 @@ func TestInitializeWorkspaceRuntimesRegistrationFailureCleansPriorRuntime(t *tes
 	initFn := func(context.Context, *config.Workspace, config.ProjectEntry, embedder.Embedder, store.VectorStore, bool) (*workspaceProjectRuntime, watchSource, error) {
 		initCalls++
 		if initCalls == 1 {
-			return &workspaceProjectRuntime{project: ws.Projects[0], watcher: first, symbolStore: symbolStore}, first, nil
+			return &workspaceProjectRuntime{
+				projectIndexRuntime: &projectIndexRuntime{symbolStore: symbolStore},
+				project:             ws.Projects[0],
+				watcher:             first,
+			}, first, nil
 		}
 		return nil, nil, &watcher.RegistrationError{Operation: "add watch", Path: "/second", Cause: syscall.ENOSPC}
 	}
@@ -193,7 +197,11 @@ func TestInitializeWorkspaceRuntimesKeepsOptionalInitializationWarningBehavior(t
 		if project.Name == "optional-failure" {
 			return nil, nil, errors.New("optional index initialization failed")
 		}
-		return &workspaceProjectRuntime{project: project, watcher: healthy}, healthy, nil
+		return &workspaceProjectRuntime{
+			projectIndexRuntime: &projectIndexRuntime{},
+			project:             project,
+			watcher:             healthy,
+		}, healthy, nil
 	}
 
 	runtimes, watchers, err := initializeWorkspaceRuntimes(context.Background(), ws, nil, nil, true, initFn)
