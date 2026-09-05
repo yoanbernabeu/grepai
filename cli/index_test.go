@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,7 @@ func TestRunProjectIndexRequiresInitializedProject(t *testing.T) {
 		t.Fatalf("change working directory: %v", err)
 	}
 
-	err = runProjectIndex(context.Background())
+	err = runProjectIndex(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "no grepai project found") {
 		t.Fatalf("expected uninitialized project error, got %v", err)
 	}
@@ -75,14 +76,14 @@ func TestRunWorkspaceIndexRequiresConfiguredWorkspace(t *testing.T) {
 	cleanupHome := setTestHomeDirCLI(t, t.TempDir())
 	defer cleanupHome()
 
-	err := runWorkspaceIndex(context.Background(), "missing")
+	err := runWorkspaceIndex(t.Context(), "missing")
 	if err == nil || !strings.Contains(err.Error(), "no workspaces configured") {
 		t.Fatalf("expected missing workspace config error, got %v", err)
 	}
 }
 
 func TestProjectIndexRuntimeSynchronizesChangesAndSymbols(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	projectRoot := t.TempDir()
 	writeTestSource(t, projectRoot, "a.go", "package sample\n\nfunc Alpha() {}\n")
 	writeTestSource(t, projectRoot, "b.go", "package sample\n\nfunc Beta() {}\n")
@@ -195,7 +196,7 @@ func TestProjectIndexRuntimeSynchronizesChangesAndSymbols(t *testing.T) {
 }
 
 func TestProjectIndexRuntimeBuildsRPG(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	projectRoot := t.TempDir()
 	writeTestSource(t, projectRoot, "main.go", "package sample\n\nfunc MainFeature() {}\n")
 	cfg := config.DefaultConfig()
@@ -237,7 +238,7 @@ func TestProjectIndexRuntimeBuildsRPG(t *testing.T) {
 }
 
 func TestIndexWorkspaceProjectsContinuesAndAggregatesErrors(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	goodRoot := t.TempDir()
 	writeTestSource(t, goodRoot, "main.go", "package sample\n\nfunc WorkspaceFeature() {}\n")
 	missingRoot := filepath.Join(t.TempDir(), "missing")
@@ -264,6 +265,38 @@ func TestIndexWorkspaceProjectsContinuesAndAggregatesErrors(t *testing.T) {
 	doc, getErr := sharedStore.GetDocument(ctx, "team/good/main.go")
 	if getErr != nil || doc == nil {
 		t.Fatalf("expected valid project to be indexed with workspace prefix, doc=%v err=%v", doc, getErr)
+	}
+}
+
+type persistErrorStore struct {
+	store.VectorStore
+	err error
+}
+
+func (s *persistErrorStore) Persist(context.Context) error {
+	return s.err
+}
+
+func TestPersistInitialIndexReturnsStoreError(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.DefaultConfig()
+	baseStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	if err := baseStore.Load(t.Context()); err != nil {
+		t.Fatalf("load vector store: %v", err)
+	}
+	wantErr := errors.New("persist failed")
+	runtime, err := newProjectIndexRuntime(t.Context(), projectRoot, cfg, &noOpEmbedder{}, &persistErrorStore{
+		VectorStore: baseStore,
+		err:         wantErr,
+	}, nil)
+	if err != nil {
+		t.Fatalf("newProjectIndexRuntime: %v", err)
+	}
+	defer runtime.close()
+
+	err = runtime.persistInitialIndex(t.Context())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected persistence error, got %v", err)
 	}
 }
 

@@ -182,7 +182,6 @@ func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackg
 	}
 
 	emitInitialStatsSnapshot(ctx, runtime.vectorStore, runtime.symbolStore, runtime.projectRoot, onStats)
-
 	return nil
 }
 
