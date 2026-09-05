@@ -48,6 +48,9 @@ files created by tests or build tools. For example, `.git/hooks/pre-commit`:
 grepai index
 ```
 
+`grepai index` synchronizes the current working tree, including unstaged
+changes; it does not index only the files or snapshots staged for commit.
+
 To initialize and index a newly created linked worktree without leaving a
 watcher behind:
 
@@ -351,8 +354,7 @@ grepai search "current feature implementation"
 For CI environments, run a one-time index:
 
 ```bash
-grepai watch &
-sleep 60  # Wait for initial indexing
+grepai index
 grepai search "security vulnerabilities" --json --compact
 ```
 

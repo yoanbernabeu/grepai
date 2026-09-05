@@ -1021,6 +1021,9 @@ func watchProjectWithEventObserver(ctx context.Context, projectRoot string, emb 
 	if err := runtime.runInitialIndex(ctx, isBackgroundChild, onScan, onEmbed, onRPG, onStats); err != nil {
 		return err
 	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		log.Printf("Warning: %v", err)
+	}
 
 	// Initialize watcher
 	w, err := watcher.NewWatcher(projectRoot, runtime.ignoreMatcher, cfg.Watch.DebounceMs)
@@ -2709,6 +2712,9 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 	if err := indexRuntime.runInitialIndex(ctx, isBackgroundChild, nil, nil, nil, nil); err != nil {
 		_ = indexRuntime.close()
 		return nil, nil, err
+	}
+	if err := indexRuntime.persistInitialIndex(ctx); err != nil {
+		log.Printf("Warning: %v", err)
 	}
 
 	var manager *rpgRealtimeManager

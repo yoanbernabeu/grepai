@@ -174,16 +174,6 @@ func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackg
 	}
 
 	emitInitialStatsSnapshot(ctx, runtime.vectorStore, runtime.symbolStore, runtime.projectRoot, onStats)
-
-	if err := runtime.vectorStore.Persist(ctx); err != nil {
-		return fmt.Errorf("failed to persist index for %s: %w", runtime.projectRoot, err)
-	}
-	if runtime.rpgStore != nil {
-		if err := runtime.rpgStore.Persist(ctx); err != nil {
-			return fmt.Errorf("failed to persist RPG graph for %s: %w", runtime.projectRoot, err)
-		}
-	}
-
 	return nil
 }
 
@@ -200,10 +190,23 @@ func (runtime *projectIndexRuntime) removeDeletedSymbols(ctx context.Context, ex
 			return fmt.Errorf("failed to remove symbols for %s: %w", path, err)
 		}
 	}
-	if err := runtime.symbolStore.Persist(ctx); err != nil {
-		return fmt.Errorf("failed to persist symbol index for %s: %w", runtime.projectRoot, err)
-	}
 	return nil
+}
+
+func (runtime *projectIndexRuntime) persistInitialIndex(ctx context.Context) error {
+	var errs []error
+	if err := runtime.vectorStore.Persist(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("failed to persist vector index for %s: %w", runtime.projectRoot, err))
+	}
+	if err := runtime.symbolStore.Persist(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("failed to persist symbol index for %s: %w", runtime.projectRoot, err))
+	}
+	if runtime.rpgStore != nil {
+		if err := runtime.rpgStore.Persist(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("failed to persist RPG graph for %s: %w", runtime.projectRoot, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (runtime *projectIndexRuntime) close() error {
@@ -254,6 +257,9 @@ func runProjectIndex(ctx context.Context) (resultErr error) {
 	defer func() { resultErr = errors.Join(resultErr, runtime.close()) }()
 
 	if err := runtime.runInitialIndex(ctx, false, nil, nil, nil, nil); err != nil {
+		return err
+	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
 		return err
 	}
 	fmt.Println("Index update complete.")
@@ -317,6 +323,9 @@ func indexWorkspaceProjects(ctx context.Context, ws *config.Workspace, emb embed
 			continue
 		}
 		indexErr := runtime.runInitialIndex(ctx, false, nil, nil, nil, nil)
+		if indexErr == nil {
+			indexErr = runtime.persistInitialIndex(ctx)
+		}
 		closeErr := runtime.close()
 		if err := errors.Join(indexErr, closeErr); err != nil {
 			projectErrs = append(projectErrs, fmt.Errorf("%s (%s): %w", project.Name, project.Path, err))
