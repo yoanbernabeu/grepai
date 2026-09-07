@@ -10,7 +10,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.0.0
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/qdrant/go-client v1.19.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
