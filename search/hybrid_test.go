@@ -140,3 +140,83 @@ func TestTokenize(t *testing.T) {
 		})
 	}
 }
+
+func fusionIDs(results []store.SearchResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.Chunk.ID)
+	}
+	return ids
+}
+
+func sameIDs(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Two disjoint lists give every rank a pair of chunks with the identical RRF
+// score, which is the normal shape of a hybrid search: the vector list and the
+// text list rarely agree on their top hits. Fusion collects them out of a map,
+// so the ranking has to be pinned by something other than iteration order.
+func TestReciprocalRankFusion_TiedScoresAreDeterministic(t *testing.T) {
+	vector := []store.SearchResult{
+		{Chunk: store.Chunk{ID: "a"}, Score: 0.9},
+		{Chunk: store.Chunk{ID: "c"}, Score: 0.8},
+		{Chunk: store.Chunk{ID: "e"}, Score: 0.7},
+	}
+	text := []store.SearchResult{
+		{Chunk: store.Chunk{ID: "b"}, Score: 1.0},
+		{Chunk: store.Chunk{ID: "d"}, Score: 0.5},
+		{Chunk: store.Chunk{ID: "f"}, Score: 0.5},
+	}
+
+	// a and b are both rank 0 (1/61), c and d both rank 1 (1/62), e and f both
+	// rank 2 (1/63), so each pair ties and orders by chunk ID.
+	want := []string{"a", "b", "c", "d", "e", "f"}
+	for i := 0; i < 20; i++ {
+		got := fusionIDs(ReciprocalRankFusion(60, 10, vector, text))
+		if !sameIDs(got, want) {
+			t.Fatalf("call %d returned %v, want %v", i, got, want)
+		}
+	}
+}
+
+// With a limit the tie decides which results the caller ever sees, so the same
+// two lists must not yield a different set of chunks on the next call.
+func TestReciprocalRankFusion_TiedScoresKeepSameSubsetUnderLimit(t *testing.T) {
+	vector := []store.SearchResult{{Chunk: store.Chunk{ID: "a"}, Score: 0.9}}
+	text := []store.SearchResult{{Chunk: store.Chunk{ID: "b"}, Score: 0.9}}
+
+	want := []string{"a"}
+	for i := 0; i < 50; i++ {
+		got := fusionIDs(ReciprocalRankFusion(60, 1, vector, text))
+		if !sameIDs(got, want) {
+			t.Fatalf("call %d returned %v, want %v", i, got, want)
+		}
+	}
+}
+
+// TextSearch scores on how many query words a chunk contains, so equal scores
+// are common. Its input arrives from GetAllChunks, which the GOB store builds
+// by ranging over a map, so it cannot inherit an order from its caller.
+func TestTextSearch_TiedScoresOrderByChunkID(t *testing.T) {
+	chunks := []store.Chunk{
+		{ID: "d", Content: "func handleLogin() {}"},
+		{ID: "c", Content: "func handleLogin() {}"},
+		{ID: "b", Content: "func handleLogin() {}"},
+		{ID: "a", Content: "func handleLogin() {}"},
+	}
+
+	got := fusionIDs(TextSearch(context.Background(), chunks, "handleLogin", 10, ""))
+	want := []string{"a", "b", "c", "d"}
+	if !sameIDs(got, want) {
+		t.Errorf("TextSearch() = %v, want %v", got, want)
+	}
+}

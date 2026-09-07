@@ -1,7 +1,6 @@
 package search
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/yoanbernabeu/grepai/config"
@@ -21,9 +20,7 @@ func ApplyBoost(results []store.SearchResult, boostCfg config.BoostConfig) []sto
 		results[i].Score *= boost
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
+	store.SortResultsByScore(results)
 
 	return results
 }

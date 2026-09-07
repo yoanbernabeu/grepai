@@ -8,7 +8,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -83,10 +82,9 @@ func (s *GOBStore) Search(ctx context.Context, queryVector []float32, limit int,
 		})
 	}
 
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
+	// Sort by score descending. The tiebreak in SortResultsByScore is what
+	// keeps the ranking independent of the map iteration order above.
+	SortResultsByScore(results)
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]

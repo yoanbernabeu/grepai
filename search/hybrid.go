@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/yoanbernabeu/grepai/store"
@@ -43,9 +42,7 @@ func TextSearch(ctx context.Context, chunks []store.Chunk, query string, limit i
 		}
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
+	store.SortResultsByScore(results)
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
@@ -77,9 +74,7 @@ func ReciprocalRankFusion(k float32, limit int, lists ...[]store.SearchResult) [
 		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
+	store.SortResultsByScore(results)
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
