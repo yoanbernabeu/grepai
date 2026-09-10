@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/yoanbernabeu/grepai/indexer"
@@ -161,4 +162,50 @@ func TestRuntimeDirectoryAddFailurePublishesFatalAndStops(t *testing.T) {
 		t.Fatalf("Errors() = %T %v, want ENOSPC registration error", err, err)
 	}
 	<-w.processingDone
+}
+
+// TestContextCancelKeepsOutputsOpenUntilClose pins the owner-managed output
+// lifecycle: context cancellation joins the workers but must not close the
+// Events/Errors channels; only an explicit Close releases them. Closing early
+// lets graceful CLI drains observe a closed Errors channel and mistake the
+// nil receive for a fatal error.
+func TestContextCancelKeepsOutputsOpenUntilClose(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cancel()
+
+	workersDone := make(chan struct{})
+	go func() {
+		w.workers.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("workers did not exit after context cancellation")
+	}
+
+	select {
+	case err, ok := <-w.Errors():
+		t.Fatalf("Errors() closed before Close(); received err=%v ok=%v", err, ok)
+	default:
+	}
+	select {
+	case event, ok := <-w.Events():
+		t.Fatalf("Events() closed before Close(); received event=%v ok=%v", event, ok)
+	default:
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, ok := <-w.Errors(); ok {
+		t.Fatal("Errors() still open after Close()")
+	}
+	if _, ok := <-w.Events(); ok {
+		t.Fatal("Events() still open after Close()")
+	}
 }

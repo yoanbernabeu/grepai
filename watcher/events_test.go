@@ -99,26 +99,31 @@ func TestRelativePathFailurePublishesFatal(t *testing.T) {
 	_ = w.Close()
 }
 
-func TestFullEventQueuePublishesFatalAndStops(t *testing.T) {
+func TestFullEventQueueBackpressuresWithoutFatal(t *testing.T) {
 	root := t.TempDir()
 	w := newTestWatcher(t, root)
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	w.pendingMu.Lock()
-	for i := 0; i <= cap(w.events); i++ {
-		path := filepath.Join(root, string(rune('a'+i)))
-		w.pending[path] = FileEvent{Type: EventModify, Path: path}
+	for i := 0; i < cap(w.events); i++ {
+		w.events <- FileEvent{Path: "barrier"}
 	}
-	w.pendingMu.Unlock()
-	w.flush()
-	err := <-w.Errors()
-	var fatalErr *FatalError
-	if !errors.As(err, &fatalErr) || fatalErr.Operation != "enqueue file event" {
-		t.Fatalf("Errors() = %T %v, want enqueue FatalError", err, err)
+	w.pending["queued.go"] = FileEvent{Type: EventModify, Path: "queued.go"}
+	flushed := make(chan struct{})
+	go func() { w.flush(); close(flushed) }()
+	select {
+	case <-flushed:
+		t.Fatal("flush bypassed event backpressure")
+	default:
 	}
-	<-w.processingDone
+	<-w.Events()
+	<-flushed
+	select {
+	case err := <-w.Errors():
+		t.Fatalf("backpressure published fatal error: %v", err)
+	default:
+	}
 }
 
 func TestUnexpectedBackendChannelClosureIsFatal(t *testing.T) {
@@ -167,8 +172,10 @@ func TestBackendClosureAfterContextCancellationIsClean(t *testing.T) {
 	<-w.processingDone
 	close(events)
 	select {
-	case err := <-w.Errors():
-		t.Fatalf("Errors() = %v", err)
+	case err, ok := <-w.Errors():
+		if ok {
+			t.Fatalf("Errors() = %v", err)
+		}
 	default:
 	}
 	_ = w.Close()

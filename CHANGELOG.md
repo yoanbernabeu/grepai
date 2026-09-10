@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Live Directory Cleanup**: The running watcher now indexes supported files in populated directories moved into a project, removes vector and symbol records for every indexed descendant of directories deleted or moved out, and releases watches for moved-out subtrees. Cleanup respects directory path boundaries, preserves entries when filesystem checks fail, includes zero-symbol GOB entries, and reads every Qdrant inventory page.
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

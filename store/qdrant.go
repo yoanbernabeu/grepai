@@ -352,20 +352,33 @@ func (s *QdrantStore) DeleteDocument(ctx context.Context, filePath string) error
 }
 
 func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	request := &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Limit:          qdrant.PtrOf(uint32(1000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list documents: %w", err)
 	}
 
 	pathsMap := make(map[string]bool)
-	for _, point := range scrollResult {
-		if val, ok := point.Payload["file_path"]; ok {
-			pathsMap[val.GetStringValue()] = true
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		scrollResult, nextOffset, err := s.client.ScrollAndOffset(ctx, request)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, fmt.Errorf("failed to list documents: %w", err)
+		}
+		for _, point := range scrollResult {
+			if val, ok := point.Payload["file_path"]; ok {
+				pathsMap[val.GetStringValue()] = true
+			}
+		}
+		if nextOffset == nil {
+			break
+		}
+		request.Offset = nextOffset
 	}
 
 	paths := make([]string, 0, len(pathsMap))

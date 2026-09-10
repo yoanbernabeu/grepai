@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -284,6 +285,22 @@ func (s *GOBSymbolStore) DeleteFile(ctx context.Context, filePath string) error 
 		s.mutationGeneration++
 	}
 	return nil
+}
+
+// ListIndexedFiles returns every file tracked by the GOB index, including
+// files whose extraction produced no symbols or references.
+func (s *GOBSymbolStore) ListIndexedFiles(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	files := make([]string, 0, len(s.fileIndex))
+	for path := range s.fileIndex {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func (s *GOBSymbolStore) deleteFileUnlocked(filePath string) bool {

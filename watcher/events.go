@@ -2,13 +2,12 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/yoanbernabeu/grepai/indexer"
 )
 
 func (w *Watcher) processEvents(ctx context.Context) {
@@ -69,7 +68,22 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 		return &FatalError{Operation: "watch root", Path: w.root, Cause: errWatchRootLost}
 	}
 
-	if strings.HasPrefix(filepath.Base(relPath), ".") || w.ignore.ShouldIgnore(relPath) {
+	// Ignore files affect later siblings and imported descendants. Reload them
+	// as data before applying the hidden-path filter.
+	base := filepath.Base(relPath)
+	if base == ".gitignore" || base == ".grepaiignore" {
+		scope := filepath.Dir(relPath)
+		if err := w.refreshIgnore(scope); err != nil {
+			return &FatalError{Operation: "refresh ignore policy", Path: relPath, Cause: err}
+		}
+		root := w.root
+		if scope != "." {
+			root = filepath.Join(w.root, scope)
+		}
+		if err := w.addRecursive(root, false); err != nil {
+			return &FatalError{Operation: "register refreshed ignore scope", Path: root, Cause: err}
+		}
+		w.debounceEvent(FileEvent{Type: EventReconcile, Path: scope, IsDir: true})
 		return nil
 	}
 
@@ -82,70 +96,53 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 			return &FatalError{Operation: "stat created path", Path: event.Name, Cause: err}
 		}
 		if info.IsDir() {
-			if err := w.addRecursive(event.Name, false); err != nil {
+			if err := w.addRecursiveWithFiles(event.Name, false, true); err != nil {
 				return &FatalError{Operation: "register new directory", Path: event.Name, Cause: err}
 			}
 			return nil
 		}
 	}
 
-	ext := strings.ToLower(filepath.Ext(event.Name))
-	if !indexer.SupportedExtensions[ext] {
+	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+		isDir, err := w.releaseDirectory(event.Name)
+		if isDir {
+			eventType := EventDelete
+			if event.Has(fsnotify.Rename) {
+				eventType = EventRename
+			}
+			w.debounceEvent(FileEvent{Type: eventType, Path: relPath, IsDir: true})
+			if err != nil {
+				return &FatalError{Operation: "release directory watches", Path: event.Name, Cause: err}
+			}
+			return nil
+		}
+		if err != nil {
+			return &FatalError{Operation: "release directory watches", Path: event.Name, Cause: err}
+		}
+	}
+
+	// Hidden files are not indexed, but indexable dot-directories must reach the
+	// directory lifecycle above. Configured metadata directories are rejected by
+	// ShouldSkipDir during recursive registration.
+	if strings.HasPrefix(base, ".") || w.ignore.ShouldIgnore(relPath) || !w.supportsFile(event.Name) {
 		return nil
 	}
 
-	var evType EventType
+	var eventType EventType
 	switch {
 	case event.Has(fsnotify.Create):
-		evType = EventCreate
+		eventType = EventCreate
 	case event.Has(fsnotify.Write):
-		evType = EventModify
+		eventType = EventModify
 	case event.Has(fsnotify.Remove):
-		evType = EventDelete
+		eventType = EventDelete
 	case event.Has(fsnotify.Rename):
-		evType = EventRename
+		eventType = EventRename
 	default:
 		return nil
 	}
-	w.debounceEvent(FileEvent{Type: evType, Path: relPath})
+	w.debounceEvent(FileEvent{Type: eventType, Path: relPath})
 	return nil
-}
-
-func (w *Watcher) debounceEvent(event FileEvent) {
-	w.pendingMu.Lock()
-	defer w.pendingMu.Unlock()
-	if w.stopped() {
-		return
-	}
-	existing, exists := w.pending[event.Path]
-	if !exists || existing.Type != EventDelete || event.Type == EventDelete {
-		w.pending[event.Path] = event
-	}
-	if w.timer != nil {
-		w.timer.Stop()
-	}
-	w.timer = time.AfterFunc(time.Duration(w.debounceMs)*time.Millisecond, w.flush)
-}
-
-func (w *Watcher) flush() {
-	w.pendingMu.Lock()
-	events := make([]FileEvent, 0, len(w.pending))
-	for _, event := range w.pending {
-		events = append(events, event)
-	}
-	w.pending = make(map[string]FileEvent)
-	w.pendingMu.Unlock()
-
-	for _, event := range events {
-		select {
-		case <-w.done:
-			return
-		case w.events <- event:
-		default:
-			w.publishFatal(&FatalError{Operation: "enqueue file event", Path: event.Path, Cause: errEventQueueFull})
-			return
-		}
-	}
 }
 
 func (e EventType) String() string {
@@ -158,7 +155,9 @@ func (e EventType) String() string {
 		return "DELETE"
 	case EventRename:
 		return "RENAME"
+	case EventReconcile:
+		return "RECONCILE"
 	default:
-		return "UNKNOWN"
+		return fmt.Sprintf("EventType(%d)", int(e))
 	}
 }

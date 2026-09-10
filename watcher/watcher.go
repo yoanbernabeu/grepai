@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,63 +20,108 @@ const (
 	EventModify
 	EventDelete
 	EventRename
+	EventReconcile
 )
 
 type FileEvent struct {
 	Type EventType
 	Path string
+	// IsDir records directory identity before a removed path becomes unstatable.
+	IsDir bool
 }
 
 type Watcher struct {
 	root          string
 	watcher       *fsnotify.Watcher
-	addWatch      func(string) error
-	statPath      func(string) (fs.FileInfo, error)
-	relPath       func(string, string) (string, error)
 	backendEvents <-chan fsnotify.Event
 	backendErrors <-chan error
+	addWatch      func(string) error
+	removeWatch   func(string) error
+	statPath      func(string) (fs.FileInfo, error)
+	relPath       func(string, string) (string, error)
 	ignore        *indexer.IgnoreMatcher
+	refreshIgnore func(string) error
+	supportsFile  func(string) bool
 	debounceMs    int
 	events        chan FileEvent
 	errors        chan error
 	done          chan struct{}
-	stopOnce      sync.Once
-	closeOnce     sync.Once
-	closeErr      error
-	stateMu       sync.Mutex
-	ownerStopped  bool
-	fatalErr      error
-	fatalOnce     sync.Once
 
-	processingDone chan struct{}
+	directories   map[string]struct{}
+	registered    map[string]struct{}
+	directoriesMu sync.Mutex
 
 	// Debouncing state
-	pending   map[string]FileEvent
-	pendingMu sync.Mutex
-	timer     *time.Timer
+	pending          map[string]FileEvent
+	reconcilePending map[string]FileEvent
+	pendingMu        sync.Mutex
+	timer            *time.Timer
+	flushReady       chan struct{}
+
+	stopOnce       sync.Once
+	closeOnce      sync.Once
+	closeErr       error
+	outputsOnce    sync.Once
+	workers        sync.WaitGroup
+	eventSenders   sync.WaitGroup
+	processingDone chan struct{}
+
+	stateMu      sync.Mutex
+	ownerStopped bool
+	fatalErr     error
+	fatalOnce    sync.Once
 }
 
-func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Watcher, error) {
+// Option customizes watcher file selection.
+type Option func(*Watcher)
+
+// WithFileFilter sets the same path filter used by the scanner.
+func WithFileFilter(filter func(string) bool) Option {
+	return func(w *Watcher) {
+		if filter != nil {
+			w.supportsFile = filter
+		}
+	}
+}
+
+func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int, opts ...Option) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, &RegistrationError{Operation: "create filesystem watcher", Path: root, Cause: err}
 	}
 
 	w := &Watcher{
-		root:       root,
-		watcher:    fsw,
-		ignore:     ignore,
-		debounceMs: debounceMs,
-		events:     make(chan FileEvent, 100),
-		errors:     make(chan error, 1),
-		done:       make(chan struct{}),
-		pending:    make(map[string]FileEvent),
+		root:    root,
+		watcher: fsw,
+		ignore:  ignore,
+		supportsFile: func(path string) bool {
+			return indexer.SupportedExtensions[strings.ToLower(filepath.Ext(path))]
+		},
+		debounceMs:       debounceMs,
+		events:           make(chan FileEvent, 100),
+		errors:           make(chan error, 1),
+		done:             make(chan struct{}),
+		pending:          make(map[string]FileEvent),
+		reconcilePending: make(map[string]FileEvent),
+		directories:      make(map[string]struct{}),
+		registered:       make(map[string]struct{}),
+		flushReady:       make(chan struct{}, 1),
+	}
+	for _, opt := range opts {
+		opt(w)
 	}
 	w.addWatch = fsw.Add
+	w.removeWatch = fsw.Remove
 	w.statPath = os.Stat
 	w.relPath = filepath.Rel
 	w.backendEvents = fsw.Events
 	w.backendErrors = fsw.Errors
+	w.refreshIgnore = func(scope string) error {
+		if scope == "." {
+			return ignore.Refresh()
+		}
+		return ignore.RefreshSubtree(scope)
+	}
 	return w, nil
 }
 
@@ -86,9 +132,17 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return err
 	}
 
-	// Start event processing
+	// Keep backend draining independent from potentially backpressured delivery.
 	w.processingDone = make(chan struct{})
-	go w.processEvents(ctx)
+	w.workers.Add(2)
+	go func() {
+		defer w.workers.Done()
+		w.processEvents(ctx)
+	}()
+	go func() {
+		defer w.workers.Done()
+		w.processDelivery(ctx)
+	}()
 
 	return nil
 }
@@ -122,6 +176,9 @@ func (w *Watcher) Close() error {
 	w.closeOnce.Do(func() {
 		w.Abort()
 		w.closeErr = w.watcher.Close()
+		w.workers.Wait()
+		w.eventSenders.Wait()
+		w.closeOutputs()
 	})
 	return w.closeErr
 }
@@ -155,49 +212,12 @@ func (w *Watcher) stopped() bool {
 	}
 }
 
-// addRecursive walks the tree rooted at root and registers an fsnotify watch
-// on every directory that isn't ignored. It uses filepath.WalkDir (not
-// filepath.Walk) so that directory entries are read directly from the
-// readdir results instead of an extra Lstat syscall per file -- on repos with
-// 100k+ files this roughly halves the syscall count of the initial/restart
-// tree walk, which matters because watch startup blocks on this before it
-// starts serving fsnotify events.
-func (w *Watcher) addRecursive(root string, rootRequired bool) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) && (!rootRequired || path != root) {
-				return nil
-			}
-			return &RegistrationError{Operation: "walk watch tree", Path: path, Cause: err}
-		}
-
-		relPath, err := w.relPath(w.root, path)
-		if err != nil {
-			return &RegistrationError{Operation: "resolve watch path", Path: path, Cause: err}
-		}
-
-		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
-		if d.IsDir() {
-			if w.ignore.ShouldSkipDir(relPath) {
-				return filepath.SkipDir
-			}
-			// Directory is not skipped; watch it if not individually ignored
-			if !w.ignore.ShouldIgnore(relPath) {
-				if err := w.addWatch(path); err != nil {
-					if os.IsNotExist(err) && (!rootRequired || path != root) {
-						return nil
-					}
-					return &RegistrationError{Operation: "add watch", Path: path, Cause: err}
-				}
-			}
-			return nil
-		}
-
-		// Skip ignored files
-		if w.ignore.ShouldIgnore(relPath) {
-			return nil
-		}
-
-		return nil
+// closeOutputs closes the event and error channels after all senders finish.
+func (w *Watcher) closeOutputs() {
+	w.outputsOnce.Do(func() {
+		w.stateMu.Lock()
+		defer w.stateMu.Unlock()
+		close(w.events)
+		close(w.errors)
 	})
 }

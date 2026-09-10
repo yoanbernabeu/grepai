@@ -7,7 +7,6 @@ import (
 
 var (
 	errBackendClosed  = errors.New("fsnotify channel closed unexpectedly")
-	errEventQueueFull = errors.New("file event queue is full")
 	errWatchRootLost  = errors.New("watched root was removed or renamed")
 	errWatcherStopped = errors.New("filesystem watcher stopped before readiness")
 )

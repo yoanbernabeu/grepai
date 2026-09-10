@@ -116,6 +116,18 @@ scanner:
 
 ### Real-Time Updates
 
+Directory moves and deletions are reconciled for all indexed descendants, not
+just the directory name. A populated directory moved into the project is watched
+and its supported files are indexed; a directory moved out releases its subtree
+watches. Cleanup uses path boundaries, so deleting `src/` does not remove
+`src-old/`. Atomic file replacements are still treated as modifications, while
+permission and I/O failures are preserved rather than treated as deletions.
+
+This reconciliation covers files and subdirectories inside an active project.
+Losing or renaming the project root is a watcher-lifecycle failure, not a reason
+to purge every project entry based on an unavailable root. Root coverage-loss
+handling is tracked separately in [#306](https://github.com/yoanbernabeu/grepai/pull/306).
+
 When files change, the watcher logs updates:
 
 ```text
