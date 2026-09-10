@@ -127,7 +127,7 @@ func TestRunInitialScan_SkipsSymbolExtractionWhenContentHashMatches(t *testing.T
 	}
 }
 
-func TestRunInitialScan_SkipsIndexedFileByLastIndexTime(t *testing.T) {
+func TestRunInitialScan_FutureLastIndexTimeDoesNotHideChangedFile(t *testing.T) {
 	ctx := context.Background()
 	projectRoot := t.TempDir()
 
@@ -148,8 +148,8 @@ func TestRunInitialScan_SkipsIndexedFileByLastIndexTime(t *testing.T) {
 	vecStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
 	idx := indexer.NewIndexer(projectRoot, vecStore, emb, chunker, scanner, time.Now().Add(1*time.Hour))
 
-	// Seed a document with ChunkIDs so the lastIndexTime gate can skip it.
-	// The new logic requires doc != nil && len(doc.ChunkIDs) > 0 to skip.
+	// A legacy document with a stale hash must not be trusted merely because a
+	// global cutoff is in the future.
 	if err := vecStore.SaveDocument(ctx, store.Document{
 		Path:     "main.go",
 		Hash:     "seeded",
@@ -187,20 +187,20 @@ func TestRunInitialScan_SkipsIndexedFileByLastIndexTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to lookup sentinel symbol: %v", err)
 	}
-	if len(sentinelSymbols) == 0 {
-		t.Fatal("expected sentinel symbol to remain when file is skipped by lastIndexTime")
+	if len(sentinelSymbols) != 0 {
+		t.Fatal("expected stale sentinel symbols to be replaced")
 	}
 
 	realSymbols, err := symbolStore.LookupSymbol(ctx, "real")
 	if err != nil {
 		t.Fatalf("failed to lookup real symbol: %v", err)
 	}
-	if len(realSymbols) != 0 {
-		t.Fatalf("expected real symbol extraction to be skipped, found %d symbols", len(realSymbols))
+	if len(realSymbols) == 0 {
+		t.Fatal("expected changed source symbols to be extracted")
 	}
 
-	if emb.embedCalls != 0 || emb.embedBatchCalls != 0 {
-		t.Fatalf("expected no embedding calls for skipped startup path, got embed=%d embedBatch=%d", emb.embedCalls, emb.embedBatchCalls)
+	if emb.embedCalls == 0 && emb.embedBatchCalls == 0 {
+		t.Fatal("expected changed source to be embedded")
 	}
 }
 

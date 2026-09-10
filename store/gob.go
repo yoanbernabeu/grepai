@@ -120,12 +120,26 @@ func (s *GOBStore) GetDocument(ctx context.Context, filePath string) (*Document,
 }
 
 func (s *GOBStore) SaveDocument(ctx context.Context, doc Document) error {
+	s.mutateDocument(doc.Path, func(Document, bool) (Document, bool) {
+		return doc, true
+	})
+	return nil
+}
+
+// mutateDocument is the single locked document replacement path. It keeps the
+// baseline store's persistence behavior while giving later dirty tracking one
+// place to observe document mutations. Stored chunk IDs never alias callers.
+func (s *GOBStore) mutateDocument(path string, mutate func(Document, bool) (Document, bool)) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	s.documents[doc.Path] = cloneDocument(doc)
+	current, exists := s.documents[path]
+	next, changed := mutate(current, exists)
+	if !changed {
+		return false
+	}
+	s.documents[path] = cloneDocument(next)
 	s.mutationGeneration++
-	return nil
+	return true
 }
 
 func (s *GOBStore) DeleteDocument(ctx context.Context, filePath string) error {

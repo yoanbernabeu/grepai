@@ -243,24 +243,29 @@ func TestIndexAllWithProgress_UnchangedFilesSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get file info: %v", err)
 	}
-	fileModTime := time.Unix(fileInfo.ModTime().Unix(), 0)
-
-	// Create mock store with existing file that has matching ModTime
-	mockStore := newMockStore()
-	mockStore.documents["test.go"] = store.Document{
-		Path:     "test.go",
-		Hash:     "hash123",
-		ModTime:  fileModTime,
-		ChunkIDs: []string{"chunk1"},
-	}
-
-	// Create indexer with lastIndexTime set to now to enable ModTime-based skipping
-	mockEmbedder := newMockEmbedder()
+	fileModTime := fileInfo.ModTime()
 	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
 	if err != nil {
 		t.Fatalf("failed to create ignore matcher: %v", err)
 	}
 	scanner := NewScanner(tmpDir, ignoreMatcher)
+	scanned, err := scanner.ScanFile("test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create mock store with existing file that has matching ModTime
+	mockStore := newMockStore()
+	mockStore.documents["test.go"] = store.Document{
+		Path:            "test.go",
+		Hash:            scanned.Hash,
+		ModTime:         fileModTime,
+		HasExactModTime: true,
+		ChunkIDs:        []string{"chunk1"},
+	}
+
+	// Create indexer with lastIndexTime set to now to enable ModTime-based skipping
+	mockEmbedder := newMockEmbedder()
 	chunker := NewChunker(512, 50)
 	indexer := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, time.Now())
 
@@ -355,7 +360,7 @@ func TestIndexAllWithProgress_ChangedFilesIndexed(t *testing.T) {
 	if !ok {
 		t.Error("document should exist in store")
 	} else {
-		expectedModTime := time.Unix(currentModTime.Unix(), 0)
+		expectedModTime := fileInfo.ModTime()
 		if !savedDoc.ModTime.Equal(expectedModTime) {
 			t.Errorf("expected ModTime %v, got %v", expectedModTime, savedDoc.ModTime)
 		}

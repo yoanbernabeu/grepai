@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -20,10 +21,19 @@ type Chunk struct {
 
 // Document represents a file with its chunks
 type Document struct {
-	Path     string    `json:"path"`
-	Hash     string    `json:"hash"`
-	ModTime  time.Time `json:"mod_time"`
-	ChunkIDs []string  `json:"chunk_ids"`
+	Path            string    `json:"path"`
+	Hash            string    `json:"hash"`
+	ModTime         time.Time `json:"mod_time"`
+	HasExactModTime bool      `json:"has_exact_mod_time"`
+	ChunkIDs        []string  `json:"chunk_ids"`
+}
+
+var ErrRefreshUnsupported = errors.New("document mod-time refresh unsupported")
+
+// DocumentModTimeRefresher atomically refreshes metadata only when the current
+// document still has expectedHash and at least one chunk.
+type DocumentModTimeRefresher interface {
+	RefreshDocumentModTime(ctx context.Context, path, expectedHash string, modTime time.Time) (bool, error)
 }
 
 // SearchResult represents a search match with its relevance score

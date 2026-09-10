@@ -25,6 +25,18 @@ func createGoFixtureFiles(tb testing.TB, root string, fileCount int) {
 	}
 }
 
+func seedRealHashes(tb testing.TB, scanner *Scanner, fileCount int, documents map[string]store.Document) {
+	tb.Helper()
+	for i := range fileCount {
+		path := fmt.Sprintf("file_%04d.go", i)
+		file, err := scanner.ScanFile(path)
+		if err != nil || file == nil {
+			tb.Fatalf("scan fixture %s: %v", path, err)
+		}
+		documents[path] = store.Document{Path: path, Hash: file.Hash, ModTime: file.ObservedModTime, HasExactModTime: true, ChunkIDs: []string{"c1"}}
+	}
+}
+
 func TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding(t *testing.T) {
 	tmpDir := t.TempDir()
 	createGoFixtureFiles(t, tmpDir, 200)
@@ -35,18 +47,9 @@ func TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding(t *t
 	}
 
 	mockStore := newMockStore()
-	// Seed documents with ChunkIDs so the lastIndexTime gate can skip them.
-	// The new logic requires doc != nil && len(doc.ChunkIDs) > 0 to skip.
-	for i := range 200 {
-		path := fmt.Sprintf("file_%04d.go", i)
-		mockStore.documents[path] = store.Document{
-			Path:     path,
-			Hash:     "seeded",
-			ChunkIDs: []string{"c1"},
-		}
-	}
 	mockEmbedder := newMockEmbedder()
 	scanner := NewScanner(tmpDir, ignoreMatcher)
+	seedRealHashes(t, scanner, 200, mockStore.documents)
 	chunker := NewChunker(512, 50)
 
 	// Simulate watcher restart after latest changes: all fixture files are older than cutoff.
@@ -89,7 +92,7 @@ func BenchmarkIndexAllWithProgress_BranchSwitchScenario(b *testing.B) {
 	lastIndexTime := time.Now().Add(1 * time.Hour)
 	idx := NewIndexer(tmpDir, mockStore, mockEmbedder, chunker, scanner, lastIndexTime)
 
-	// Pre-seed documents so every b.N iteration hits the mtime-gate fast path,
+	// Pre-seed documents so every b.N iteration hits the exact-mtime fast path,
 	// same as TestIndexAllWithProgress_BranchSwitchSkipsBulkWithoutLookupOrEmbedding.
 	// Without this, the first iteration would actually index all 800 files
 	// (populating mockStore as a side effect), and only iterations after the
@@ -97,14 +100,7 @@ func BenchmarkIndexAllWithProgress_BranchSwitchScenario(b *testing.B) {
 	// fail whenever b.N > 1 (e.g. under -benchtime=Nx, or whenever Go's default
 	// calibration decides more than one iteration is needed), independent of
 	// anything being measured.
-	for i := range 800 {
-		path := fmt.Sprintf("file_%04d.go", i)
-		mockStore.documents[path] = store.Document{
-			Path:     path,
-			Hash:     "seeded",
-			ChunkIDs: []string{"c1"},
-		}
-	}
+	seedRealHashes(b, scanner, 800, mockStore.documents)
 
 	b.ReportAllocs()
 	b.ResetTimer()

@@ -65,6 +65,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 			hash TEXT NOT NULL,
 			mod_time TIMESTAMP NOT NULL,
+			mod_time_ns BIGINT NULL,
 			chunk_ids TEXT[] NOT NULL,
 			PRIMARY KEY (project_id, path)
 		)`,
@@ -95,7 +96,7 @@ func (s *PostgresStore) ensureSchema(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	return s.ensureDocumentModTimeColumn(ctx)
 }
 
 func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
@@ -202,11 +203,12 @@ func (s *PostgresStore) Search(ctx context.Context, queryVector []float32, limit
 func (s *PostgresStore) GetDocument(ctx context.Context, filePath string) (*Document, error) {
 	var doc Document
 	var modTime time.Time
+	var modTimeNS *int64
 
 	err := s.pool.QueryRow(ctx,
-		`SELECT path, hash, mod_time, chunk_ids FROM documents WHERE project_id = $1 AND path = $2`,
+		`SELECT path, hash, mod_time, mod_time_ns, chunk_ids FROM documents WHERE project_id = $1 AND path = $2`,
 		s.projectID, filePath,
-	).Scan(&doc.Path, &doc.Hash, &modTime, &doc.ChunkIDs)
+	).Scan(&doc.Path, &doc.Hash, &modTime, &modTimeNS, &doc.ChunkIDs)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -215,19 +217,26 @@ func (s *PostgresStore) GetDocument(ctx context.Context, filePath string) (*Docu
 		return nil, fmt.Errorf("failed to get document: %w", err)
 	}
 
-	doc.ModTime = modTime
+	doc.ModTime, doc.HasExactModTime = decodeExactModTime(modTime, modTimeNS)
 	return &doc, nil
 }
 
 func (s *PostgresStore) SaveDocument(ctx context.Context, doc Document) error {
+	var modTimeNS *int64
+	if doc.HasExactModTime {
+		if ns, ok := exactModTimeNanos(doc.ModTime); ok {
+			modTimeNS = &ns
+		}
+	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO documents (path, project_id, hash, mod_time, chunk_ids)
-		VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO documents (path, project_id, hash, mod_time, mod_time_ns, chunk_ids)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (project_id, path) DO UPDATE SET
 			hash = EXCLUDED.hash,
 			mod_time = EXCLUDED.mod_time,
+			mod_time_ns = EXCLUDED.mod_time_ns,
 			chunk_ids = EXCLUDED.chunk_ids`,
-		doc.Path, s.projectID, doc.Hash, doc.ModTime, doc.ChunkIDs,
+		doc.Path, s.projectID, doc.Hash, postgresCompatibilityModTime(doc.ModTime), modTimeNS, doc.ChunkIDs,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save document: %w", err)

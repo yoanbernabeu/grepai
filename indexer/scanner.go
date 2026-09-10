@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+	"time"
 )
 
 const (
@@ -100,31 +100,38 @@ var SupportedExtensions = map[string]bool{
 }
 
 type FileInfo struct {
-	Path    string
-	Size    int64
-	ModTime int64
-	Hash    string
-	Content string
+	Path            string
+	Size            int64
+	ModTime         int64
+	ObservedModTime time.Time
+	Hash            string
+	Content         string
 }
 
 type FileMeta struct {
-	Path    string
-	Size    int64
-	ModTime int64
+	Path            string
+	Size            int64
+	ModTime         int64
+	ObservedModTime time.Time
 }
 
 type Scanner struct {
-	root      string
-	ignore    *IgnoreMatcher
-	extraExts map[string]bool
+	root         string
+	ignore       *IgnoreMatcher
+	extraExts    map[string]bool
+	readSnapshot func(path, relPath string) (*FileInfo, error)
 }
 
 func NewScanner(root string, ignore *IgnoreMatcher) *Scanner {
 	return &Scanner{
-		root:   root,
-		ignore: ignore,
+		root:         root,
+		ignore:       ignore,
+		readSnapshot: readFileSnapshot,
 	}
 }
+
+// Root returns the project directory whose paths the scanner reports relative to.
+func (s *Scanner) Root() string { return s.root }
 
 // WithCustomExtensions returns the scanner with the given extensions added to
 // the set of extensions it will index, on top of SupportedExtensions. Entries
@@ -203,11 +210,7 @@ func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
 			return nil
 		}
 
-		files = append(files, FileMeta{
-			Path:    relPath,
-			Size:    info.Size(),
-			ModTime: info.ModTime().Unix(),
-		})
+		files = append(files, FileMeta{Path: relPath, Size: info.Size(), ModTime: info.ModTime().Unix(), ObservedModTime: info.ModTime()})
 
 		return nil
 	})
@@ -265,27 +268,10 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 			return nil
 		}
 
-		// Read file content
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
+		snapshot, err := s.readSnapshot(path, relPath)
+		if err == nil && snapshot != nil {
+			files = append(files, *snapshot)
 		}
-
-		// Skip binary files
-		if !utf8.Valid(content) || containsNull(content) {
-			return nil
-		}
-
-		// Calculate hash
-		hash := sha256.Sum256(content)
-
-		files = append(files, FileInfo{
-			Path:    relPath,
-			Size:    info.Size(),
-			ModTime: info.ModTime().Unix(),
-			Hash:    hex.EncodeToString(hash[:]),
-			Content: string(content),
-		})
 
 		return nil
 	})
@@ -301,33 +287,19 @@ func (s *Scanner) ScanFile(relPath string) (*FileInfo, error) {
 		return nil, nil
 	}
 
-	info, err := os.Stat(absPath)
+	return s.readSnapshot(absPath, relPath)
+}
+
+// StatFile returns fresh metadata without opening the file for content reads.
+func (s *Scanner) StatFile(relPath string) (*FileMeta, error) {
+	info, err := os.Stat(filepath.Join(s.root, relPath))
 	if err != nil {
 		return nil, err
 	}
-
-	if info.Size() > maxFileSize {
-		return nil, nil // Skip large files
+	if !info.Mode().IsRegular() || info.Size() > maxFileSize || isMinifiedFile(relPath) {
+		return nil, nil
 	}
-
-	content, err := os.ReadFile(absPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if !utf8.Valid(content) || containsNull(content) {
-		return nil, nil // Skip binary files
-	}
-
-	hash := sha256.Sum256(content)
-
-	return &FileInfo{
-		Path:    relPath,
-		Size:    info.Size(),
-		ModTime: info.ModTime().Unix(),
-		Hash:    hex.EncodeToString(hash[:]),
-		Content: string(content),
-	}, nil
+	return &FileMeta{Path: relPath, Size: info.Size(), ModTime: info.ModTime().Unix(), ObservedModTime: info.ModTime()}, nil
 }
 
 func containsNull(data []byte) bool {

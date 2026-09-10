@@ -745,145 +745,6 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), processors ...*framework.ProcessorRegistry) (*indexer.IndexStats, error) {
-	// Initial scan with progress
-	if !isBackgroundChild {
-		fmt.Println("\nPerforming initial scan...")
-	} else {
-		log.Println("Performing initial scan...")
-	}
-
-	var stats *indexer.IndexStats
-	var err error
-	if !isBackgroundChild {
-		stats, err = idx.IndexAllWithBatchProgress(ctx,
-			func(info indexer.ProgressInfo) {
-				if onScan != nil {
-					onScan(info.Current, info.Total, info.CurrentFile)
-				} else {
-					printProgress(info.Current, info.Total, info.CurrentFile)
-				}
-			},
-			func(info indexer.BatchProgressInfo) {
-				if onEmbed != nil {
-					onEmbed(info)
-				} else {
-					printBatchProgress(info)
-				}
-			},
-		)
-		watchProgressOutput.clear()
-		fmt.Println()
-	} else {
-		stats, err = idx.IndexAllWithBatchProgress(ctx, func(info indexer.ProgressInfo) {
-			if onScan != nil {
-				onScan(info.Current, info.Total, info.CurrentFile)
-			}
-		}, func(info indexer.BatchProgressInfo) {
-			if onEmbed != nil {
-				onEmbed(info)
-			}
-		})
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("initial indexing failed: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	if !isBackgroundChild {
-		fmt.Printf("Initial scan complete: %d files indexed, %d chunks created, %d files removed, %d skipped (took %s)\n",
-			stats.FilesIndexed, stats.ChunksCreated, stats.FilesRemoved, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
-	} else {
-		log.Printf("Initial scan complete: %d files indexed, %d chunks created, %d files removed, %d skipped (took %s)",
-			stats.FilesIndexed, stats.ChunksCreated, stats.FilesRemoved, stats.FilesSkipped, stats.Duration.Round(time.Millisecond))
-	}
-
-	// Index symbols for traced languages
-	if !isBackgroundChild {
-		fmt.Println("Building symbol index...")
-	} else {
-		log.Println("Building symbol index...")
-	}
-	symbolCount := 0
-	files := stats.ScannedFiles
-
-	for _, file := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		ext := strings.ToLower(filepath.Ext(file.Path))
-		if !isTracedLanguage(ext, tracedLanguages) {
-			continue
-		}
-
-		// Skip files that are unchanged since the last index run, already
-		// tracked, and extracted by the current extractor version. The
-		// mtime fast-path must also check the extractor signature —
-		// otherwise an upgrade that ships better extraction never
-		// re-processes files whose source didn't change.
-		if !lastIndexTime.IsZero() {
-			fileModTime := time.Unix(file.ModTime, 0)
-			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
-				if v, ok := symbolStore.GetFileExtractorVersion(file.Path); ok && v == extractor.Version() {
-					continue
-				}
-			}
-		}
-
-		fileInfo, err := scanner.ScanFile(file.Path)
-		if err != nil {
-			log.Printf("Warning: failed to scan %s for symbols: %v", file.Path, err)
-			continue
-		}
-		if fileInfo == nil {
-			continue
-		}
-
-		// Skip extraction when BOTH the content hash AND the extractor
-		// version match what was persisted last time. Content alone isn't
-		// enough — a release that ships better extraction (new tree-sitter
-		// grammar, expanded regex patterns, bug-fixed query) needs to
-		// re-process unchanged files to surface the improved symbols.
-		existingHash, hashOK := symbolStore.GetFileContentHash(fileInfo.Path)
-		existingVersion, versionOK := symbolStore.GetFileExtractorVersion(fileInfo.Path)
-		if hashOK && versionOK && existingHash == fileInfo.Hash && existingVersion == extractor.Version() {
-			continue
-		}
-
-		symbols, refs, err := extractSymbolsWithFramework(ctx, extractor, fileInfo.Path, fileInfo.Content, processors...)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			log.Printf("Warning: failed to extract symbols from %s: %v", fileInfo.Path, err)
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if err := symbolStore.SaveFileWithSignature(ctx, fileInfo.Path, fileInfo.Hash, extractor.Version(), symbols, refs); err != nil {
-			log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, err)
-		}
-		symbolCount += len(symbols)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := symbolStore.Persist(ctx); err != nil {
-		log.Printf("Warning: failed to persist symbol index: %v", err)
-	}
-	if !isBackgroundChild {
-		fmt.Printf("Symbol index built: %d symbols extracted\n", symbolCount)
-	} else {
-		log.Printf("Symbol index built: %d symbols extracted", symbolCount)
-	}
-
-	return stats, nil
-}
-
 // discoverWorktreesForWatch discovers linked worktrees and auto-initializes them.
 // Only discovers from the main worktree; returns nil for linked worktrees.
 // Discovery can be disabled with watch.discover_worktrees: false in config.
@@ -3198,11 +3059,12 @@ func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chun
 		relPath := p.toRelSlash(c.FilePath)
 		prefixedPath := p.getPrefix() + "/" + relPath
 		prefixedChunks[i].FilePath = prefixedPath
-		// Also update the chunk ID to include project prefix
-		// Original ID format is "filePath_index", we need to replace the filePath part
-		if idx := strings.LastIndex(c.ID, "_"); idx >= 0 {
-			prefixedChunks[i].ID = prefixedPath + c.ID[idx:]
-		}
+		// Preserve the entire generated chunk ID under the fixed project
+		// prefix. Suffix-truncating rewrites (e.g. keeping only the text
+		// after the last underscore) collapse ReChunk sub-chunk IDs such as
+		// "src/a.go_0_0" and "src/a.go_0_1" onto "src/a.go_0"-style keys,
+		// breaking reference resolution and colliding distinct chunks.
+		prefixedChunks[i].ID = p.getPrefix() + "/" + filepath.ToSlash(c.ID)
 	}
 	return p.store.SaveChunks(ctx, prefixedChunks)
 }
@@ -3252,7 +3114,7 @@ func (p *projectPrefixStore) ListDocuments(ctx context.Context) ([]string, error
 	out := make([]string, 0, len(all))
 	for _, path := range all {
 		if strings.HasPrefix(path, prefix) {
-			out = append(out, strings.TrimPrefix(path, prefix))
+			out = append(out, filepath.FromSlash(strings.TrimPrefix(path, prefix)))
 		}
 	}
 	return out, nil

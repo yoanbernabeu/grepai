@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Faster, Conservative Watch Startup**: Warm startup now loads compact vector metadata and GOB symbol fingerprints in bulk, uses exact per-file modification times to avoid unchanged content reads, retries documents missing chunks, and safely reconciles files deleted while the watcher was offline (#216). Legacy timestamps are verified once before receiving exact metadata, and unreadable or unavailable paths are preserved rather than treated as deleted.
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

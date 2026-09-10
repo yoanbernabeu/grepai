@@ -141,6 +141,20 @@ The watcher also builds a symbol index for call graph analysis:
 
 See [Call Graph Analysis](/grepai/trace/) for more details.
 
+### Restart Reconciliation
+
+On restart, the watcher reconciles changes made while it was offline. GOB and
+PostgreSQL vector stores load compact document metadata in bulk, while the GOB
+symbol store loads one fingerprint snapshot. Exact per-file modification times
+let unchanged files skip content reads without relying on the legacy global
+startup timestamp.
+
+Documents with missing chunks are retried. Older indexes without exact
+timestamps receive a conservative one-time content verification before their
+timestamp metadata is refreshed. Files are removed only when their absence can
+be confirmed; an unavailable project root or other filesystem error preserves
+existing vector and symbol records for a later reconciliation.
+
 ### Configuration
 
 Configure watcher behavior in `.grepai/config.yaml`:
