@@ -92,9 +92,6 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 	if err := symbolStore.Load(ctx); err != nil {
 		log.Printf("Warning: failed to load symbol index for %s: %v", projectRoot, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, context.Cause(ctx)
-	}
 
 	runtime := &projectIndexRuntime{
 		projectRoot:     projectRoot,
@@ -116,10 +113,6 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 		runtime.rpgStore = rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
 		if err := runtime.rpgStore.Load(ctx); err != nil {
 			log.Printf("Warning: failed to load RPG index for %s: %v", projectRoot, err)
-		}
-		if err := ctx.Err(); err != nil {
-			_ = symbolStore.Close()
-			return nil, context.Cause(ctx)
 		}
 
 		var featureExtractor rpg.FeatureExtractor
@@ -297,7 +290,14 @@ func runWorkspaceIndex(ctx context.Context, workspaceName string) (resultErr err
 		return err
 	}
 
-	writerLocks, err := acquireWorkspaceProjectWriterLocks(ws.Projects)
+	lockProjects := make([]config.ProjectEntry, 0, len(ws.Projects))
+	for _, project := range ws.Projects {
+		info, statErr := os.Stat(project.Path)
+		if statErr == nil && info.IsDir() {
+			lockProjects = append(lockProjects, project)
+		}
+	}
+	writerLocks, err := acquireWorkspaceProjectWriterLocks(lockProjects)
 	if err != nil {
 		return err
 	}
@@ -306,8 +306,14 @@ func runWorkspaceIndex(ctx context.Context, workspaceName string) (resultErr err
 			resultErr = errors.Join(resultErr, writerLocks[i].Close())
 		}
 	}()
+	canonicalRoots := make(map[string]string, len(writerLocks))
 	for i, writerLock := range writerLocks {
-		ws.Projects[i].Path = writerLock.ProjectRoot()
+		canonicalRoots[lockProjects[i].Path] = writerLock.ProjectRoot()
+	}
+	for i := range ws.Projects {
+		if canonicalRoot, ok := canonicalRoots[ws.Projects[i].Path]; ok {
+			ws.Projects[i].Path = canonicalRoot
+		}
 	}
 
 	fmt.Printf("Indexing workspace: %s\n", ws.Name)
