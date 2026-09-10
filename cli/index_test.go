@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/fileutil"
 	"github.com/yoanbernabeu/grepai/store"
 )
 
@@ -104,12 +105,19 @@ func TestProjectIndexRuntimeSynchronizesChangesAndSymbols(t *testing.T) {
 	if err := runtime.runInitialIndex(ctx, true, nil, nil, nil, nil); err != nil {
 		t.Fatalf("first index: %v", err)
 	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		t.Fatalf("persist first index: %v", err)
+	}
 	if emb.embedCalls+emb.embedBatchCalls == 0 {
 		t.Fatal("expected first index to call the embedder")
 	}
 	if symbols, err := runtime.symbolStore.LookupSymbol(ctx, "Beta"); err != nil || len(symbols) == 0 {
 		t.Fatalf("expected Beta in symbol index, symbols=%v err=%v", symbols, err)
 	}
+	indexPath := config.GetIndexPath(projectRoot)
+	symbolPath := config.GetSymbolIndexPath(projectRoot)
+	indexInfo := requireFileInfo(t, indexPath)
+	symbolInfo := requireFileInfo(t, symbolPath)
 	if err := runtime.close(); err != nil {
 		t.Fatalf("close first runtime: %v", err)
 	}
@@ -134,8 +142,17 @@ func TestProjectIndexRuntimeSynchronizesChangesAndSymbols(t *testing.T) {
 	if err := runtime.runInitialIndex(ctx, true, nil, nil, nil, nil); err != nil {
 		t.Fatalf("unchanged index: %v", err)
 	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		t.Fatalf("persist unchanged index: %v", err)
+	}
 	if emb.embedCalls+emb.embedBatchCalls != 0 {
 		t.Fatalf("expected unchanged index to skip embedding, got embed=%d batch=%d", emb.embedCalls, emb.embedBatchCalls)
+	}
+	if got := requireFileInfo(t, indexPath).ModTime(); !got.Equal(indexInfo.ModTime()) {
+		t.Fatalf("unchanged vector index mtime = %v, want %v", got, indexInfo.ModTime())
+	}
+	if got := requireFileInfo(t, symbolPath).ModTime(); !got.Equal(symbolInfo.ModTime()) {
+		t.Fatalf("unchanged symbol index mtime = %v, want %v", got, symbolInfo.ModTime())
 	}
 	if err := runtime.close(); err != nil {
 		t.Fatalf("close unchanged runtime: %v", err)
@@ -175,6 +192,9 @@ func TestProjectIndexRuntimeSynchronizesChangesAndSymbols(t *testing.T) {
 	defer vectorStore.Close()
 	if err := runtime.runInitialIndex(ctx, true, nil, nil, nil, nil); err != nil {
 		t.Fatalf("changed index: %v", err)
+	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		t.Fatalf("persist changed index: %v", err)
 	}
 	if emb.embedCalls+emb.embedBatchCalls == 0 {
 		t.Fatal("expected changed and new files to call the embedder")
@@ -216,6 +236,9 @@ func TestProjectIndexRuntimeBuildsRPG(t *testing.T) {
 	if err := runtime.runInitialIndex(ctx, true, nil, nil, nil, nil); err != nil {
 		t.Fatalf("index with RPG: %v", err)
 	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		t.Fatalf("persist index with RPG: %v", err)
+	}
 	if runtime.rpgEncoder == nil || runtime.rpgStore == nil {
 		t.Fatal("expected RPG runtime to be initialized")
 	}
@@ -226,6 +249,9 @@ func TestProjectIndexRuntimeBuildsRPG(t *testing.T) {
 	if stats.TotalNodes == 0 {
 		t.Fatal("expected RPG graph nodes")
 	}
+	if _, err := os.Stat(config.GetRPGIndexPath(projectRoot)); err != nil {
+		t.Fatalf("expected RPG index before close: %v", err)
+	}
 	if err := runtime.close(); err != nil {
 		t.Fatalf("close runtime: %v", err)
 	}
@@ -234,6 +260,64 @@ func TestProjectIndexRuntimeBuildsRPG(t *testing.T) {
 	}
 	if _, err := os.Stat(config.GetRPGIndexPath(projectRoot)); err != nil {
 		t.Fatalf("expected persisted RPG index: %v", err)
+	}
+}
+
+func TestProjectIndexRuntimeFreshEmptyProjectDoesNotCreateCleanGOBStores(t *testing.T) {
+	ctx := t.Context()
+	projectRoot := t.TempDir()
+	cfg := config.DefaultConfig()
+	if err := cfg.Save(projectRoot); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	vectorStore := store.NewGOBStore(config.GetIndexPath(projectRoot))
+	if err := vectorStore.Load(ctx); err != nil {
+		t.Fatalf("load vector store: %v", err)
+	}
+	runtime, err := newProjectIndexRuntime(ctx, projectRoot, cfg, &noOpEmbedder{}, vectorStore, nil)
+	if err != nil {
+		t.Fatalf("newProjectIndexRuntime: %v", err)
+	}
+	defer runtime.close()
+	defer vectorStore.Close()
+
+	if err := runtime.runInitialIndex(ctx, true, nil, nil, nil, nil); err != nil {
+		t.Fatalf("index empty project: %v", err)
+	}
+	if err := runtime.persistInitialIndex(ctx); err != nil {
+		t.Fatalf("persist empty project: %v", err)
+	}
+	for _, path := range []string{config.GetIndexPath(projectRoot), config.GetSymbolIndexPath(projectRoot)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("clean store %s exists or returned unexpected error: %v", path, err)
+		}
+	}
+}
+
+func TestRunProjectIndexRejectsConcurrentWriter(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.DefaultConfig()
+	if err := cfg.Save(projectRoot); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	lock, err := fileutil.AcquireProjectWriterLock(projectRoot)
+	if err != nil {
+		t.Fatalf("acquire writer lock: %v", err)
+	}
+	defer lock.Close()
+
+	err = runProjectIndex(t.Context())
+	var activeErr *fileutil.ProjectWriterActiveError
+	if !errors.As(err, &activeErr) {
+		t.Fatalf("runProjectIndex() error = %v, want ProjectWriterActiveError", err)
 	}
 }
 
@@ -305,4 +389,13 @@ func writeTestSource(t *testing.T, root, name, content string) {
 	if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+func requireFileInfo(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info
 }
