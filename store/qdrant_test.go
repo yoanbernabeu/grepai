@@ -99,6 +99,19 @@ func TestGetUUIDForChunk(t *testing.T) {
 	}
 }
 
+func TestGetUUIDForChunk_IncludesProjectNamespace(t *testing.T) {
+	chunkID := "README.md_0"
+	victimStore := &QdrantStore{projectNamespace: "/repos/victim"}
+	attackerStore := &QdrantStore{projectNamespace: "/repos/attacker"}
+
+	victimUUID := victimStore.getUUIDForChunk(chunkID)
+	attackerUUID := attackerStore.getUUIDForChunk(chunkID)
+
+	if victimUUID == attackerUUID {
+		t.Fatalf("expected different UUIDs for same chunk ID in different namespaces, got %s", victimUUID)
+	}
+}
+
 // TestParseChunkPayload tests parsing of Qdrant point payloads
 func TestParseChunkPayload(t *testing.T) {
 	store := &QdrantStore{}
@@ -205,7 +218,7 @@ func TestParseChunkPayload(t *testing.T) {
 
 // TestBuildChunkPayload tests building of Qdrant payloads from chunks
 func TestBuildChunkPayload(t *testing.T) {
-	store := &QdrantStore{}
+	store := &QdrantStore{projectNamespace: "/repos/test"}
 
 	now := time.Now().UTC()
 
@@ -281,6 +294,12 @@ func TestBuildChunkPayload(t *testing.T) {
 				} else if val.GetStringValue() != tt.chunk.Hash {
 					t.Errorf("expected hash %s, got %s", tt.chunk.Hash, val.GetStringValue())
 				}
+
+				if val, ok := payload["project_namespace"]; !ok {
+					t.Error("expected project_namespace in payload")
+				} else if val.GetStringValue() != store.projectNamespace {
+					t.Errorf("expected project_namespace %s, got %s", store.projectNamespace, val.GetStringValue())
+				}
 			}
 		})
 	}
@@ -333,14 +352,15 @@ func TestSaveChunks_EmptySlice(t *testing.T) {
 // TestQdrantStore_StructFields verifies struct has all expected fields
 func TestQdrantStore_StructFields(t *testing.T) {
 	store := &QdrantStore{
-		collectionName: "test-collection",
-		dimensions:     768,
-		apiKey:         "test-key",
+		collectionName:   "test-collection",
+		projectNamespace: "/repos/test",
+		dimensions:       768,
+		apiKey:           "test-key",
 	}
 
 	// Use all fields to avoid unused variable warnings
-	if store.collectionName != "test-collection" || store.dimensions != 768 || store.apiKey != "test-key" {
-		t.Errorf("expected collectionName 'test-collection', dimensions 768, and apiKey 'test-key'")
+	if store.collectionName != "test-collection" || store.projectNamespace != "/repos/test" || store.dimensions != 768 || store.apiKey != "test-key" {
+		t.Errorf("expected collectionName 'test-collection', projectNamespace '/repos/test', dimensions 768, and apiKey 'test-key'")
 	}
 }
 

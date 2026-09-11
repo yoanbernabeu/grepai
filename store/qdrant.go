@@ -22,10 +22,11 @@ func sanitizeUTF8(s string) string {
 }
 
 type QdrantStore struct {
-	client         *qdrant.Client
-	collectionName string
-	dimensions     int
-	apiKey         string
+	client           *qdrant.Client
+	collectionName   string
+	projectNamespace string
+	dimensions       int
+	apiKey           string
 }
 
 func parseHost(endpoint string) string {
@@ -44,10 +45,17 @@ func parseHost(endpoint string) string {
 }
 
 func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool, collection, apiKey string, dimensions int) (*QdrantStore, error) {
+	return NewQdrantStoreWithNamespace(ctx, endpoint, port, useTLS, collection, collection, apiKey, dimensions)
+}
+
+func NewQdrantStoreWithNamespace(ctx context.Context, endpoint string, port int, useTLS bool, collection, projectNamespace, apiKey string, dimensions int) (*QdrantStore, error) {
 	host := parseHost(endpoint)
 
 	if port <= 0 {
 		port = 6334
+	}
+	if projectNamespace == "" {
+		projectNamespace = collection
 	}
 
 	client, err := qdrant.NewClient(&qdrant.Config{
@@ -64,10 +72,11 @@ func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool,
 	}
 
 	store := &QdrantStore{
-		client:         client,
-		collectionName: collection,
-		dimensions:     dimensions,
-		apiKey:         apiKey,
+		client:           client,
+		collectionName:   collection,
+		projectNamespace: projectNamespace,
+		dimensions:       dimensions,
+		apiKey:           apiKey,
 	}
 
 	if err := store.ensureCollection(ctx); err != nil {
@@ -106,6 +115,11 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		FieldName:      "content_hash",
 		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
 	})
+	_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+		CollectionName: s.collectionName,
+		FieldName:      "project_namespace",
+		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
+	})
 
 	return nil
 }
@@ -126,7 +140,22 @@ func SanitizeCollectionName(path string) string {
 
 func (s *QdrantStore) getUUIDForChunk(chunkID string) uuid.UUID {
 	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-	return uuid.NewSHA1(namespace, []byte(chunkID))
+	return uuid.NewSHA1(namespace, []byte(s.namespacedChunkID(chunkID)))
+}
+
+func (s *QdrantStore) namespacedChunkID(chunkID string) string {
+	return s.projectNamespace + "\x00" + chunkID
+}
+
+func (s *QdrantStore) namespaceCondition() *qdrant.Condition {
+	return qdrant.NewMatch("project_namespace", s.projectNamespace)
+}
+
+func (s *QdrantStore) filterWithNamespace(conditions ...*qdrant.Condition) *qdrant.Filter {
+	must := make([]*qdrant.Condition, 0, len(conditions)+1)
+	must = append(must, s.namespaceCondition())
+	must = append(must, conditions...)
+	return &qdrant.Filter{Must: must}
 }
 
 func (s *QdrantStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
@@ -153,6 +182,7 @@ func (s *QdrantStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 	_, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{
 		CollectionName: s.collectionName,
 		Points:         points,
+		Wait:           qdrant.PtrOf(true),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upsert points: %w", err)
@@ -193,6 +223,10 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create updated_at value: %w", err)
 	}
+	projectNamespaceVal, err := qdrant.NewValue(s.projectNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create project_namespace value: %w", err)
+	}
 
 	payload["file_path"] = filePathVal
 	payload["start_line"] = startLineVal
@@ -200,6 +234,7 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 	payload["content"] = contentVal
 	payload["hash"] = hashVal
 	payload["updated_at"] = updatedAtVal
+	payload["project_namespace"] = projectNamespaceVal
 
 	if chunk.ContentHash != "" {
 		contentHashVal, err := qdrant.NewValue(chunk.ContentHash)
@@ -213,11 +248,7 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 }
 
 func (s *QdrantStore) DeleteByFile(ctx context.Context, filePath string) error {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
+	filter := s.filterWithNamespace(qdrant.NewMatch("file_path", filePath))
 
 	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
 		CollectionName: s.collectionName,
@@ -254,6 +285,7 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 	searchResult, err := s.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: s.collectionName,
 		Query:          qdrant.NewQuery(queryVector...),
+		Filter:         s.filterWithNamespace(),
 		Limit:          qdrant.PtrOf(fetchLimitU64),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 	})
@@ -315,11 +347,7 @@ func (s *QdrantStore) parseChunkPayload(payload map[string]*qdrant.Value) *Chunk
 }
 
 func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Document, error) {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
+	filter := s.filterWithNamespace(qdrant.NewMatch("file_path", filePath))
 
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
@@ -354,6 +382,7 @@ func (s *QdrantStore) DeleteDocument(ctx context.Context, filePath string) error
 func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.filterWithNamespace(),
 		Limit:          qdrant.PtrOf(uint32(1000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
 	})
@@ -389,19 +418,21 @@ func (s *QdrantStore) Close() error {
 }
 
 func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
-	collectionInfo, err := s.client.GetCollectionInfo(ctx, s.collectionName)
+	count, err := s.client.Count(ctx, &qdrant.CountPoints{
+		CollectionName: s.collectionName,
+		Filter:         s.filterWithNamespace(),
+		Exact:          qdrant.PtrOf(true),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get collection info: %w", err)
+		return nil, fmt.Errorf("failed to count points: %w", err)
 	}
-
-	pointsCount := *collectionInfo.PointsCount
-	if pointsCount > uint64(^uint(0)>>1) {
-		return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
+	if count > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("points count %d exceeds maximum int value", count)
 	}
 
 	stats := &IndexStats{
 		TotalFiles:  0,
-		TotalChunks: int(pointsCount),
+		TotalChunks: int(count),
 		IndexSize:   0,
 		LastUpdated: time.Now(),
 	}
@@ -412,6 +443,7 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, error) {
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.filterWithNamespace(),
 		Limit:          qdrant.PtrOf(uint32(10000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line"),
 	})
@@ -449,11 +481,7 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 }
 
 func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]Chunk, error) {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
+	filter := s.filterWithNamespace(qdrant.NewMatch("file_path", filePath))
 
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
@@ -483,6 +511,7 @@ func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]
 func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.filterWithNamespace(),
 		Limit:          qdrant.PtrOf(uint32(100000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 	})
@@ -510,11 +539,7 @@ func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash strin
 		return nil, false, nil
 	}
 
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("content_hash", contentHash),
-		},
-	}
+	filter := s.filterWithNamespace(qdrant.NewMatch("content_hash", contentHash))
 
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
