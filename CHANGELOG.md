@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Postgres Symbol Store**: Add an opt-in `trace.store_backend: postgres` backend that writes symbol, reference, and call-edge updates incrementally instead of periodically rewriting the entire `.grepai/symbols.gob` file. Existing GOB indexes migrate automatically on first use and are retained as `symbols.gob.migrated.bak` (#298)
+  - Resolve caller, callee, and reference symbols in batches, avoiding thousands of Postgres round trips for large trace result sets
+  - Serialize activation with Postgres advisory and GOB file locks, importing atomically so interrupted migrations retry without partial data
+  - Verify the locked GOB snapshot fingerprint before archive recovery, and serialize same-file saves/deletes with durable reference ordering
+  - Canonicalize duplicate call-graph edges so GOB and Postgres return the same deterministic source location
+  - Bulk-copy GOB migrations per 500-file batch instead of issuing per-file SQL operations, with bounded-memory progress reporting
+  - Preserve arbitrary filename and symbol-name bytes exactly while sanitizing invalid UTF-8 only in display text
+  - Reject newer PostgreSQL symbol schema versions without changing their metadata or data, including upgrades that finish while waiting for the schema lock
+  - Read callee edges and references from one PostgreSQL snapshot so concurrent file updates cannot mix old and new results
+  - Use count-only readiness checks for CLI and MCP trace/reference queries instead of calculating full PostgreSQL index statistics on every request
+  - Upgrade the symbol schema to version 2 with a project/caller reference index so callee lookups stay selective on existing PostgreSQL stores
+  - Keep all breadth levels and symbol lookups of a PostgreSQL call graph in the same read-only snapshot
+  - Resolve workspace callees from other loaded projects when no definition exists in their originating project, while preserving origin preference and batched lookups
+  - Pin symbol storage to one PostgreSQL schema and reject reserved-name collisions before transactional initialization or upgrades, preserving recognized legacy layouts
+  - Bound deadline-free readers' migration contention waits to 30 seconds and return actionable watcher guidance without limiting the subsequent import
+  - Quote migrated GOB archive paths in logs so filenames cannot forge additional log lines
+  - Report existing GOB symbol indexes for workspace projects without local configuration, while preserving malformed and permission-error handling
+  - Validate current-version PostgreSQL layouts through a read-only catalog snapshot before accepting symbol stores
+  - Require completed project activation before symbol mutations, returning a typed Load-required error instead of creating unrecoverable markerless data
+  - Regroup migration rows one 500-file batch at a time and release consumed source entries instead of building extra whole-index copies
+  - Repair missing indexes in otherwise valid current PostgreSQL schemas under the schema lock, and reject current markers over legacy identity types
+  - Read caller trace targets, references and caller definitions from one PostgreSQL snapshot across CLI and MCP paths
+  - Lock symbol data tables in mutation order during schema repair to avoid deadlocks with active writers
+  - Read callee definitions and read/write reference graphs with their related metadata in one PostgreSQL snapshot, including CLI and MCP formatting paths
+  - Upgrade symbol storage to schema v3 with transactional per-project mutation timestamps, preserving freshness after deleting the last file
+  - Lock activation metadata before data during metadata upgrades, while allowing different-file mutations to proceed concurrently and protecting activation state
+  - Read PostgreSQL symbol counts, size and freshness in one statistics snapshot
+  - Activate all indexed projects when adopting a recognized pre-marker PostgreSQL layout, without claiming a GOB import or overwriting existing migration state
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

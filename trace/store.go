@@ -356,6 +356,30 @@ func (s *GOBSymbolStore) LookupSymbol(ctx context.Context, name string) ([]Symbo
 	return append([]Symbol(nil), symbols...), nil
 }
 
+// LookupSymbolsBatch finds symbol definitions grouped by name.
+// The returned slices are caller-owned: mutating them must not alter the
+// store's in-memory index (or its persisted form). A shallow element copy is
+// sufficient because Symbol fields are all value types.
+func (s *GOBSymbolStore) LookupSymbolsBatch(ctx context.Context, names []string) (map[string][]Symbol, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string][]Symbol)
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if symbols, ok := s.index.Symbols[name]; ok {
+			owned := make([]Symbol, len(symbols))
+			copy(owned, symbols)
+			result[name] = owned
+		}
+	}
+	return result, nil
+}
+
 // LookupCallers finds all references/callers of a symbol.
 func (s *GOBSymbolStore) LookupCallers(ctx context.Context, symbolName string) ([]Reference, error) {
 	s.mu.RLock()
@@ -484,6 +508,11 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 	}
 	queue := []queueItem{{symbolName, 0}}
 	edgeSeen := make(map[string]bool)
+	edgeCandidates := make([]callEdgeCandidate, len(s.index.CallGraph))
+	for ordinal, edge := range s.index.CallGraph {
+		edgeCandidates[ordinal] = callEdgeCandidate{edge: edge, ordinal: ordinal}
+	}
+	edgeCandidates = canonicalCallEdgeCandidates(edgeCandidates)
 
 	shouldTraverse := func(name string, isRoot bool) bool {
 		symbols := s.index.Symbols[name]
@@ -524,7 +553,8 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		}
 
 		// Find edges (both callers and callees)
-		for _, edge := range s.index.CallGraph {
+		for _, candidate := range edgeCandidates {
+			edge := candidate.edge
 			if edge.Caller == current.name {
 				if isDeclarationSelfEdge(edge) {
 					continue

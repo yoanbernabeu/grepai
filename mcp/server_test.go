@@ -806,8 +806,9 @@ func TestHandleTraceCallersFromStores_should_aggregate_across_stores(t *testing.
 	// Save a symbol "Login" to store1 with a caller "HandleAuth"
 	err := store1.SaveFile(ctx, "/project1/auth.go", []trace.Symbol{
 		{Name: "Login", Kind: "function", File: "/project1/auth.go", Line: 10, Language: "go"},
+		{Name: "SharedCaller", Kind: "function", File: "/project1/shared.go", Line: 15, Language: "go"},
 	}, []trace.Reference{
-		{SymbolName: "Login", File: "/project1/handler.go", Line: 20, CallerName: "HandleAuth", CallerFile: "/project1/handler.go", CallerLine: 15},
+		{SymbolName: "Login", File: "/project1/handler.go", Line: 20, CallerName: "SharedCaller", CallerFile: "/project1/shared.go", CallerLine: 15},
 	})
 	if err != nil {
 		t.Fatalf("store1.SaveFile failed: %v", err)
@@ -816,8 +817,9 @@ func TestHandleTraceCallersFromStores_should_aggregate_across_stores(t *testing.
 	// Save a symbol "Login" to store2 with a caller "ProcessAuth"
 	err = store2.SaveFile(ctx, "/project2/api.go", []trace.Symbol{
 		{Name: "Login", Kind: "function", File: "/project2/api.go", Line: 5, Language: "go"},
+		{Name: "SharedCaller", Kind: "function", File: "/project2/shared.go", Line: 25, Language: "go"},
 	}, []trace.Reference{
-		{SymbolName: "Login", File: "/project2/service.go", Line: 30, CallerName: "ProcessAuth", CallerFile: "/project2/service.go", CallerLine: 25},
+		{SymbolName: "Login", File: "/project2/service.go", Line: 30, CallerName: "SharedCaller", CallerFile: "/project2/shared.go", CallerLine: 25},
 	})
 	if err != nil {
 		t.Fatalf("store2.SaveFile failed: %v", err)
@@ -838,11 +840,8 @@ func TestHandleTraceCallersFromStores_should_aggregate_across_stores(t *testing.
 	resultJSON, _ := json.Marshal(result)
 	text := string(resultJSON)
 
-	if !strings.Contains(text, "HandleAuth") {
-		t.Errorf("expected result to contain caller 'HandleAuth', got: %s", text)
-	}
-	if !strings.Contains(text, "ProcessAuth") {
-		t.Errorf("expected result to contain caller 'ProcessAuth', got: %s", text)
+	if !strings.Contains(text, "/project1/shared.go") || !strings.Contains(text, "/project2/shared.go") {
+		t.Errorf("expected duplicate caller names to resolve within their originating projects, got: %s", text)
 	}
 }
 
@@ -859,9 +858,9 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 	// In store1, "HandleRequest" calls "ValidateInput"
 	err := store1.SaveFile(ctx, "/project1/handler.go", []trace.Symbol{
 		{Name: "HandleRequest", Kind: "function", File: "/project1/handler.go", Line: 10, Language: "go"},
-		{Name: "ValidateInput", Kind: "function", File: "/project1/handler.go", Line: 30, Language: "go"},
+		{Name: "SharedCallee", Kind: "function", File: "/project1/callee.go", Line: 30, Language: "go"},
 	}, []trace.Reference{
-		{SymbolName: "ValidateInput", File: "/project1/handler.go", Line: 15, CallerName: "HandleRequest", CallerFile: "/project1/handler.go", CallerLine: 10},
+		{SymbolName: "SharedCallee", File: "/project1/handler.go", Line: 15, CallerName: "HandleRequest", CallerFile: "/project1/handler.go", CallerLine: 10},
 	})
 	if err != nil {
 		t.Fatalf("store1.SaveFile failed: %v", err)
@@ -870,9 +869,9 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 	// In store2, "HandleRequest" calls "SendResponse"
 	err = store2.SaveFile(ctx, "/project2/handler.go", []trace.Symbol{
 		{Name: "HandleRequest", Kind: "function", File: "/project2/handler.go", Line: 5, Language: "go"},
-		{Name: "SendResponse", Kind: "function", File: "/project2/handler.go", Line: 25, Language: "go"},
+		{Name: "SharedCallee", Kind: "function", File: "/project2/callee.go", Line: 25, Language: "go"},
 	}, []trace.Reference{
-		{SymbolName: "SendResponse", File: "/project2/handler.go", Line: 12, CallerName: "HandleRequest", CallerFile: "/project2/handler.go", CallerLine: 5},
+		{SymbolName: "SharedCallee", File: "/project2/handler.go", Line: 12, CallerName: "HandleRequest", CallerFile: "/project2/handler.go", CallerLine: 5},
 	})
 	if err != nil {
 		t.Fatalf("store2.SaveFile failed: %v", err)
@@ -893,10 +892,33 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 	resultJSON, _ := json.Marshal(result)
 	text := string(resultJSON)
 
-	if !strings.Contains(text, "ValidateInput") {
-		t.Errorf("expected result to contain callee 'ValidateInput', got: %s", text)
+	if !strings.Contains(text, "/project1/callee.go") || !strings.Contains(text, "/project2/callee.go") {
+		t.Errorf("expected duplicate callee names to resolve within their originating projects, got: %s", text)
 	}
-	if !strings.Contains(text, "SendResponse") {
-		t.Errorf("expected result to contain callee 'SendResponse', got: %s", text)
+}
+
+func TestHandleRefsFromStores_preserves_duplicateNameProvenance(t *testing.T) {
+	ctx := context.Background()
+	store1 := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	store2 := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	for _, item := range []struct {
+		store trace.SymbolStore
+		file  string
+	}{
+		{store1, "/project1/shared.go"},
+		{store2, "/project2/shared.go"},
+	} {
+		if err := item.store.SaveFile(ctx, item.file, []trace.Symbol{{Name: "SharedReader", File: item.file, Line: 1}}, []trace.Reference{{SymbolName: "uid", Kind: trace.RefKindRead, File: item.file, Line: 2, CallerName: "SharedReader", CallerFile: item.file, CallerLine: 1}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := (&Server{}).handleRefsFromStores(ctx, "uid", trace.RefKindRead, false, "json", []trace.SymbolStore{store1, store2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(result)
+	text := string(encoded)
+	if !strings.Contains(text, "/project1/shared.go") || !strings.Contains(text, "/project2/shared.go") {
+		t.Fatalf("duplicate ref callers lost project provenance: %s", text)
 	}
 }

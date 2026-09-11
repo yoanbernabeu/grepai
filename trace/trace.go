@@ -150,6 +150,8 @@ type SymbolExtractor interface {
 type SymbolStore interface {
 	// SaveFile persists symbols and references for a file.
 	SaveFile(ctx context.Context, filePath string, symbols []Symbol, refs []Reference) error
+	SaveFileWithContentHash(ctx context.Context, filePath, contentHash string, symbols []Symbol, refs []Reference) error
+	SaveFileWithSignature(ctx context.Context, filePath, signature, extractorVersion string, symbols []Symbol, refs []Reference) error
 
 	// DeleteFile removes all symbols and references for a file.
 	DeleteFile(ctx context.Context, filePath string) error
@@ -159,6 +161,8 @@ type SymbolStore interface {
 
 	// LookupSymbol finds symbol definitions by name.
 	LookupSymbol(ctx context.Context, name string) ([]Symbol, error)
+	// LookupSymbolsBatch finds symbol definitions grouped by name.
+	LookupSymbolsBatch(ctx context.Context, names []string) (map[string][]Symbol, error)
 
 	// LookupCallers finds all references/callers of a symbol.
 	LookupCallers(ctx context.Context, symbolName string) ([]Reference, error)

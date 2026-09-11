@@ -42,7 +42,19 @@ func LoadWorkspaceSymbolStores(ctx context.Context, workspaceName, projectName s
 
 	stores := make([]SymbolStore, 0, len(projects))
 	for _, p := range projects {
-		ss := NewGOBSymbolStore(config.GetSymbolIndexPath(p.Path))
+		projectCfg := config.DefaultConfig()
+		if config.Exists(p.Path) {
+			projectCfg, err = config.Load(p.Path)
+			if err != nil {
+				CloseSymbolStores(stores)
+				return nil, fmt.Errorf("failed to load config for project %s: %w", p.Name, err)
+			}
+		}
+		ss, err := NewSymbolStoreWithWorkspace(ctx, projectCfg, p.Path, &ws.Store)
+		if err != nil {
+			CloseSymbolStores(stores)
+			return nil, fmt.Errorf("failed to create symbol store for project %s: %w", p.Name, err)
+		}
 		if err := ss.Load(ctx); err != nil {
 			ss.Close()
 			CloseSymbolStores(stores)

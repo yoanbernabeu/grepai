@@ -115,11 +115,7 @@ var refsGraphCmd = &cobra.Command{
 		if err := validateRefsOutputFlags(); err != nil {
 			return err
 		}
-		readersResult, err := runRefs(args[0], true)
-		if err != nil {
-			return err
-		}
-		writersResult, err := runRefs(args[0], false)
+		result, err := runRefsKinds(args[0], true, true)
 		if err != nil {
 			return err
 		}
@@ -128,8 +124,8 @@ var refsGraphCmd = &cobra.Command{
 			Query:   args[0],
 			Kind:    "property",
 			Mode:    "fast",
-			Readers: readersResult.Readers,
-			Writers: writersResult.Writers,
+			Readers: result.Readers,
+			Writers: result.Writers,
 		}
 		return outputRefsGraphResult(graph)
 	},
@@ -159,6 +155,10 @@ func validateRefsOutputFlags() error {
 }
 
 func runRefs(symbolName string, readers bool) (refsResult, error) {
+	return runRefsKinds(symbolName, readers, !readers)
+}
+
+func runRefsKinds(symbolName string, includeReaders, includeWriters bool) (refsResult, error) {
 	ctx := context.Background()
 
 	if refsProject != "" && refsWorkspace == "" {
@@ -179,36 +179,45 @@ func runRefs(symbolName string, readers bool) (refsResult, error) {
 			return refsResult{}, fmt.Errorf("failed to find project root: %w", err)
 		}
 
-		symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+		cfg, err := config.Load(projectRoot)
+		if err != nil {
+			return refsResult{}, fmt.Errorf("failed to load configuration: %w", err)
+		}
+		symbolStore, err := trace.NewSymbolStore(ctx, cfg, projectRoot)
+		if err != nil {
+			return refsResult{}, fmt.Errorf("failed to create symbol store: %w", err)
+		}
 		if err := symbolStore.Load(ctx); err != nil {
 			return refsResult{}, fmt.Errorf("failed to load symbol index: %w", err)
 		}
 		defer symbolStore.Close()
 
-		stats, err := symbolStore.GetStats(ctx)
-		if err != nil || stats.TotalSymbols == 0 {
+		// Readiness gate (count-only; avoids full stats aggregation)
+		totalSymbols, err := trace.CountSymbolsForReadiness(ctx, symbolStore)
+		if err != nil || totalSymbols == 0 {
 			return refsResult{}, fmt.Errorf("symbol index is empty. Run 'grepai watch' first to build the index")
 		}
 
 		stores = []trace.SymbolStore{symbolStore}
 	}
 
+	return lookupRefsFromStores(ctx, stores, symbolName, includeReaders, includeWriters), nil
+}
+
+func lookupRefsFromStores(ctx context.Context, stores []trace.SymbolStore, symbolName string, includeReaders, includeWriters bool) refsResult {
 	result := refsResult{Query: symbolName, Kind: "property", Mode: "fast"}
 	for _, ss := range stores {
-		var refs []trace.Reference
-		var err error
-		if readers {
-			refs, err = ss.LookupReaders(ctx, symbolName)
-		} else {
-			refs, err = ss.LookupWriters(ctx, symbolName)
-		}
+		lookup, err := trace.LookupRefsResult(ctx, ss, symbolName)
 		if err != nil {
 			log.Printf("Warning: failed to lookup refs for %q: %v", symbolName, err)
 			continue
 		}
 
-		for _, ref := range refs {
-			sym := resolveRefCallerSymbol(ctx, ss, ref)
+		for _, ref := range lookup.References {
+			if (ref.Kind == trace.RefKindRead && !includeReaders) || (ref.Kind == trace.RefKindWrite && !includeWriters) {
+				continue
+			}
+			sym := resolveRefCallerSymbol(lookup.Symbols, ref)
 			usage := refsUsage{
 				Symbol: sym,
 				Access: ref.Kind,
@@ -218,15 +227,14 @@ func runRefs(symbolName string, readers bool) (refsResult, error) {
 					Context: ref.Context,
 				},
 			}
-			if readers {
+			if ref.Kind == trace.RefKindRead {
 				result.Readers = append(result.Readers, usage)
-			} else {
+			} else if ref.Kind == trace.RefKindWrite {
 				result.Writers = append(result.Writers, usage)
 			}
 		}
 	}
-
-	return result, nil
+	return result
 }
 
 func compactRefsUsages(usages []refsUsage) []refsUsageCompact {
@@ -264,13 +272,13 @@ func compactRefsGraphResult(result refsGraphResult) refsResultCompact {
 	}
 }
 
-func resolveRefCallerSymbol(ctx context.Context, ss trace.SymbolStore, ref trace.Reference) trace.Symbol {
+func resolveRefCallerSymbol(candidatesByName map[string][]trace.Symbol, ref trace.Reference) trace.Symbol {
 	if ref.CallerName == "" || ref.CallerName == "<top-level>" {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
 
-	candidates, err := ss.LookupSymbol(ctx, ref.CallerName)
-	if err != nil || len(candidates) == 0 {
+	candidates := candidatesByName[ref.CallerName]
+	if len(candidates) == 0 {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
 	best := pickBestSymbolForFile(candidates, ref.CallerFile)

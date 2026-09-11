@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -993,4 +994,147 @@ func TestGOBSymbolStore_ReferenceKindFilters(t *testing.T) {
 	if len(writers) != 1 || writers[0].Kind != RefKindWrite {
 		t.Fatalf("expected only write refs, got %+v", writers)
 	}
+}
+
+func TestGOBSymbolStore_LookupSymbolsBatch(t *testing.T) {
+	ctx := context.Background()
+	store := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	if err := store.SaveFile(ctx, "one.go", []Symbol{
+		{Name: "Shared", File: "one.go", Line: 1},
+		{Name: "OnlyOne", File: "one.go", Line: 2},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveFile(ctx, "two.go", []Symbol{{Name: "Shared", File: "two.go", Line: 3}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.LookupSymbolsBatch(ctx, []string{"Shared", "Missing", "OnlyOne", "Shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got["Shared"]) != 2 || len(got["OnlyOne"]) != 1 {
+		t.Fatalf("unexpected grouped symbols: %#v", got)
+	}
+	if _, ok := got["Missing"]; ok {
+		t.Fatalf("missing name should not be present: %#v", got)
+	}
+	empty, err := store.LookupSymbolsBatch(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty lookup = %#v, %v", empty, err)
+	}
+}
+
+func TestGOBSymbolStore_LookupSymbolsBatchReturnsCallerOwnedSlices(t *testing.T) {
+	ctx := context.Background()
+	indexPath := filepath.Join(t.TempDir(), "symbols.gob")
+	store := NewGOBSymbolStore(indexPath)
+
+	symbols := []Symbol{
+		{Name: "Shared", Kind: KindFunction, File: "one.go", Line: 1, Language: "go"},
+		{Name: "Shared", Kind: KindFunction, File: "two.go", Line: 3, Language: "go"},
+	}
+	if err := store.SaveFile(ctx, "one.go", symbols[:1], nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveFile(ctx, "two.go", symbols[1:], nil); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.LookupSymbolsBatch(ctx, []string{"Shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 1 || len(batch["Shared"]) != 2 {
+		t.Fatalf("unexpected batch result: %#v", batch)
+	}
+
+	// Mutate the caller-owned result: element fields, re-slicing, and append.
+	batch["Shared"][0].File = "hacked.go"
+	batch["Shared"][0].Line = 999
+	batch["Shared"] = batch["Shared"][:1]
+	batch["Shared"] = append(batch["Shared"], Symbol{Name: "Shared", File: "injected.go"})
+
+	// Clean in-memory state must be unaffected by the caller's mutations.
+	fresh, err := store.LookupSymbol(ctx, "Shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 2 {
+		t.Fatalf("expected 2 symbols after caller mutation, got %d", len(fresh))
+	}
+	for _, sym := range fresh {
+		if sym.File == "hacked.go" || sym.Line == 999 {
+			t.Fatalf("caller mutation leaked into store state: %+v", fresh)
+		}
+		if sym.File != "one.go" && sym.File != "two.go" {
+			t.Fatalf("unexpected symbol file after caller mutation: %+v", fresh)
+		}
+	}
+
+	// Persisted state must also be unaffected.
+	if err := store.Persist(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewGOBSymbolStore(indexPath)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := reloaded.LookupSymbol(ctx, "Shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 2 {
+		t.Fatalf("expected 2 symbols after reload, got %d", len(persisted))
+	}
+	for _, sym := range persisted {
+		if sym.File == "hacked.go" || sym.File == "injected.go" {
+			t.Fatalf("caller mutation leaked into persisted state: %+v", persisted)
+		}
+		if sym.Line == 999 {
+			t.Fatalf("caller mutation leaked into persisted state: %+v", persisted)
+		}
+	}
+}
+
+func TestGOBSymbolStore_LookupSymbolsBatchConcurrentMutation(t *testing.T) {
+	ctx := context.Background()
+	store := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+
+	symbols := []Symbol{
+		{Name: "Shared", Kind: KindFunction, File: "one.go", Line: 1, Language: "go"},
+		{Name: "Shared", Kind: KindFunction, File: "two.go", Line: 3, Language: "go"},
+	}
+	if err := store.SaveFile(ctx, "one.go", symbols[:1], nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveFile(ctx, "two.go", symbols[1:], nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			batch, err := store.LookupSymbolsBatch(ctx, []string{"Shared"})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			// Caller-owned results may be freely mutated without touching
+			// store-owned memory.
+			for j := range batch["Shared"] {
+				batch["Shared"][j].File = "mutated.go"
+				batch["Shared"][j].Line = i
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := store.LookupSymbol(ctx, "Shared"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
 }

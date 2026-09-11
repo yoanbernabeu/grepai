@@ -59,10 +59,50 @@ jobs:
           files: coverage.out
           fail_ci_if_error: false
 
+  postgres-test:
+    name: Test (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: grepai
+          POSTGRES_PASSWORD: grepai_test
+          POSTGRES_DB: grepai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U grepai -d grepai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run PostgreSQL integration tests
+        env:
+          GREPAI_POSTGRES_TEST_DSN: postgres://grepai:grepai_test@localhost:5432/grepai_test?sslmode=disable
+        run: go test -v -race -coverprofile=coverage-postgres.out -covermode=atomic ./trace ./mcp ./cli
+
+      - name: Upload PostgreSQL coverage
+        uses: codecov/codecov-action@v7
+        with:
+          files: coverage-postgres.out
+          fail_ci_if_error: false
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, postgres-test]
     steps:
       - uses: actions/checkout@v7
 

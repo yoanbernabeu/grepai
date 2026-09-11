@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,105 @@ type countingEmbedder struct {
 	noOpEmbedder
 	embedCalls      int
 	embedBatchCalls int
+}
+
+type startupFingerprintStore struct {
+	*trace.GOBSymbolStore
+	listErr error
+	saveErr error
+	listed  int
+	saved   int
+}
+
+func (s *startupFingerprintStore) ListFileFingerprints(ctx context.Context) (map[string]trace.FileFingerprint, error) {
+	s.listed++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]trace.FileFingerprint{}, nil
+}
+
+func (s *startupFingerprintStore) SaveFileWithSignature(ctx context.Context, path, hash, version string, symbols []trace.Symbol, refs []trace.Reference) error {
+	s.saved++
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	return s.GOBSymbolStore.SaveFileWithSignature(ctx, path, hash, version, symbols, refs)
+}
+
+func newInitialScanFixture(t *testing.T, emb *countingEmbedder) (*indexer.Indexer, *indexer.Scanner, *store.GOBStore, string) {
+	t.Helper()
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("package main\n\nfunc real() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignoreMatcher, err := indexer.NewIgnoreMatcher(projectRoot, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := indexer.NewScanner(projectRoot, ignoreMatcher)
+	vectorStore := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
+	idx := indexer.NewIndexer(projectRoot, vectorStore, emb, indexer.NewChunker(512, 50), scanner, time.Time{})
+	return idx, scanner, vectorStore, projectRoot
+}
+
+func TestRunInitialScanFingerprintErrorPreventsVectorAndSymbolMutation(t *testing.T) {
+	wantErr := errors.New("metadata unavailable")
+	emb := &countingEmbedder{}
+	idx, scanner, vectorStore, root := newInitialScanFixture(t, emb)
+	symbolStore := &startupFingerprintStore{
+		GOBSymbolStore: trace.NewGOBSymbolStore(filepath.Join(root, "symbols.gob")),
+		listErr:        wantErr,
+	}
+
+	_, err := runInitialScan(context.Background(), idx, scanner, trace.NewRegexExtractor(), symbolStore, []string{".go"}, time.Time{}, true, nil, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runInitialScan error = %v, want %v", err, wantErr)
+	}
+	if symbolStore.listed != 1 || symbolStore.saved != 0 || emb.embedCalls != 0 || emb.embedBatchCalls != 0 {
+		t.Fatalf("listed=%d saved=%d embed=%d batch=%d; metadata failure must precede mutations", symbolStore.listed, symbolStore.saved, emb.embedCalls, emb.embedBatchCalls)
+	}
+	stats, statsErr := vectorStore.GetStats(context.Background())
+	if statsErr != nil || stats.TotalFiles != 0 || stats.TotalChunks != 0 {
+		t.Fatalf("vector store mutated after metadata failure: stats=%#v err=%v", stats, statsErr)
+	}
+}
+
+func TestRunInitialScanFingerprintSnapshotHonorsCancellation(t *testing.T) {
+	emb := &countingEmbedder{}
+	idx, scanner, _, root := newInitialScanFixture(t, emb)
+	symbolStore := &startupFingerprintStore{GOBSymbolStore: trace.NewGOBSymbolStore(filepath.Join(root, "symbols.gob"))}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := runInitialScan(ctx, idx, scanner, trace.NewRegexExtractor(), symbolStore, []string{".go"}, time.Time{}, true, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runInitialScan error = %v, want context canceled", err)
+	}
+	if symbolStore.saved != 0 || emb.embedCalls != 0 || emb.embedBatchCalls != 0 {
+		t.Fatalf("saved=%d embed=%d batch=%d; cancellation must precede mutations", symbolStore.saved, emb.embedCalls, emb.embedBatchCalls)
+	}
+}
+
+func TestRunInitialScanReturnsSymbolSaveFailure(t *testing.T) {
+	wantErr := errors.New("symbol save failed")
+	emb := &countingEmbedder{}
+	idx, scanner, _, root := newInitialScanFixture(t, emb)
+	symbolStore := &startupFingerprintStore{
+		GOBSymbolStore: trace.NewGOBSymbolStore(filepath.Join(root, "symbols.gob")),
+		saveErr:        wantErr,
+	}
+
+	_, err := runInitialScan(context.Background(), idx, scanner, trace.NewRegexExtractor(), symbolStore, []string{".go"}, time.Time{}, true, nil, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runInitialScan error = %v, want %v; startup must not publish ready", err, wantErr)
+	}
+	if symbolStore.saved != 1 {
+		t.Fatalf("save calls = %d, want 1", symbolStore.saved)
+	}
 }
 
 func (e *countingEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {

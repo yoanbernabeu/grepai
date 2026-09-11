@@ -135,6 +135,10 @@ func initializeWorkspaceRuntimes(ctx context.Context, ws *config.Workspace, emb 
 				abortWatchSources(watchers)
 				return nil, nil, fmt.Errorf("failed to initialize watcher for project %s (%s): %w", project.Name, project.Path, err)
 			}
+			if isRequiredSymbolStoreInitError(err) {
+				abortWatchSources(watchers)
+				return nil, nil, fmt.Errorf("failed to initialize required symbol store for project %s (%s): %w", project.Name, project.Path, err)
+			}
 			log.Printf("Warning: failed to initialize runtime for %s: %v", project.Name, err)
 			continue
 		}

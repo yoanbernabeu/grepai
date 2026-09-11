@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -180,6 +181,109 @@ func TestInitializeWorkspaceRuntimesRegistrationFailureCleansPriorRuntime(t *tes
 	}
 	if _, statErr := os.Stat(symbolPath); !os.IsNotExist(statErr) {
 		t.Fatalf("fatal workspace startup serialized symbol store: %v", statErr)
+	}
+}
+
+func TestInitializeWorkspaceRuntimesRequiredSymbolStoreFailureAbortsPriorWatcher(t *testing.T) {
+	// Given a healthy first project and a second whose Postgres symbol store
+	// factory/load fails with a required init error.
+	first := newNonCooperativeCloseWatchSource()
+	defer close(first.blockClose)
+	symbolPath := filepath.Join(t.TempDir(), "symbols.gob")
+	symbolStore := trace.NewGOBSymbolStore(symbolPath)
+	loadErr := errors.New("postgres migration failed")
+	ws := &config.Workspace{Projects: []config.ProjectEntry{
+		{Name: "first", Path: "/first"},
+		{Name: "second", Path: "/second"},
+	}}
+	initFn := func(_ context.Context, _ *config.Workspace, project config.ProjectEntry, _ embedder.Embedder, _ store.VectorStore, _ bool) (*workspaceProjectRuntime, watchSource, error) {
+		if project.Name == "first" {
+			return &workspaceProjectRuntime{project: ws.Projects[0], watcher: first, symbolStore: symbolStore}, first, nil
+		}
+		return nil, nil, &requiredSymbolStoreInitError{
+			cause: fmt.Errorf("failed to load Postgres symbol index for %s: %w", project.Path, loadErr),
+		}
+	}
+
+	// When workspace runtimes initialize.
+	result := make(chan error, 1)
+	go func() {
+		runtimes, watchers, err := initializeWorkspaceRuntimes(context.Background(), ws, nil, nil, false, initFn)
+		if runtimes != nil || watchers != nil {
+			t.Errorf("partial runtimes/watchers returned after required init failure: %d/%d", len(runtimes), len(watchers))
+		}
+		result <- err
+	}()
+	var err error
+	select {
+	case <-first.closeStarted:
+		t.Fatal("required init failure invoked non-cooperative watcher Close")
+	case err = <-result:
+	}
+
+	// Then startup fails before readiness with the original cause retained,
+	// the prior watcher aborted (never closed), and no store persisted.
+	if !errors.Is(err, loadErr) {
+		t.Fatalf("initializeWorkspaceRuntimes() error = %v, want errors.Is(%v)", err, loadErr)
+	}
+	if !isRequiredSymbolStoreInitError(err) {
+		t.Fatalf("initializeWorkspaceRuntimes() error = %v, want required init classification", err)
+	}
+	var registrationErr *watcher.RegistrationError
+	if errors.As(err, &registrationErr) {
+		t.Fatalf("initializeWorkspaceRuntimes() error = %v, must not be mislabeled as RegistrationError", err)
+	}
+	if first.aborted != 1 || first.closed != 0 {
+		t.Fatalf("prior watcher aborts/closes = %d/%d, want 1/0", first.aborted, first.closed)
+	}
+	if _, statErr := os.Stat(symbolPath); !os.IsNotExist(statErr) {
+		t.Fatalf("fatal workspace startup serialized symbol store: %v", statErr)
+	}
+}
+
+func TestInitializeWorkspaceRuntimesPostgresScanFailureAbortsPriorWatcher(t *testing.T) {
+	// Given a healthy first project and a second whose Postgres initial scan
+	// fails after a successful load (marked required by the symbol loader).
+	first := newNonCooperativeCloseWatchSource()
+	defer close(first.blockClose)
+	scanErr := errors.New("postgres initial scan failed")
+	ws := &config.Workspace{Projects: []config.ProjectEntry{
+		{Name: "first", Path: "/first"},
+		{Name: "second", Path: "/second"},
+	}}
+	initFn := func(_ context.Context, _ *config.Workspace, project config.ProjectEntry, _ embedder.Embedder, _ store.VectorStore, _ bool) (*workspaceProjectRuntime, watchSource, error) {
+		if project.Name == "first" {
+			return &workspaceProjectRuntime{project: ws.Projects[0], watcher: first}, first, nil
+		}
+		return nil, nil, &requiredSymbolStoreInitError{cause: scanErr}
+	}
+
+	// When workspace runtimes initialize.
+	result := make(chan error, 1)
+	go func() {
+		runtimes, watchers, err := initializeWorkspaceRuntimes(context.Background(), ws, nil, nil, false, initFn)
+		if runtimes != nil || watchers != nil {
+			t.Errorf("partial runtimes/watchers returned after required scan failure: %d/%d", len(runtimes), len(watchers))
+		}
+		result <- err
+	}()
+	var err error
+	select {
+	case <-first.closeStarted:
+		t.Fatal("required scan failure invoked non-cooperative watcher Close")
+	case err = <-result:
+	}
+
+	// Then startup fails before readiness with the original cause retained
+	// and the prior watcher aborted exactly once, never closed.
+	if !errors.Is(err, scanErr) {
+		t.Fatalf("initializeWorkspaceRuntimes() error = %v, want errors.Is(%v)", err, scanErr)
+	}
+	if !isRequiredSymbolStoreInitError(err) {
+		t.Fatalf("initializeWorkspaceRuntimes() error = %v, want required init classification", err)
+	}
+	if first.aborted != 1 || first.closed != 0 {
+		t.Fatalf("prior watcher aborts/closes = %d/%d, want 1/0", first.aborted, first.closed)
 	}
 }
 

@@ -682,7 +682,7 @@ func startRPGRealtimeWorkers(ctx context.Context, mutationFence *watchMutationFe
 }
 
 //nolint:unused // Retained for upcoming watch-loop refactor across fg/bg modes.
-func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool, processors ...*framework.ProcessorRegistry) error {
+func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore trace.SymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, tracedLanguages []string, projectRoot string, cfg *config.Config, isBackgroundChild bool, processors ...*framework.ProcessorRegistry) error {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -745,7 +745,11 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), processors ...*framework.ProcessorRegistry) (*indexer.IndexStats, error) {
+func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore trace.SymbolStore, tracedLanguages []string, lastIndexTime time.Time, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), processors ...*framework.ProcessorRegistry) (*indexer.IndexStats, error) {
+	fingerprints, err := loadWatchSymbolFingerprints(ctx, symbolStore)
+	if err != nil {
+		return nil, err
+	}
 	// Initial scan with progress
 	if !isBackgroundChild {
 		fmt.Println("\nPerforming initial scan...")
@@ -754,7 +758,6 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 	}
 
 	var stats *indexer.IndexStats
-	var err error
 	if !isBackgroundChild {
 		stats, err = idx.IndexAllWithBatchProgress(ctx,
 			func(info indexer.ProgressInfo) {
@@ -826,8 +829,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		// re-processes files whose source didn't change.
 		if !lastIndexTime.IsZero() {
 			fileModTime := time.Unix(file.ModTime, 0)
-			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && symbolStore.IsFileIndexed(file.Path) {
-				if v, ok := symbolStore.GetFileExtractorVersion(file.Path); ok && v == extractor.Version() {
+			if (fileModTime.Before(lastIndexTime) || fileModTime.Equal(lastIndexTime)) && fingerprints.IsFileIndexed(file.Path) {
+				if v, ok := fingerprints.GetFileExtractorVersion(file.Path); ok && v == extractor.Version() {
 					continue
 				}
 			}
@@ -847,8 +850,8 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 		// enough — a release that ships better extraction (new tree-sitter
 		// grammar, expanded regex patterns, bug-fixed query) needs to
 		// re-process unchanged files to surface the improved symbols.
-		existingHash, hashOK := symbolStore.GetFileContentHash(fileInfo.Path)
-		existingVersion, versionOK := symbolStore.GetFileExtractorVersion(fileInfo.Path)
+		existingHash, hashOK := fingerprints.GetFileContentHash(fileInfo.Path)
+		existingVersion, versionOK := fingerprints.GetFileExtractorVersion(fileInfo.Path)
 		if hashOK && versionOK && existingHash == fileInfo.Hash && existingVersion == extractor.Version() {
 			continue
 		}
@@ -865,7 +868,7 @@ func runInitialScan(ctx context.Context, idx *indexer.Indexer, scanner *indexer.
 			return nil, err
 		}
 		if err := symbolStore.SaveFileWithSignature(ctx, fileInfo.Path, fileInfo.Hash, extractor.Version(), symbols, refs); err != nil {
-			log.Printf("Warning: failed to save symbols for %s: %v", fileInfo.Path, err)
+			return nil, fmt.Errorf("failed to save symbols for %s: %w", fileInfo.Path, err)
 		}
 		symbolCount += len(symbols)
 	}
@@ -1101,11 +1104,14 @@ func watchProjectWithEventObserverAndFence(ctx context.Context, projectRoot stri
 	idx := indexer.NewIndexer(projectRoot, st, emb, chunker, scanner, cfg.Watch.LastIndexTime, processorRegistry)
 
 	// Initialize symbol store and extractor
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
-	if err := symbolStore.Load(startupCtx); err != nil {
-		log.Printf("Warning: failed to load symbol index for %s: %v", projectRoot, err)
+	symbolStore, err := trace.NewSymbolStore(startupCtx, cfg, projectRoot)
+	if err != nil {
+		return err
 	}
 	defer func() { closeWithMutationFence(ctx, mutationFence, &abortStores, symbolStore.Close) }()
+	if err := runAfterWatcherSymbolLoad(startupCtx, cfg.Trace.StoreBackend, projectRoot, symbolStore, nil); err != nil {
+		return err
+	}
 	if err := startupCtx.Err(); err != nil {
 		return context.Cause(startupCtx)
 	}
@@ -1298,7 +1304,7 @@ func emitInitialStatsSnapshot(ctx context.Context, vectorStore store.VectorStore
 	}
 }
 
-func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver, onFatal func(), processors ...*framework.ProcessorRegistry) error {
+func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore trace.SymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver, onFatal func(), processors ...*framework.ProcessorRegistry) error {
 	mutationFence := newWatchMutationFence()
 	if !mutationFence.addWatcher(w) {
 		return errWatchMutationAdmissionClosed
@@ -1307,7 +1313,7 @@ func runProjectWatchLoop(ctx context.Context, st store.VectorStore, symbolStore 
 	return runProjectWatchLoopWithFence(ctx, st, symbolStore, w, idx, scanner, extractor, rpgEncoder, rpgStore, tracedLanguages, projectRoot, cfg, onEvent, onActivity, onStats, onFatal, mutationFence, processors...)
 }
 
-func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, symbolStore *trace.GOBSymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver, onFatal func(), mutationFence *watchMutationFence, processors ...*framework.ProcessorRegistry) error {
+func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, symbolStore trace.SymbolStore, w watchSource, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, rpgEncoder *rpg.RPGEncoder, rpgStore rpg.RPGStore, tracedLanguages []string, projectRoot string, cfg *config.Config, onEvent watchEventObserver, onActivity watchActivityObserver, onStats watchStatsObserver, onFatal func(), mutationFence *watchMutationFence, processors ...*framework.ProcessorRegistry) error {
 	persistTicker := time.NewTicker(30 * time.Second)
 	defer persistTicker.Stop()
 	fatalMonitorCtx, stopFatalMonitor := context.WithCancel(ctx)
@@ -2308,7 +2314,7 @@ func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtr
 	return symbols, refs, nil
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore trace.SymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
 	// An atomic write -- write to a temp file, then rename it over the target
 	// -- surfaces on the destination path as RENAME/REMOVE with no follow-up
 	// CREATE or WRITE. Editors and coding agents (Claude Code, Cursor) save
@@ -2377,7 +2383,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			log.Printf("Failed to index %s: %v", event.Path, err)
 			return
 		}
-		log.Printf("Indexed %s (%d chunks)", event.Path, chunks)
+		log.Printf("Indexed %q (%d chunks)", event.Path, chunks) //nolint:gosec // G706: %q escapes the path; the remaining argument is an integer.
 
 		// Report stats (files/chunks)
 		if onStats != nil {
@@ -2410,7 +2416,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			} else if err := symbolStore.SaveFileWithSignature(ctx, fileInfo.Path, fileInfo.Hash, extractor.Version(), symbols, refs); err != nil {
 				log.Printf("Failed to save symbols for %s: %v", event.Path, err)
 			} else {
-				log.Printf("Extracted %d symbols from %s", len(symbols), event.Path)
+				log.Printf("Extracted %d symbols from %q", len(symbols), event.Path) //nolint:gosec // G706: %q escapes the path; the remaining argument is an integer.
 
 				if onStats != nil {
 					onStats(projectRoot, watchStatsDelta{
@@ -2438,7 +2444,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 					if rpgManager != nil {
 						rpgManager.MarkFileDirty(fileInfo.Path)
 						dirtyCount, _, _, _ := rpgManager.Snapshot()
-						log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
+						log.Printf("rpg_event_applied_ms=%d file=%q event=%s rpg_dirty_files_count=%d", //nolint:gosec // G706: path is quoted; other values are integers and fixed EventType labels.
 							time.Since(start).Milliseconds(),
 							fileInfo.Path,
 							eventType.String(),
@@ -2474,7 +2480,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			} else if rpgManager != nil {
 				rpgManager.MarkFileDirty(event.Path)
 				dirtyCount, _, _, _ := rpgManager.Snapshot()
-				log.Printf("rpg_event_applied_ms=%d file=%s event=%s rpg_dirty_files_count=%d",
+				log.Printf("rpg_event_applied_ms=%d file=%q event=%s rpg_dirty_files_count=%d", //nolint:gosec // G706: path is quoted; other values are integers and fixed EventType labels.
 					time.Since(start).Milliseconds(),
 					event.Path,
 					eventType.String(),
@@ -2855,7 +2861,7 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 
 	runtimes, watchers, err := initializeWorkspaceRuntimes(ctx, ws, emb, st, isBackgroundChild, initializeWorkspaceRuntime)
 	if err != nil {
-		abortStores = isFatalWatcherError(err)
+		abortStores = isFatalWatcherError(err) || isRequiredSymbolStoreInitError(err)
 		return err
 	}
 
@@ -2945,7 +2951,7 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	if !isBackgroundChild {
 		fmt.Printf("\nWatching %d projects for changes... (Press Ctrl+C to stop)\n", len(runtimes))
 	} else {
-		log.Printf("Watching %d projects for changes...", len(runtimes))
+		log.Printf("Watching %d projects for changes...", len(runtimes)) //nolint:gosec // G706: only an integer length is formatted; it cannot inject log lines.
 	}
 
 	persistTicker := time.NewTicker(30 * time.Second)
@@ -3002,7 +3008,7 @@ type workspaceProjectRuntime struct {
 	scanner         *indexer.Scanner
 	extractor       *trace.RegexExtractor
 	processor       *framework.ProcessorRegistry
-	symbolStore     *trace.GOBSymbolStore
+	symbolStore     trace.SymbolStore
 	rpgEncoder      *rpg.RPGEncoder
 	rpgStore        rpg.RPGStore
 	vectorStore     store.VectorStore
@@ -3041,19 +3047,24 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 	}
 	idx := indexer.NewIndexer(project.Path, vectorStore, emb, chunker, scanner, projectCfg.Watch.LastIndexTime, processorRegistry)
 	extractor := trace.NewRegexExtractor()
-	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(project.Path))
-	if err := symbolStore.Load(ctx); err != nil {
-		log.Printf("Warning: failed to load symbol index for %s: %v", project.Path, err)
+	symbolStore, err := trace.NewSymbolStoreWithWorkspace(ctx, projectCfg, project.Path, &ws.Store)
+	if err != nil {
+		return nil, nil, &requiredSymbolStoreInitError{
+			cause: fmt.Errorf("failed to create symbol store for %s: %w", project.Path, err),
+		}
 	}
-
 	tracedLanguages := projectCfg.Trace.EnabledLanguages
 	if len(tracedLanguages) == 0 {
 		tracedLanguages = config.DefaultConfig().Trace.EnabledLanguages
 	}
 
-	stats, err := runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil, processorRegistry)
+	var stats *indexer.IndexStats
+	err = initializeWorkspaceSymbolStore(ctx, projectCfg.Trace.StoreBackend, project.Path, symbolStore, func() error {
+		var scanErr error
+		stats, scanErr = runInitialScan(ctx, idx, scanner, extractor, symbolStore, tracedLanguages, projectCfg.Watch.LastIndexTime, isBackgroundChild, nil, nil, processorRegistry)
+		return scanErr
+	})
 	if err != nil {
-		_ = symbolStore.Close()
 		return nil, nil, err
 	}
 	if stats.FilesIndexed > 0 || stats.ChunksCreated > 0 {
