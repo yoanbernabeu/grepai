@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Batch Ollama indexing requests through the modern `/api/embed` endpoint, with bounded request sizes and automatic fallback for older servers that only provide `/api/embeddings` (#314).
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

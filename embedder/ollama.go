@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +23,9 @@ type OllamaEmbedder struct {
 	model      string
 	dimensions int
 	client     *http.Client
+
+	// Once an endpoint rejects /api/embed, avoid probing it for every indexed file.
+	legacyBatchAPI atomic.Bool
 }
 
 type ollamaEmbedRequest struct {
@@ -127,25 +131,6 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 	}
 
 	return result.Embedding, nil
-}
-
-func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
-
-	for i, text := range texts {
-		embedding, err := e.Embed(ctx, text)
-		if err != nil {
-			// Wrap ContextLengthError with correct chunk index
-			if ctxErr := AsContextLengthError(err); ctxErr != nil {
-				ctxErr.ChunkIndex = i
-				return nil, ctxErr
-			}
-			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
-		}
-		results[i] = embedding
-	}
-
-	return results, nil
 }
 
 func (e *OllamaEmbedder) Dimensions() int {
