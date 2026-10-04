@@ -23,6 +23,41 @@ func TestSupportedExtensions(t *testing.T) {
 	}
 }
 
+func TestScanner_RelativePathsUseForwardSlash(t *testing.T) {
+	tmpDir := t.TempDir()
+	nested := filepath.Join(tmpDir, "pkg", "util")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "util.go"), []byte("package util\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	ignoreMatcher, err := NewIgnoreMatcher(tmpDir, []string{}, "")
+	if err != nil {
+		t.Fatalf("ignore matcher: %v", err)
+	}
+
+	meta, _, err := NewScanner(tmpDir, ignoreMatcher).ScanMetadata()
+	if err != nil {
+		t.Fatalf("ScanMetadata: %v", err)
+	}
+	if len(meta) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(meta))
+	}
+	if meta[0].Path != "pkg/util/util.go" {
+		t.Fatalf("ScanMetadata path = %q, want forward-slash pkg/util/util.go", meta[0].Path)
+	}
+
+	files, _, err := NewScanner(tmpDir, ignoreMatcher).Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "pkg/util/util.go" {
+		t.Fatalf("Scan path = %#v, want pkg/util/util.go", files)
+	}
+}
+
 func TestScanner_ScanCXXFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	for _, name := range []string{"source.cxx", "header.hxx"} {

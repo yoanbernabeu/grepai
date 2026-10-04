@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -120,14 +121,18 @@ func (idx *Indexer) IndexAllWithBatchProgress(ctx context.Context, onProgress Pr
 
 	existingMap := make(map[string]bool)
 	for _, doc := range existingDocs {
-		existingMap[doc] = true
+		// Normalize to forward slashes: workspace Postgres stores slash paths,
+		// while a Windows filepath.Rel scan used to produce backslashes. A
+		// mismatch left every indexed file in existingMap and deleted the
+		// whole project after a successful mtime skip pass.
+		existingMap[filepath.ToSlash(doc)] = true
 	}
 
 	// Every scanned file is accounted for exactly once: it either still exists
 	// (and is removed from existingMap below) or it was deleted from disk and
 	// stays in existingMap so it gets removed from the index further down.
 	for _, fileMeta := range fileMetas {
-		delete(existingMap, fileMeta.Path)
+		delete(existingMap, filepath.ToSlash(fileMeta.Path))
 	}
 
 	// Decide which files need (re)indexing. Each file's decision only depends
