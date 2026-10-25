@@ -589,16 +589,13 @@ const maxReChunkAttempts = 3
 
 // IndexFile indexes a single file
 func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (n int, err error) {
-	// Remove existing chunks for this file
-	if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
-		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
-	}
-	// If indexing fails from here on, the file's chunks are already gone.
-	// Drop its document too, so the next scan sees the file as not indexed
-	// and retries it instead of trusting stale chunk IDs (#311).
+	// If indexing fails, drop the file's chunks and document so the next scan
+	// sees the file as not indexed and retries it instead of trusting stale
+	// chunk IDs (#311). Chunks go first: some stores find them through the
+	// document.
 	defer func() {
 		if err != nil {
-			if delErr := idx.store.DeleteDocument(context.WithoutCancel(ctx), file.Path); delErr != nil {
+			if delErr := idx.RemoveFile(context.WithoutCancel(ctx), file.Path); delErr != nil {
 				log.Printf("Warning: failed to drop document for %s after indexing error: %v", file.Path, delErr)
 			}
 		}
@@ -609,10 +606,15 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (n int, err er
 	// Chunk the file
 	chunkInfos := idx.chunker.ChunkWithContext(file.Path, embedContent)
 	if len(chunkInfos) == 0 {
+		if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
+			return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
+		}
 		return 0, nil
 	}
 
-	// Check embedding cache for content-addressed deduplication
+	// Check embedding cache for content-addressed deduplication. The file's
+	// current chunks are still in the store at this point, so chunks that did
+	// not change reuse their vectors instead of being embedded again.
 	cachedVectors, cacheHits := idx.lookupCachedEmbeddings(ctx, chunkInfos)
 	if cacheHits > 0 {
 		log.Printf("Reused %d cached embeddings for %s", cacheHits, file.Path)
@@ -688,7 +690,10 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (n int, err er
 	now := time.Now()
 	chunks, chunkIDs := createStoreChunks(finalChunks, vectors, file.Hash, now)
 
-	// Save chunks
+	// Replace the file's chunks only now that the new ones are embedded.
+	if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
+		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
+	}
 	if err := idx.store.SaveChunks(ctx, chunks); err != nil {
 		return 0, fmt.Errorf("failed to save chunks: %w", err)
 	}
@@ -829,7 +834,7 @@ func (idx *Indexer) lookupCachedEmbeddings(ctx context.Context, chunks []ChunkIn
 		}
 		vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash)
 		if err != nil {
-			log.Printf("Warning: cache lookup failed for content hash %s: %v", chunk.ContentHash[:8], err)
+			log.Printf("Warning: cache lookup failed for content hash %.8s: %v", chunk.ContentHash, err)
 			continue
 		}
 		if found {
