@@ -72,6 +72,11 @@ func pickBestSymbolForFile(candidates []trace.Symbol, preferredFile string) *tra
 	return &candidates[0]
 }
 
+// traceExtractionMode is the only symbol extraction mode the index uses.
+// The --mode flag is kept for compatibility but deprecated: it never changed
+// extraction, which always runs the regex ("fast") extractor.
+const traceExtractionMode = "fast"
+
 var (
 	traceMode      string
 	traceDepth     int
@@ -139,7 +144,8 @@ Examples:
 func init() {
 	// Add flags to all trace subcommands
 	for _, cmd := range []*cobra.Command{traceCallersCmd, traceCalleesCmd, traceGraphCmd} {
-		cmd.Flags().StringVarP(&traceMode, "mode", "m", "fast", "Extraction mode: fast (regex) or precise (tree-sitter)")
+		cmd.Flags().StringVarP(&traceMode, "mode", "m", traceExtractionMode, "Deprecated, has no effect")
+		_ = cmd.Flags().MarkDeprecated("mode", "it has no effect: symbols are always extracted in fast (regex) mode")
 		cmd.Flags().BoolVar(&traceJSON, "json", false, "Output results in JSON format")
 		cmd.Flags().BoolVarP(&traceTOON, "toon", "t", false, "Output results in TOON format (token-efficient for AI agents)")
 		cmd.Flags().BoolVarP(&traceCompact, "compact", "c", false, "Output minimal format without call-site context (requires --json or --toon)")
@@ -186,7 +192,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		result := trace.TraceResult{Query: symbolName, Mode: traceMode}
+		result := trace.TraceResult{Query: symbolName, Mode: traceExtractionMode}
 		for _, ss := range stores {
 			refs, err := ss.LookupCallers(ctx, symbolName)
 			if err != nil {
@@ -273,7 +279,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(symbols) == 0 {
-		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
+		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceExtractionMode}
 		return outputTraceResult(emptyResult, traceViewCallers)
 	}
 
@@ -290,7 +296,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 
 	result := trace.TraceResult{
 		Query:  symbolName,
-		Mode:   traceMode,
+		Mode:   traceExtractionMode,
 		Symbol: target,
 	}
 
@@ -352,7 +358,7 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		result := trace.TraceResult{Query: symbolName, Mode: traceMode}
+		result := trace.TraceResult{Query: symbolName, Mode: traceExtractionMode}
 		for _, ss := range stores {
 			symbols, err := ss.LookupSymbol(ctx, symbolName)
 			if err != nil {
@@ -436,7 +442,7 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(symbols) == 0 {
-		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceMode}
+		emptyResult := trace.TraceResult{Query: symbolName, Mode: traceExtractionMode}
 		return outputTraceResult(emptyResult, traceViewCallees)
 	}
 
@@ -448,7 +454,7 @@ func runTraceCallees(cmd *cobra.Command, args []string) error {
 
 	result := trace.TraceResult{
 		Query:  symbolName,
-		Mode:   traceMode,
+		Mode:   traceExtractionMode,
 		Symbol: &symbols[0],
 	}
 
@@ -535,7 +541,7 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 
 		result := trace.TraceResult{
 			Query: symbolName,
-			Mode:  traceMode,
+			Mode:  traceExtractionMode,
 			Graph: merged,
 		}
 
@@ -582,7 +588,7 @@ func runTraceGraph(cmd *cobra.Command, args []string) error {
 
 	result := trace.TraceResult{
 		Query: symbolName,
-		Mode:  traceMode,
+		Mode:  traceExtractionMode,
 		Graph: graph,
 	}
 

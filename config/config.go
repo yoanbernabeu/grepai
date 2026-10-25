@@ -72,14 +72,8 @@ type Config struct {
 	Search            SearchConfig    `yaml:"search"`
 	Trace             TraceConfig     `yaml:"trace"`
 	RPG               RPGConfig       `yaml:"rpg"`
-	Update            UpdateConfig    `yaml:"update"`
 	Ignore            []string        `yaml:"ignore"`
 	ExternalGitignore string          `yaml:"external_gitignore,omitempty"`
-}
-
-// UpdateConfig holds auto-update settings
-type UpdateConfig struct {
-	CheckOnStartup bool `yaml:"check_on_startup"` // Check for updates when running commands
 }
 
 type SearchConfig struct {
@@ -339,14 +333,11 @@ func (w WatchConfig) WorktreeDiscoveryEnabled() bool {
 }
 
 type TraceConfig struct {
-	Mode             string   `yaml:"mode"`              // fast or precise
 	EnabledLanguages []string `yaml:"enabled_languages"` // File extensions to index
-	ExcludePatterns  []string `yaml:"exclude_patterns"`  // Patterns to exclude
 }
 
 type RPGConfig struct {
 	Enabled              bool    `yaml:"enabled"`
-	StorePath            string  `yaml:"store_path,omitempty"`
 	FeatureMode          string  `yaml:"feature_mode"` // local | hybrid | llm
 	DriftThreshold       float64 `yaml:"drift_threshold"`
 	MaxTraversalDepth    int     `yaml:"max_traversal_depth"`
@@ -469,7 +460,6 @@ func DefaultConfig() *Config {
 			},
 		},
 		Trace: TraceConfig{
-			Mode: "fast",
 			EnabledLanguages: []string{
 				".go", ".js", ".ts", ".jsx", ".tsx", ".vue", ".py", ".php",
 				".lua",
@@ -477,14 +467,6 @@ func DefaultConfig() *Config {
 				".rs", ".zig", ".cs", ".java",
 				".fs", ".fsx", ".fsi", // F#
 				".pas", ".dpr", // Pascal/Delphi
-			},
-			ExcludePatterns: []string{
-				"*_test.go",
-				"*.spec.ts",
-				"*.spec.js",
-				"*.test.ts",
-				"*.test.js",
-				"__tests__/*",
 			},
 		},
 		RPG: RPGConfig{
@@ -497,9 +479,6 @@ func DefaultConfig() *Config {
 			LLMEndpoint:          "http://localhost:11434/v1",
 			LLMTimeoutMs:         DefaultRPGLLMTimeoutMs,
 			FeatureGroupStrategy: DefaultRPGFeatureGroupStrategy,
-		},
-		Update: UpdateConfig{
-			CheckOnStartup: false, // Opt-in by default for privacy
 		},
 		Ignore: []string{
 			".git",
