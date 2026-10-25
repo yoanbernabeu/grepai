@@ -16,6 +16,13 @@ const agentInstructions = `
 
 **IMPORTANT: You MUST use grepai as your PRIMARY tool for code exploration and search.**
 
+### MCP Tools or CLI
+
+If the grepai MCP server is configured (your tools include ` + "`grepai_search`" + `), prefer the MCP tools over shelling out:
+` + "`grepai_search`" + `, ` + "`grepai_trace_callers`" + `, ` + "`grepai_trace_callees`" + `, ` + "`grepai_trace_graph`" + `,
+` + "`grepai_refs_readers`" + `, ` + "`grepai_refs_writers`" + ` and ` + "`grepai_index_status`" + `.
+They take the same queries as the CLI commands below. Otherwise, run the CLI commands through the shell.
+
 ### When to Use grepai (REQUIRED)
 
 Use ` + "`grepai search`" + ` INSTEAD OF Grep/Glob/find for:
