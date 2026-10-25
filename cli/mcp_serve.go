@@ -29,6 +29,9 @@ The server communicates via stdio and exposes the following tools:
   - grepai_rpg_search: Search RPG graph nodes by feature semantics
   - grepai_rpg_fetch: Fetch hierarchy and edge context for a specific RPG node
   - grepai_rpg_explore: Traverse RPG graph neighborhoods with direction/depth filters
+  - grepai_list_workspaces: List available workspace names
+  - grepai_list_projects: List the projects of a workspace
+  - grepai_stats: Show token savings recorded by grepai
 
 Arguments:
   project-path  Optional path to the grepai project directory.

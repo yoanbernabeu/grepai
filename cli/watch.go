@@ -80,9 +80,13 @@ Background mode:
   grepai watch --stop                    Stop the background watcher
 
 Default log directories:
-  Linux:   ~/.local/state/grepai/logs/grepai-watch.log (or $XDG_STATE_HOME)
-  macOS:   ~/Library/Logs/grepai/grepai-watch.log
-  Windows: %LOCALAPPDATA%\grepai\logs\grepai-watch.log
+  Linux:   ~/.local/state/grepai/logs (or $XDG_STATE_HOME/grepai/logs)
+  macOS:   ~/Library/Logs/grepai
+  Windows: %LOCALAPPDATA%\grepai\logs
+
+Log file name:
+  Inside a git repository: grepai-worktree-<id>.log (--status prints the ID)
+  Elsewhere:               grepai-watch.log
 
 Log management:
   Logs are not rotated automatically. To prevent disk usage growth, periodically
