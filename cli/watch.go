@@ -775,26 +775,24 @@ func refreshLastIndexTimeAfterScan(cfg *config.Config, projectRoot string, stats
 		scanStartedAt = time.Now()
 	}
 	cfg.Watch.LastIndexTime = scanStartedAt
-	if err := cfg.Save(projectRoot); err != nil {
-		log.Printf("Warning: failed to save config: %v", err)
-	}
+	persistLastIndexTime(projectRoot, cfg, scanStartedAt)
 }
 
-// persistLastIndexTimeOnShutdown flushes watch.last_index_time without
+// persistLastIndexTime flushes watch.last_index_time without
 // overwriting other config fields the user may have edited while watch ran.
 //
 // When a config file already exists on disk it is reloaded and only the
 // stamp is updated. When no file exists yet, the in-memory config (which
 // already carries the stamp) is written so the next restart can use the
 // mtime gate.
-func persistLastIndexTimeOnShutdown(projectRoot string, memCfg *config.Config, lastIndexTime time.Time) {
+func persistLastIndexTime(projectRoot string, memCfg *config.Config, lastIndexTime time.Time) {
 	if memCfg == nil || projectRoot == "" || lastIndexTime.IsZero() {
 		return
 	}
 	if config.Exists(projectRoot) {
 		onDisk, err := config.Load(projectRoot)
 		if err != nil {
-			log.Printf("Warning: failed to reload config to persist last_index_time on shutdown for %s: %v", projectRoot, err)
+			log.Printf("Warning: failed to reload config to persist last_index_time for %s: %v", projectRoot, err)
 			return
 		}
 		if onDisk.Watch.LastIndexTime.Equal(lastIndexTime) {
@@ -802,12 +800,12 @@ func persistLastIndexTimeOnShutdown(projectRoot string, memCfg *config.Config, l
 		}
 		onDisk.Watch.LastIndexTime = lastIndexTime
 		if err := onDisk.Save(projectRoot); err != nil {
-			log.Printf("Warning: failed to save last_index_time on shutdown for %s: %v", projectRoot, err)
+			log.Printf("Warning: failed to save last_index_time for %s: %v", projectRoot, err)
 		}
 		return
 	}
 	if err := memCfg.Save(projectRoot); err != nil {
-		log.Printf("Warning: failed to save config on shutdown for %s: %v", projectRoot, err)
+		log.Printf("Warning: failed to save config for %s: %v", projectRoot, err)
 	}
 }
 
@@ -1363,7 +1361,7 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 			// other fields the user may have edited during the session are left
 			// alone.
 			if cfg != nil {
-				persistLastIndexTimeOnShutdown(projectRoot, cfg, cfg.Watch.LastIndexTime)
+				persistLastIndexTime(projectRoot, cfg, cfg.Watch.LastIndexTime)
 			}
 		})
 	}
@@ -2411,9 +2409,7 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 		now := time.Now()
 		cfg.Watch.LastIndexTime = now
 		if now.Sub(*lastConfigWrite) >= configWriteThrottle {
-			if err := cfg.Save(projectRoot); err != nil {
-				log.Printf("Warning: failed to save config: %v", err)
-			}
+			persistLastIndexTime(projectRoot, cfg, now)
 			*lastConfigWrite = now
 		}
 

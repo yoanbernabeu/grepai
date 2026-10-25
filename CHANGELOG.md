@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TOON Output Field Names**: TOON headers contained raw tag options such as `"symbol_name,omitempty"`, empty `omitempty` fields were always emitted, and `json:"-"` fields leaked. TOON output (CLI and MCP) now uses the same field names and rules as JSON.
 - **`grepai init` Flags**: `--model` was ignored for `ollama`, `lmstudio` and `synthetic`; `--backend postgres|qdrant` with `--yes` left the DSN or endpoint empty instead of writing the backend defaults; the help text listed only Ollama/OpenAI and GOB/PostgreSQL.
 - **Help Texts**: `grepai mcp-serve --help` listed 11 of the 14 MCP tools, and `grepai watch --help` gave the wrong log file name inside git repositories (`grepai-worktree-<id>.log`).
+- **Config Edits Lost While Watching**: Preserve user changes to `.grepai/config.yaml`, including `ignore`, when saving `watch.last_index_time` after indexing (#179).
 
 ### Removed
 

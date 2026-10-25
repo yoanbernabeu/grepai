@@ -53,6 +53,6 @@ func persistWorkspaceOnShutdown(ctx context.Context, st store.VectorStore, runti
 		if runtime == nil || runtime.cfg == nil {
 			continue
 		}
-		persistLastIndexTimeOnShutdown(runtime.project.Path, runtime.cfg, runtime.cfg.Watch.LastIndexTime)
+		persistLastIndexTime(runtime.project.Path, runtime.cfg, runtime.cfg.Watch.LastIndexTime)
 	}
 }

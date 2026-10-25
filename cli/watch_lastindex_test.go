@@ -112,7 +112,7 @@ func TestPersistLastIndexTimeOnShutdown_DoesNotClobberOtherFields(t *testing.T) 
 		t.Fatalf("precondition: expected disk chunking size 256, got %d", onDiskBefore.Chunking.Size)
 	}
 
-	persistLastIndexTimeOnShutdown(projectRoot, memCfg, memCfg.Watch.LastIndexTime)
+	persistLastIndexTime(projectRoot, memCfg, memCfg.Watch.LastIndexTime)
 
 	onDisk, err := config.Load(projectRoot)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestPersistLastIndexTimeOnShutdown_WritesConfigWhenMissing(t *testing.T) {
 	stamp := time.Now().Add(-time.Minute).Truncate(time.Second)
 	memCfg.Watch.LastIndexTime = stamp
 
-	persistLastIndexTimeOnShutdown(projectRoot, memCfg, stamp)
+	persistLastIndexTime(projectRoot, memCfg, stamp)
 
 	loaded, err := config.Load(projectRoot)
 	if err != nil {
@@ -203,6 +203,43 @@ func TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled(t *testing.T
 	}
 	if !lastWrite.Equal(throttleAnchor) {
 		t.Fatalf("expected lastConfigWrite to remain %v (disk write throttled), got %v", throttleAnchor, lastWrite)
+	}
+}
+
+func TestIndexTimestampPreservesUserIgnore(t *testing.T) {
+	for _, phase := range []string{"initial scan", "file event"} {
+		t.Run(phase, func(t *testing.T) {
+			h := newAtomicWriteHarness(t)
+			onDisk, err := config.Load(h.projectRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			onDisk.Ignore = []string{"_archive"}
+			if err := onDisk.Save(h.projectRoot); err != nil {
+				t.Fatal(err)
+			}
+
+			if phase == "initial scan" {
+				refreshLastIndexTimeAfterScan(h.cfg, h.projectRoot, &indexer.IndexStats{FilesIndexed: 1}, time.Now())
+			} else {
+				if err := os.WriteFile(h.srcPath, []byte("package main\n\nfunc updated() {}\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				h.lastWrite = time.Time{}
+				h.dispatch(context.Background(), watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"})
+			}
+
+			saved, err := config.Load(h.projectRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(saved.Ignore) != 1 || saved.Ignore[0] != "_archive" {
+				t.Errorf("user's ignore edits were overwritten: %v", saved.Ignore)
+			}
+			if !saved.Watch.LastIndexTime.Equal(h.cfg.Watch.LastIndexTime) {
+				t.Error("last_index_time was not persisted")
+			}
+		})
 	}
 }
 
