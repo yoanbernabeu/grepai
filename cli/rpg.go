@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/toon"
 	"github.com/yoanbernabeu/grepai/rpg"
 )
 
@@ -185,7 +185,7 @@ func outputRPGStructured(data any) error {
 		return enc.Encode(data)
 	}
 	if rpgTOON {
-		output, err := gotoon.Encode(data)
+		output, err := toon.Encode(data)
 		if err != nil {
 			return fmt.Errorf("failed to encode TOON: %w", err)
 		}

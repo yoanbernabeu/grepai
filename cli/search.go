@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/internal/toon"
 	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/search"
 	"github.com/yoanbernabeu/grepai/stats"
@@ -445,7 +445,7 @@ func captureSearchTOON(results []store.SearchResult, enrichments []rpgEnrichment
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-	output, err := gotoon.Encode(toonResults)
+	output, err := toon.Encode(toonResults)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
@@ -465,7 +465,7 @@ func captureSearchCompactTOON(results []store.SearchResult, enrichments []rpgEnr
 			SymbolName:  enrichments[i].SymbolName,
 		}
 	}
-	output, err := gotoon.Encode(toonResults)
+	output, err := toon.Encode(toonResults)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
@@ -482,7 +482,7 @@ func outputSearchErrorJSON(err error) error {
 
 // outputSearchErrorTOON outputs an error in TOON format
 func outputSearchErrorTOON(err error) error {
-	output, encErr := gotoon.Encode(map[string]string{"error": err.Error()})
+	output, encErr := toon.Encode(map[string]string{"error": err.Error()})
 	if encErr != nil {
 		return fmt.Errorf("failed to encode TOON error: %w", encErr)
 	}

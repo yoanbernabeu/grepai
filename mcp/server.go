@@ -16,11 +16,11 @@ import (
 
 	"time"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/internal/toon"
 	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/search"
 	"github.com/yoanbernabeu/grepai/stats"
@@ -113,7 +113,7 @@ type IndexStatus struct {
 func encodeOutput(data any, format string) (string, error) {
 	switch format {
 	case "toon":
-		return gotoon.Encode(data)
+		return toon.Encode(data)
 	default: // "json"
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		if err != nil {

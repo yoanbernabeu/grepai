@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/internal/toon"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
@@ -294,7 +294,7 @@ func outputRefsResult(result refsResult, readers bool) error {
 		if refsCompact {
 			data = compactRefsResult(result)
 		}
-		output, err := gotoon.Encode(data)
+		output, err := toon.Encode(data)
 		if err != nil {
 			return fmt.Errorf("failed to encode TOON: %w", err)
 		}
@@ -346,7 +346,7 @@ func outputRefsGraphResult(result refsGraphResult) error {
 		if refsCompact {
 			data = compactRefsGraphResult(result)
 		}
-		output, err := gotoon.Encode(data)
+		output, err := toon.Encode(data)
 		if err != nil {
 			return fmt.Errorf("failed to encode TOON: %w", err)
 		}

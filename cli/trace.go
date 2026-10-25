@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/embedder"
+	"github.com/yoanbernabeu/grepai/internal/toon"
 	"github.com/yoanbernabeu/grepai/rpg"
 	gstats "github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/trace"
@@ -819,7 +819,7 @@ func captureTraceCompactJSON(result trace.TraceResult) string {
 }
 
 func captureTraceCompactTOON(result trace.TraceResult) (string, error) {
-	output, err := gotoon.Encode(compactTraceResult(result))
+	output, err := toon.Encode(compactTraceResult(result))
 	if err != nil {
 		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
@@ -851,7 +851,7 @@ func outputTOON(result trace.TraceResult) error {
 
 // captureTOON serializes a TraceResult to a TOON string without writing to stdout.
 func captureTOON(result trace.TraceResult) (string, error) {
-	output, err := gotoon.Encode(result)
+	output, err := toon.Encode(result)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode TOON: %w", err)
 	}
