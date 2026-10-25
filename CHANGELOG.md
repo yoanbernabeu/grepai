@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stats Never Recorded From the CLI**: `grepai search` and `grepai trace` wrote their stats entry from a fire-and-forget goroutine, so the process usually exited before the write and `grepai stats` stayed empty for CLI usage. The command now waits for the write, bounded to 500ms.
+- **Boost Patterns Missed Top-Level Directories**: Default patterns such as `/src/`, `/tests/` and `/docs/` never matched top-level directories because indexed paths have no leading slash, and never matched at all on Windows because of backslashes. Paths are now matched slash-separated with a leading `/`.
+- **TOON Output Field Names**: TOON headers contained raw tag options such as `"symbol_name,omitempty"`, empty `omitempty` fields were always emitted, and `json:"-"` fields leaked. TOON output (CLI and MCP) now uses the same field names and rules as JSON.
+- **`grepai init` Flags**: `--model` was ignored for `ollama`, `lmstudio` and `synthetic`; `--backend postgres|qdrant` with `--yes` left the DSN or endpoint empty instead of writing the backend defaults; the help text listed only Ollama/OpenAI and GOB/PostgreSQL.
+- **Help Texts**: `grepai mcp-serve --help` listed 11 of the 14 MCP tools, and `grepai watch --help` gave the wrong log file name inside git repositories (`grepai-worktree-<id>.log`).
+
+### Removed
+
+- **Settings That Never Had an Effect**: `trace.mode`, `trace.exclude_patterns`, `update.check_on_startup` and `rpg.store_path` were written to `config.yaml` but never read by any version. They are no longer written; existing files still load and the keys are dropped on the next save.
+
+### Deprecated
+
+- **`grepai trace --mode`**: the flag never changed symbol extraction (always the regex extractor). It is still accepted with a deprecation warning, and trace output always reports `"mode": "fast"`.
+
 ## [0.39.0] - 2026-10-25
 
 ### Added

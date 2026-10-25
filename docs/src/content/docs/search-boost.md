@@ -35,26 +35,14 @@ Boost only reorders the candidates the store returned (2x `--limit`, or 4x with 
 
 Patterns are plain, case-sensitive substring matches on the file path. No globs or regular expressions.
 
-The path is relative to the project root, with no leading slash (for example `src/auth/handler.go`). This matters for patterns that start with `/`:
+Patterns are matched against the path relative to the project root, written with forward slashes and a leading `/` (for example `/src/auth/handler.go`, on every OS). So a pattern that starts with `/` matches a directory name at any depth, including the top level:
 
-- `/tests/` matches `services/api/tests/auth.py`, but **not** a top-level `tests/auth.py`.
-- `/src/` matches `packages/web/src/app.ts`, but **not** a top-level `src/app.ts`.
+- `/tests/` matches `tests/auth.py` and `services/api/tests/auth.py`, but not `contests/auth.py`.
+- `/src/` matches `src/app.ts` and `packages/web/src/app.ts`.
 - `_test.` matches `auth_test.go` and `user_test.py`.
 - `.spec.` matches `auth.spec.ts` and `user.spec.js`.
 
-The leading `/` avoids false positives (`/tests/` does not match `contests/`). To also match a top-level directory, add a second rule without the leading slash, keeping in mind it will match anywhere in the path:
-
-```yaml
-search:
-  boost:
-    penalties:
-      - pattern: "/tests/"
-        factor: 0.5
-      - pattern: "tests/"   # also matches top-level tests/ (and contests/)
-        factor: 0.5
-```
-
-In workspace searches, stored paths start with `<workspace>/<project>/`, so a pattern like `/src/` also matches each project's top-level `src/`.
+> **Note:** in earlier versions, paths were matched without the leading `/` (and with backslashes on Windows), so patterns like `/src/` or `/tests/` never matched a top-level directory, and never matched on Windows.
 
 ## Default Configuration
 

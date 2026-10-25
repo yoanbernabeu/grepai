@@ -157,7 +157,7 @@ Symbols and references are extracted with regular expressions, one pattern set p
 
 #### Precise Mode
 
-> **Note:** precise mode is not wired into indexing in current releases. `grepai watch` and `grepai index` always use the regex extractor, whatever `trace.mode` says. The `--mode precise` flag is accepted by `trace callers|callees|graph`, but it only changes the `mode` field of the output: results come from the same index.
+> **Note:** precise mode was never wired into indexing. `grepai watch` and `grepai index` always use the regex extractor. The `--mode` flag of `trace callers|callees|graph` is deprecated: it is still accepted so existing scripts keep working, prints a deprecation warning, and the output always reports `"mode": "fast"`.
 
 A tree-sitter extractor exists in the source tree behind the `treesitter` build tag (CGO required) for Go, JavaScript, TypeScript, Python, PHP, C# and F#. Release binaries are built without it.
 
@@ -234,7 +234,6 @@ The `trace` section of `.grepai/config.yaml` (defaults shown):
 
 ```yaml
 trace:
-  mode: fast
   enabled_languages:
     - .go
     - .js
@@ -261,20 +260,13 @@ trace:
     - .fsi
     - .pas
     - .dpr
-  exclude_patterns:
-    - "*_test.go"
-    - "*.spec.ts"
-    - "*.spec.js"
-    - "*.test.ts"
-    - "*.test.js"
-    - "__tests__/*"
 ```
 
 | Key | Effect |
 |-----|--------|
 | `enabled_languages` | File extensions to extract symbols from. An empty list falls back to the defaults. |
-| `mode` | Accepted for compatibility. Indexing always uses the regex extractor (see [Precise Mode](#precise-mode)). |
-| `exclude_patterns` | Written to new configs, but not applied by the indexer in current releases: matching files are still traced. Use the top-level `ignore` list to keep files out of every index. |
+
+To keep files out of every index, including the symbol index, use the top-level `ignore` list. Older configs may contain `trace.mode` or `trace.exclude_patterns`: these keys never had any effect and were removed, and grepai ignores them.
 
 ### How It Works
 

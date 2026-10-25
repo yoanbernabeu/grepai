@@ -102,16 +102,12 @@ search:
     enabled: true               # keep only the best chunk per file
 
 trace:
-  mode: fast
   enabled_languages:            # extensions included in the symbol index
     - .go
     - .js
     - .ts
     # ... .jsx .tsx .vue .py .php .lua .c .h .cpp .hpp .cc .cxx .hxx
     #     .rs .zig .cs .java .fs .fsx .fsi .pas .dpr
-  exclude_patterns:
-    - "*_test.go"
-    - "*.spec.ts"
 
 rpg:
   enabled: false                # Repository Planning Graph, see the RPG page
@@ -122,9 +118,6 @@ rpg:
   llm_endpoint: http://localhost:11434/v1
   llm_timeout_ms: 8000
   feature_group_strategy: sample
-
-update:
-  check_on_startup: false
 
 ignore:                         # directory or file names skipped everywhere
   - .git
@@ -150,7 +143,7 @@ Notes on specific keys:
 
 - `ignore` replaces the default list when you set it. Copy the defaults if you want to keep them.
 - `search` has no load-time defaults. If your config has no `search:` section (for example, an older file), boost and deduplication are off. Run `grepai init` in a scratch directory to get the current defaults.
-- `trace.mode`, `trace.exclude_patterns` and `update.check_on_startup` are written to the file but not read by the current version.
+- Older config files may still contain `trace.mode`, `trace.exclude_patterns`, `update.check_on_startup` or `rpg.store_path`. These keys never had any effect and were removed; grepai ignores them and drops them the next time it saves the file.
 - `framework_processing` runs a Node.js script to compile Vue single-file components before embedding and tracing. Only the Vue processor is implemented; the Svelte, Astro and Solid entries are placeholders. With `mode: auto`, grepai falls back to the raw file if Node or the Vue compiler is missing. `require` fails instead, and `off` disables processing.
 - The `rpg` section and `watch.rpg_*` keys are described in [Repository Planning Graph](/grepai/rpg/).
 
@@ -265,7 +258,7 @@ store:
 
 On startup, grepai runs `CREATE EXTENSION IF NOT EXISTS vector` and creates its tables. The database user needs permission to do this, or an administrator must create the `vector` extension first. A shared database lets several projects or worktrees use one index.
 
-> **Note:** `grepai init -b postgres --yes` does not set a DSN. Add `store.postgres.dsn` to the config yourself, or run `grepai init` interactively to be prompted for it.
+> **Note:** `grepai init -b postgres --yes` writes the default DSN `postgres://localhost:5432/grepai`. Change `store.postgres.dsn` if your database uses another host, user or name.
 
 ### Qdrant
 

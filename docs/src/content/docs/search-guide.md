@@ -150,12 +150,12 @@ grepai search "authentication" --toon --compact   # TOON without content
 TOON (Token-Oriented Object Notation) is a tabular format that repeats field names once per array instead of once per result, which makes it shorter than JSON. Example with `--toon --compact`:
 
 ```text
-[2]{end_line,"feature_path,omitempty",file_path,score,start_line,"symbol_name,omitempty"}:
-  45,"",middleware/auth.go,0.8125,15,""
-  32,"",handlers/login.go,0.75,10,""
+[2]{end_line,file_path,score,start_line}:
+  70,recovery.go,0.63798773,1
+  78,recovery_test.go,0.29077357,1
 ```
 
-The header lists the fields in alphabetical order. The `feature_path` and `symbol_name` columns are always present in TOON output and are empty when RPG is off.
+The header lists the fields in alphabetical order, with the same names as the JSON output. `feature_path` and `symbol_name` appear only when RPG provides them, as in JSON.
 
 **When to use TOON:**
 - AI agents with tight token budgets
