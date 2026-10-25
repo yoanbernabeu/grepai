@@ -325,42 +325,60 @@ func (s *QdrantStore) parseChunkPayload(payload map[string]*qdrant.Value) *Chunk
 	return chunk
 }
 
+// qdrantScrollPageSize is the number of points read per scroll request.
+const qdrantScrollPageSize = 1000
+
+// scrollEach reads every point matching req, page by page. A single Scroll
+// call returns at most one page, so reading only the first page silently
+// truncated results on collections with more points than the page size.
+func (s *QdrantStore) scrollEach(ctx context.Context, req *qdrant.ScrollPoints, visit func(*qdrant.RetrievedPoint)) error {
+	req.Limit = qdrant.PtrOf(uint32(qdrantScrollPageSize))
+	for {
+		points, next, err := s.client.ScrollAndOffset(ctx, req)
+		if err != nil {
+			return err
+		}
+		for _, point := range points {
+			visit(point)
+		}
+		if next == nil || len(points) == 0 {
+			return nil
+		}
+		req.Offset = next
+	}
+}
+
+func pointVector(point *qdrant.RetrievedPoint) []float32 {
+	if point.Vectors != nil && point.Vectors.GetVector() != nil {
+		if dense := point.Vectors.GetVector().GetDense(); dense != nil {
+			return dense.GetData()
+		}
+	}
+	return nil
+}
+
 func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Document, error) {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
-
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	doc := &Document{Path: filePath}
+	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Filter:         filter,
-		Limit:          qdrant.PtrOf(uint32(1000)),
-		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "file_hash"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get document: %w", err)
-	}
-
-	if len(scrollResult) == 0 {
-		return nil, nil
-	}
-
-	// Document metadata lives on chunks. For files with more than 1000
-	// chunks, ChunkIDs length is a lower bound, sufficient for skip decisions.
-	doc := &Document{
-		Path:     filePath,
-		ChunkIDs: make([]string, len(scrollResult)),
-	}
-	for i, point := range scrollResult {
-		doc.ChunkIDs[i] = point.GetId().String()
+		Filter: &qdrant.Filter{
+			Must: []*qdrant.Condition{qdrant.NewMatch("file_path", filePath)},
+		},
+		WithPayload: qdrant.NewWithPayloadInclude("file_path", "file_hash"),
+	}, func(point *qdrant.RetrievedPoint) {
+		doc.ChunkIDs = append(doc.ChunkIDs, point.GetId().String())
 		if doc.Hash == "" {
 			// Older points have no file_hash; keep Hash empty so the hash
 			// comparison requests re-indexing rather than using a chunk hash.
 			doc.Hash = point.GetPayload()["file_hash"].GetStringValue()
 		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get document: %w", err)
 	}
-
+	if len(doc.ChunkIDs) == 0 {
+		return nil, nil
+	}
 	return doc, nil
 }
 
@@ -375,27 +393,23 @@ func (s *QdrantStore) DeleteDocument(ctx context.Context, filePath string) error
 }
 
 func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
-		CollectionName: s.collectionName,
-		Limit:          qdrant.PtrOf(uint32(1000)),
-		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list documents: %w", err)
-	}
-
 	pathsMap := make(map[string]bool)
-	for _, point := range scrollResult {
+	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
+	}, func(point *qdrant.RetrievedPoint) {
 		if val, ok := point.Payload["file_path"]; ok {
 			pathsMap[val.GetStringValue()] = true
 		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list documents: %w", err)
 	}
 
 	paths := make([]string, 0, len(pathsMap))
 	for path := range pathsMap {
 		paths = append(paths, path)
 	}
-
 	return paths, nil
 }
 
@@ -422,108 +436,90 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 		return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
 	}
 
-	stats := &IndexStats{
-		TotalFiles:  0,
-		TotalChunks: int(pointsCount),
-		IndexSize:   0,
-		LastUpdated: time.Now(),
+	files, err := s.ListFilesWithStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var lastUpdated time.Time
+	for _, f := range files {
+		if f.ModTime.After(lastUpdated) {
+			lastUpdated = f.ModTime
+		}
 	}
 
-	return stats, nil
+	return &IndexStats{
+		TotalFiles:  len(files),
+		TotalChunks: int(pointsCount),
+		IndexSize:   0, // not exposed by Qdrant
+		LastUpdated: lastUpdated,
+	}, nil
 }
 
 func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	fileStats := make(map[string]*FileStats)
+	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Limit:          qdrant.PtrOf(uint32(10000)),
-		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line"),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "updated_at"),
+	}, func(point *qdrant.RetrievedPoint) {
+		filePath := point.Payload["file_path"].GetStringValue()
+		if filePath == "" {
+			return
+		}
+		stat, exists := fileStats[filePath]
+		if !exists {
+			stat = &FileStats{Path: filePath}
+			fileStats[filePath] = stat
+		}
+		stat.ChunkCount++
+		// Last update of the file = most recent chunk write.
+		if t, err := time.Parse(time.RFC3339, point.Payload["updated_at"].GetStringValue()); err == nil && t.After(stat.ModTime) {
+			stat.ModTime = t
+		}
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
-	}
-
-	fileStats := make(map[string]*FileStats)
-	for _, point := range scrollResult {
-		filePath := ""
-		if val, ok := point.Payload["file_path"]; ok {
-			filePath = val.GetStringValue()
-		}
-
-		if filePath == "" {
-			continue
-		}
-
-		if _, exists := fileStats[filePath]; !exists {
-			fileStats[filePath] = &FileStats{
-				Path:       filePath,
-				ChunkCount: 0,
-				ModTime:    time.Now(),
-			}
-		}
-		fileStats[filePath].ChunkCount++
 	}
 
 	result := make([]FileStats, 0, len(fileStats))
 	for _, stat := range fileStats {
 		result = append(result, *stat)
 	}
-
 	return result, nil
 }
 
 func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]Chunk, error) {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
-
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	var chunks []Chunk
+	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Filter:         filter,
-		Limit:          qdrant.PtrOf(uint32(10000)),
-		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
-		WithVectors:    qdrant.NewWithVectors(true),
+		Filter: &qdrant.Filter{
+			Must: []*qdrant.Condition{qdrant.NewMatch("file_path", filePath)},
+		},
+		WithPayload: qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
+		WithVectors: qdrant.NewWithVectors(true),
+	}, func(point *qdrant.RetrievedPoint) {
+		chunk := s.parseChunkPayload(point.Payload)
+		chunk.Vector = pointVector(point)
+		chunks = append(chunks, *chunk)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chunks: %w", err)
 	}
-
-	chunks := make([]Chunk, 0, len(scrollResult))
-	for _, point := range scrollResult {
-		chunk := s.parseChunkPayload(point.Payload)
-		if point.Vectors != nil && point.Vectors.GetVector() != nil {
-			if dense := point.Vectors.GetVector().GetDense(); dense != nil {
-				chunk.Vector = dense.GetData()
-			}
-		}
-		chunks = append(chunks, *chunk)
-	}
-
 	return chunks, nil
 }
 
 func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	var chunks []Chunk
+	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Limit:          qdrant.PtrOf(uint32(100000)),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
+	}, func(point *qdrant.RetrievedPoint) {
+		chunk := s.parseChunkPayload(point.Payload)
+		chunk.Vector = pointVector(point)
+		chunks = append(chunks, *chunk)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all chunks: %w", err)
 	}
-
-	chunks := make([]Chunk, 0, len(scrollResult))
-	for _, point := range scrollResult {
-		chunk := s.parseChunkPayload(point.Payload)
-		if point.Vectors != nil && point.Vectors.GetVector() != nil {
-			if dense := point.Vectors.GetVector().GetDense(); dense != nil {
-				chunk.Vector = dense.GetData()
-			}
-		}
-		chunks = append(chunks, *chunk)
-	}
-
 	return chunks, nil
 }
 

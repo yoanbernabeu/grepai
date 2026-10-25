@@ -1980,11 +1980,15 @@ func (s *Server) handleIndexStatus(ctx context.Context, request mcp.CallToolRequ
 		symbolStore.Close()
 	}
 
+	lastUpdated := "never"
+	if !stats.LastUpdated.IsZero() {
+		lastUpdated = stats.LastUpdated.Format("2006-01-02 15:04:05")
+	}
 	status := IndexStatus{
 		TotalFiles:   stats.TotalFiles,
 		TotalChunks:  stats.TotalChunks,
 		IndexSize:    formatBytes(stats.IndexSize),
-		LastUpdated:  stats.LastUpdated.Format("2006-01-02 15:04:05"),
+		LastUpdated:  lastUpdated,
 		Provider:     cfg.Embedder.Provider,
 		Model:        cfg.Embedder.Model,
 		SymbolsReady: symbolsReady,
