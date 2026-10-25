@@ -2347,6 +2347,26 @@ func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtr
 }
 
 func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
+	// A watched directory was deleted or moved out: remove every indexed file
+	// under it, through the regular per-file delete path (#310).
+	if event.Dir && (event.Type == watcher.EventDelete || event.Type == watcher.EventRename) {
+		docs, err := idx.DocumentsUnder(ctx, event.Path)
+		if err != nil {
+			log.Printf("Failed to list indexed files under %s: %v", event.Path, err)
+			return
+		}
+		for _, doc := range docs {
+			if _, err := os.Stat(filepath.Join(projectRoot, doc)); err == nil {
+				continue // still on disk (the directory came back): keep it
+			}
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, rpgEncoder, vectorStore, enabledLanguages, projectRoot, cfg, rpgManager, watcher.FileEvent{Type: watcher.EventDelete, Path: doc}, onActivity, onStats, processors...)
+		}
+		if len(docs) > 0 {
+			log.Printf("Removed %d indexed files under %s", len(docs), event.Path)
+		}
+		return
+	}
+
 	// An atomic write -- write to a temp file, then rename it over the target
 	// -- surfaces on the destination path as RENAME/REMOVE with no follow-up
 	// CREATE or WRITE. Editors and coding agents (Claude Code, Cursor) save

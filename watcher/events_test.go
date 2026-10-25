@@ -312,3 +312,72 @@ func TestEventPathsAreSlashSeparated(t *testing.T) {
 		t.Fatal("timed out waiting for the delete event")
 	}
 }
+
+// Removing a watched directory emits one directory event (#310).
+func TestRemovedWatchedDirectoryEmitsDirEvent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pkg", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := newTestWatcher(t, root)
+	events := make(chan fsnotify.Event)
+	w.backendEvents, w.backendErrors = events, make(chan error)
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	events <- fsnotify.Event{Name: filepath.Join(root, "pkg"), Op: fsnotify.Remove}
+	select {
+	case ev := <-w.Events():
+		if !ev.Dir || ev.Path != "pkg" || ev.Type != EventDelete {
+			t.Fatalf("event = %+v, want a directory delete of pkg", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the directory event")
+	}
+	if w.forgetWatchedDir("pkg/inner") {
+		t.Fatal("subdirectories of a removed directory must be forgotten too")
+	}
+}
+
+// A directory moved into the project produces create events for the
+// supported files it already holds (#310).
+func TestNewDirectoryEmitsCreateForExistingFiles(t *testing.T) {
+	root := t.TempDir()
+	w := newTestWatcher(t, root)
+	events := make(chan fsnotify.Event)
+	w.backendEvents, w.backendErrors = events, make(chan error)
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	moved := filepath.Join(root, "imported")
+	if err := os.MkdirAll(filepath.Join(moved, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.go", "sub/b.py", "notes.bin"} {
+		if err := os.WriteFile(filepath.Join(moved, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events <- fsnotify.Event{Name: moved, Op: fsnotify.Create}
+
+	got := map[string]bool{}
+	timeout := time.After(5 * time.Second)
+	for len(got) < 2 {
+		select {
+		case ev := <-w.Events():
+			if ev.Type != EventCreate {
+				t.Fatalf("unexpected event %+v", ev)
+			}
+			got[ev.Path] = true
+		case <-timeout:
+			t.Fatalf("timed out; got %v", got)
+		}
+	}
+	if !got["imported/a.go"] || !got["imported/sub/b.py"] {
+		t.Fatalf("missing create events: %v", got)
+	}
+}

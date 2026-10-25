@@ -76,6 +76,18 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 		return nil
 	}
 
+	// A watched directory was deleted or moved out: everything indexed under
+	// it is gone from this location (#310). The directory cannot be checked
+	// any more, so the watched set says whether this path was one.
+	if (event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) && w.forgetWatchedDir(relPath) {
+		evType := EventDelete
+		if event.Has(fsnotify.Rename) {
+			evType = EventRename
+		}
+		w.debounceEvent(FileEvent{Type: evType, Path: relPath, Dir: true})
+		return nil
+	}
+
 	if event.Has(fsnotify.Create) {
 		info, err := w.statPath(event.Name)
 		if err != nil {
@@ -85,7 +97,12 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 			return &FatalError{Operation: "stat created path", Path: event.Name, Cause: err}
 		}
 		if info.IsDir() {
-			if err := w.addRecursive(event.Name, false); err != nil {
+			// Watch the new directory and index the files it already holds:
+			// a folder moved into the project brings files that produce no
+			// event of their own (#310).
+			if err := w.addRecursive(event.Name, false, func(fileRel string) {
+				w.debounceEvent(FileEvent{Type: EventCreate, Path: fileRel})
+			}); err != nil {
 				return &FatalError{Operation: "register new directory", Path: event.Name, Cause: err}
 			}
 			return nil

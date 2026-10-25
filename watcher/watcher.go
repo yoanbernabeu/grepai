@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,9 @@ const (
 type FileEvent struct {
 	Type EventType
 	Path string
+	// Dir is set on a delete or rename of a watched directory: every indexed
+	// file under Path is gone from that location.
+	Dir bool
 }
 
 type Watcher struct {
@@ -49,6 +53,12 @@ type Watcher struct {
 
 	processingDone chan struct{}
 
+	// watchedDirs holds the slash-separated relative paths of the watched
+	// directories, so the removal of a directory can be told apart from the
+	// removal of a file that no longer exists to be checked.
+	watchedDirs   map[string]bool
+	watchedDirsMu sync.Mutex
+
 	// Debouncing state
 	pending   map[string]FileEvent
 	pendingMu sync.Mutex
@@ -65,14 +75,15 @@ func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Wa
 	}
 
 	w := &Watcher{
-		root:       root,
-		watcher:    fsw,
-		ignore:     ignore,
-		debounceMs: debounceMs,
-		events:     make(chan FileEvent, 100),
-		errors:     make(chan error, 1),
-		done:       make(chan struct{}),
-		pending:    make(map[string]FileEvent),
+		root:        root,
+		watcher:     fsw,
+		ignore:      ignore,
+		debounceMs:  debounceMs,
+		events:      make(chan FileEvent, 100),
+		errors:      make(chan error, 1),
+		done:        make(chan struct{}),
+		pending:     make(map[string]FileEvent),
+		watchedDirs: make(map[string]bool),
 	}
 	w.addWatch = fsw.Add
 	w.statPath = os.Stat
@@ -84,7 +95,7 @@ func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Wa
 
 func (w *Watcher) Start(ctx context.Context) error {
 	// Add root directory and all subdirectories
-	if err := w.addRecursive(w.root, true); err != nil {
+	if err := w.addRecursive(w.root, true, nil); err != nil {
 		w.Abort()
 		return err
 	}
@@ -165,7 +176,7 @@ func (w *Watcher) stopped() bool {
 // 100k+ files this roughly halves the syscall count of the initial/restart
 // tree walk, which matters because watch startup blocks on this before it
 // starts serving fsnotify events.
-func (w *Watcher) addRecursive(root string, rootRequired bool) error {
+func (w *Watcher) addRecursive(root string, rootRequired bool, onFile func(relPath string)) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) && (!rootRequired || path != root) {
@@ -178,6 +189,7 @@ func (w *Watcher) addRecursive(root string, rootRequired bool) error {
 		if err != nil {
 			return &RegistrationError{Operation: "resolve watch path", Path: path, Cause: err}
 		}
+		relPath = filepath.ToSlash(relPath)
 
 		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
 		if d.IsDir() {
@@ -192,15 +204,37 @@ func (w *Watcher) addRecursive(root string, rootRequired bool) error {
 					}
 					return &RegistrationError{Operation: "add watch", Path: path, Cause: err}
 				}
+				w.watchedDirsMu.Lock()
+				w.watchedDirs[relPath] = true
+				w.watchedDirsMu.Unlock()
 			}
 			return nil
 		}
 
 		// Skip ignored files
-		if w.ignore.ShouldIgnore(relPath) {
+		if w.ignore.ShouldIgnore(relPath) || strings.HasPrefix(filepath.Base(relPath), ".") {
 			return nil
 		}
-
+		if onFile != nil && indexer.SupportedExtensions[strings.ToLower(filepath.Ext(relPath))] {
+			onFile(relPath)
+		}
 		return nil
 	})
+}
+
+// forgetWatchedDir reports whether relPath was a watched directory and drops
+// it and its subdirectories from the set.
+func (w *Watcher) forgetWatchedDir(relPath string) bool {
+	w.watchedDirsMu.Lock()
+	defer w.watchedDirsMu.Unlock()
+	if relPath == "" || relPath == "." || !w.watchedDirs[relPath] {
+		return false
+	}
+	prefix := relPath + "/"
+	for dir := range w.watchedDirs {
+		if dir == relPath || strings.HasPrefix(dir, prefix) {
+			delete(w.watchedDirs, dir)
+		}
+	}
+	return true
 }

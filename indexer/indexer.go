@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -849,6 +851,24 @@ func (idx *Indexer) RemoveFile(ctx context.Context, path string) error {
 	}
 
 	return nil
+}
+
+// DocumentsUnder returns the indexed files located under dir (a
+// slash-separated path relative to the project root).
+func (idx *Indexer) DocumentsUnder(ctx context.Context, dir string) ([]string, error) {
+	docs, err := idx.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var under []string
+	for _, doc := range docs {
+		if strings.HasPrefix(doc, prefix) {
+			under = append(under, doc)
+		}
+	}
+	sort.Strings(under)
+	return under, nil
 }
 
 // NeedsReindex checks if a file needs reindexing
