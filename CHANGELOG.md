@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GDScript in Trace**: `grepai trace` now extracts GDScript (`.gd`) functions and calls, including functions with annotations on the same line (#296, from #297) - @tadki
+- **Ruby in Trace**: `grepai trace` now extracts Ruby methods (`def` and `def self.`, including names ending in `?`, `!` or `=`), classes and modules, and their calls. New configs trace `.rb` by default (#128)
+- **MCP in `agent-setup`**: the instructions written by `grepai agent-setup` now tell agents to prefer the grepai MCP tools when they are available and to use the CLI otherwise. Files that already have a grepai section are left unchanged (#168)
+
+### Performance
+
+- **Fewer Embeddings When a File Changes**: Re-indexing a modified file deleted its chunks before the embedding cache lookup, so every edit re-embedded the whole file. Unchanged chunks now reuse their vectors: a one-line edit to a 27-chunk file embeds 1 chunk instead of 27 (from #342) - @wwylon
+
 ### Fixed
 
 - **Stats Never Recorded From the CLI**: `grepai search` and `grepai trace` wrote their stats entry from a fire-and-forget goroutine, so the process usually exited before the write and `grepai stats` stayed empty for CLI usage. The command now waits for the write, bounded to 500ms.
@@ -25,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Missing Workspace Project**: The workspace watcher refused to start when one project folder was missing; it now skips it with a warning (#127)
 - **`.grepai` Showing in Git**: `grepai init` only updated an existing `.gitignore`; without one it now writes `.grepai/.gitignore` (#186)
 - **Windows Deletes Missed by the Watcher**: File event paths now use forward slashes like indexed paths, so deletes and renames are applied on Windows
+- **Folders Moved or Deleted While Watching**: Moving or deleting a folder left all its files in search results, and a folder moved into the project was not indexed until each file changed. The watcher now removes the files of a folder that goes away and indexes the files of a folder that appears (#310)
+- **Invalid Workspace Project Config**: A project whose `.grepai/config.yaml` could not be parsed was indexed with the default settings, and the next save overwrote the user's file. It is now an error that names the file, and the file is left untouched (#312)
+- **RPG MCP Tools in Workspaces**: `grepai_rpg_search`, `grepai_rpg_fetch` and `grepai_rpg_explore` now accept `workspace` and `project` like the other MCP tools, instead of reporting RPG as disabled (#296)
+- **Qdrant Connection Errors**: A Qdrant server that is down or unreachable now reports the address and how to start it, instead of a raw gRPC error (#177)
 
 ### Removed
 
