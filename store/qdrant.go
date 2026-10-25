@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // sanitizeUTF8 ensures the string contains only valid UTF-8 characters.
@@ -26,6 +28,7 @@ type QdrantStore struct {
 	collectionName string
 	dimensions     int
 	apiKey         string
+	address        string // host:port, for error messages
 }
 
 func parseHost(endpoint string) string {
@@ -68,6 +71,7 @@ func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool,
 		collectionName: collection,
 		dimensions:     dimensions,
 		apiKey:         apiKey,
+		address:        fmt.Sprintf("%s:%d", host, port),
 	}
 
 	if err := store.ensureCollection(ctx); err != nil {
@@ -77,10 +81,23 @@ func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool,
 	return store, nil
 }
 
+// connectionError explains the most common cause of a failed first call:
+// Qdrant not running, or grepai pointed at the REST port instead of gRPC (#177).
+func (s *QdrantStore) connectionError(err error) error {
+	hint := ""
+	switch {
+	case strings.Contains(err.Error(), "HTTP/1.1"):
+		hint = "\nThe server answered with HTTP/1.1: grepai talks to Qdrant over gRPC, so use the gRPC port (6334 by default), not the REST port (6333)."
+	case status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded:
+		hint = "\nIs Qdrant running? Start it with: docker run -p 6334:6334 qdrant/qdrant\nOtherwise check store.qdrant.endpoint and store.qdrant.port in .grepai/config.yaml."
+	}
+	return fmt.Errorf("cannot reach Qdrant at %s: %w%s", s.address, err, hint)
+}
+
 func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 	exists, err := s.client.CollectionExists(ctx, s.collectionName)
 	if err != nil {
-		return fmt.Errorf("failed to check collection existence: %w", err)
+		return s.connectionError(err)
 	}
 
 	if !exists {

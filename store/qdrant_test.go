@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -654,5 +655,19 @@ func TestQdrantStore_ConfigurationVariants(t *testing.T) {
 				t.Errorf("expected apiKey %s, got %s", tt.apiKey, store.apiKey)
 			}
 		})
+	}
+}
+
+func TestQdrantConnectionErrorHints(t *testing.T) {
+	s := &QdrantStore{address: "localhost:6334"}
+
+	down := s.connectionError(status.Error(codes.Unavailable, "connection refused"))
+	if !strings.Contains(down.Error(), "localhost:6334") || !strings.Contains(down.Error(), "Is Qdrant running?") {
+		t.Errorf("unavailable error lacks the address or the hint: %v", down)
+	}
+
+	rest := s.connectionError(errors.New(`frame header looked like HTTP/1.1 header`))
+	if !strings.Contains(rest.Error(), "gRPC port") {
+		t.Errorf("REST-port error lacks the port hint: %v", rest)
 	}
 }
