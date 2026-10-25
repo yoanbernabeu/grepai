@@ -59,7 +59,7 @@ The server registers 14 tools.
 
 - `format`: `json` (default) or `toon`. Any other value returns an error.
 - `compact`: omit code content (search) or call-site context (trace, refs) to save tokens.
-- `path` (search only): keep results whose path starts with this prefix. With `projects`, the prefix is relative to each project root, not the workspace root.
+- `path` (search only): keep results whose path starts with this prefix. Without a workspace, or with exactly one project in `projects`, it is relative to the project root (`src/`). Otherwise it must start with the project name (`api/src`), like `grepai search --workspace --path`.
 - `workspace`: run against a [workspace](/grepai/workspace/) instead of the local project. Use `grepai_list_workspaces` to find names.
 - `projects` (search) and `project` (trace, refs): limit a workspace query to some projects. `projects` is a comma-separated list. Both require `workspace`.
 - `root`: absolute path of a project directory. The tool loads that project's config and index instead of the one the server started in, so one server can serve several projects without a restart. You cannot pass both `root` and `workspace`.

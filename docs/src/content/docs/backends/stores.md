@@ -109,14 +109,12 @@ grepai does not read the DSN from an environment variable, and it does not expan
 
 ### Re-indexing After a Model Change
 
-After changing the embedding model, delete the project's rows so grepai rebuilds them. Use the project's absolute path:
+grepai detects an embedding model change and rebuilds the project's rows on the next `grepai index` or `grepai watch` (see [Re-indexing After Model Change](/grepai/backends/embedders/#re-indexing-after-model-change)). To clear a project by hand anyway, use its absolute path:
 
 ```sql
 DELETE FROM chunks    WHERE project_id = '/absolute/path/to/project';
 DELETE FROM documents WHERE project_id = '/absolute/path/to/project';
 ```
-
-Then run `grepai index` or `grepai watch`.
 
 ## Qdrant
 

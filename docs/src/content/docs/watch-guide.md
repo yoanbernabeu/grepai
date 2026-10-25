@@ -247,7 +247,7 @@ Use 'grepai watch --status' to check status
 Use 'grepai watch --stop' to stop the watcher
 ```
 
-The command returns only after the background process is ready: embedder reachable, initial scan done and every directory watched. If it is not ready within 30 seconds, or exits early, the command fails and points to the log file.
+The command waits up to 30 seconds (60 for a workspace) for the background process to finish its initial scan and watch every directory. If the startup checks passed (config, embedder, store) but the initial index takes longer, the command returns with `initial indexing still in progress` and the watcher keeps running: follow it with `grepai watch --status` or the log file. The command fails, and points to the log file, only if the process exits early or never gets through its startup checks.
 
 Inside a git repository, the log, PID and ready files are named after the worktree ID (`grepai-worktree-<id>.*`), so each worktree can have its own daemon. Outside git, they are named `grepai-watch.*`.
 

@@ -371,17 +371,19 @@ curl -s http://127.0.0.1:1234/v1/embeddings \
 
 ### Re-indexing After Model Change
 
-Vectors from different models are not compatible, and grepai does not detect a model change on its own. After changing `provider`, `model` or `dimensions`, clear the index and build it again.
+Vectors from different models are not compatible. grepai records which embedder built each index (provider, model and dimensions, in `.grepai/index-meta.json`; the endpoint is not part of it), so changing one of them is detected:
 
-With the default GOB store:
+- `grepai search` (CLI and MCP) refuses to run on the old index and tells you to rebuild it.
+- `grepai index` and `grepai watch` remove the project's old vectors and re-embed every file.
+
+So after changing `provider`, `model` or `dimensions`, run:
 
 ```bash
 grepai watch --stop          # if a background watcher is running
-rm .grepai/index.gob
 grepai index                 # or: grepai watch
 ```
 
-For PostgreSQL and Qdrant, see [Vector Stores](/grepai/backends/stores/).
+An index built by a version older than this check has no metadata file: it is adopted as is the first time it is indexed again.
 
 ## Adding a New Embedder
 

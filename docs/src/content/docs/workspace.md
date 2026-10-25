@@ -373,7 +373,7 @@ grepai workspace show my-workspace
 grepai workspace status my-workspace
 ```
 
-Remove the stale project with `grepai workspace remove` and add it again from its new location.
+`grepai watch --workspace` skips such a project with a warning (`skipping project <name>, its path does not exist`) and watches the others; it fails only when no project folder exists. Remove the stale project with `grepai workspace remove` and add it again from its new location.
 
 ### Background watcher not starting
 
