@@ -142,8 +142,12 @@ Each project keeps its own symbol index in `<project>/.grepai/symbols.gob`, what
 | C# | `.cs` |
 | F# | `.fs`, `.fsx`, `.fsi` |
 | Pascal/Delphi | `.pas`, `.dpr` |
+| Ruby | `.rb` (see note below) |
+| GDScript | `.gd` |
 
 Extracted symbol kinds are functions, methods, classes, interfaces and types.
+
+> **Note:** in Ruby, method calls (`receiver.method`) are found with or without parentheses, but a bare function call without parentheses (`route 'GET', path`) is not, because it cannot be told apart from a variable with regular expressions.
 
 > **Note:** `.vue` files go through the Vue framework processor (`framework.frameworks.vue.enabled`, on by default). It converts the script and template to TypeScript, then extracts symbols and references with the TypeScript rules. Full compilation needs Node.js and `@vue/compiler-sfc` installed in the Vue project. Without them, grepai logs a warning and falls back to the `<script>` blocks.
 

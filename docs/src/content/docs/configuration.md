@@ -106,7 +106,7 @@ trace:
     - .go
     - .js
     - .ts
-    # ... .jsx .tsx .vue .py .php .lua .c .h .cpp .hpp .cc .cxx .hxx
+    # ... .jsx .tsx .vue .py .php .lua .gd .rb .c .h .cpp .hpp .cc .cxx .hxx
     #     .rs .zig .cs .java .fs .fsx .fsi .pas .dpr
 
 rpg:

@@ -36,6 +36,7 @@ func TestRegexExtractor_SupportedLanguages(t *testing.T) {
 		".fsx":  true,
 		".fsi":  true,
 		".gd":   true,
+		".rb":   true,
 	}
 
 	for _, lang := range langs {

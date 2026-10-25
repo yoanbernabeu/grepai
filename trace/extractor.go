@@ -692,14 +692,16 @@ func buildIgnoredMask(content string, lang string) []bool {
 			}
 		}
 
-		if lang == "python" || lang == "gdscript" {
+		if lang == "python" || lang == "gdscript" || lang == "ruby" {
 			// "#" starts a comment; "//" is not a comment in Python (floor
-			// division) nor in GDScript.
+			// division), GDScript or Ruby.
 			if ch == '#' {
 				mask[i] = true
 				state = stateLineComment
 				continue
 			}
+		}
+		if lang == "python" || lang == "gdscript" {
 			if (ch == '\'' || ch == '"') && i+2 < len(content) && content[i+1] == ch && content[i+2] == ch {
 				mask[i] = true
 				mask[i+1] = true
@@ -714,14 +716,14 @@ func buildIgnoredMask(content string, lang string) []bool {
 			}
 		}
 
-		if lang != "python" && lang != "gdscript" && ch == '/' && next == '/' {
+		if lang != "python" && lang != "gdscript" && lang != "ruby" && ch == '/' && next == '/' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
 			state = stateLineComment
 			continue
 		}
-		if lang != "python" && lang != "gdscript" && ch == '/' && next == '*' {
+		if lang != "python" && lang != "gdscript" && lang != "ruby" && ch == '/' && next == '*' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
@@ -928,8 +930,10 @@ func findFunctionEnd(content string, start int, lang string) int {
 				}
 			}
 		}
-	case "python", "gdscript":
-		// Python and GDScript use indentation - find next line with same or less indentation
+	case "python", "gdscript", "ruby":
+		// Python and GDScript use indentation, and Ruby closes a def with an
+		// "end" at the def's indentation: find the next line with the same or
+		// less indentation.
 		startLine := countLines(content[:start])
 		lines := strings.Split(content, "\n")
 		if startLine >= len(lines) {

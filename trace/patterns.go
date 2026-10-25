@@ -56,6 +56,7 @@ var languagePatterns = map[string]*LanguagePatterns{
 	".fsx":  fsharpPatterns,
 	".fsi":  fsharpPatterns,
 	".gd":   gdscriptPatterns,
+	".rb":   rubyPatterns,
 }
 
 // Go patterns
@@ -182,6 +183,32 @@ var pythonPatterns = &LanguagePatterns{
 	MethodCall:   regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
 }
 
+// Ruby patterns. Method names may end with ?, ! or = (setters). Calls
+// without parentheses are common, so method calls (receiver.method) match
+// with or without them; bare function calls need parentheses.
+var rubyPatterns = &LanguagePatterns{
+	Extension: ".rb",
+	Language:  "ruby",
+	Functions: []*regexp.Regexp{
+		// def name / def self.name at top level
+		regexp.MustCompile(`(?m)^def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)`),
+	},
+	Methods: []*regexp.Regexp{
+		// def name / def self.name inside a class or module (indented)
+		regexp.MustCompile(`(?m)^[ \t]+def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)`),
+	},
+	Classes: []*regexp.Regexp{
+		// class Name, class Name < Base, class Outer::Name
+		regexp.MustCompile(`(?m)^[ \t]*class\s+(?:[A-Z][A-Za-z0-9_]*::)*([A-Z][A-Za-z0-9_]*)`),
+	},
+	Types: []*regexp.Regexp{
+		// module Name
+		regexp.MustCompile(`(?m)^[ \t]*module\s+(?:[A-Z][A-Za-z0-9_]*::)*([A-Z][A-Za-z0-9_]*)`),
+	},
+	FunctionCall: regexp.MustCompile(`\b([a-z_][A-Za-z0-9_]*[?!]?)\s*\(`),
+	MethodCall:   regexp.MustCompile(`\.([a-z_][A-Za-z0-9_]*[?!]?)`),
+}
+
 // PHP patterns
 var phpPatterns = &LanguagePatterns{
 	Extension: ".php",
@@ -294,6 +321,17 @@ var languageKeywords = map[string]map[string]bool{
 		"and": true, "or": true, "is": true, "import": true, "from": true,
 		"lambda": true, "del": true, "await": true, "async": true, "def": true,
 		"class": true, "try": true, "finally": true, "global": true, "nonlocal": true,
+	},
+	"ruby": {
+		"if": true, "unless": true, "elsif": true, "else": true, "while": true,
+		"until": true, "for": true, "in": true, "case": true, "when": true,
+		"return": true, "yield": true, "raise": true, "def": true, "class": true,
+		"module": true, "end": true, "do": true, "begin": true, "rescue": true,
+		"ensure": true, "not": true, "and": true, "or": true, "defined?": true,
+		"super": true, "self": true, "lambda": true, "proc": true, "loop": true,
+		"puts": true, "print": true, "p": true, "require": true, "require_relative": true,
+		"include": true, "extend": true, "attr_accessor": true, "attr_reader": true,
+		"attr_writer": true, "private": true, "protected": true, "public": true,
 	},
 	"gdscript": {
 		"if": true, "elif": true, "else": true, "for": true, "while": true,
