@@ -32,15 +32,18 @@ var initCmd = &cobra.Command{
 
 This command will:
 - Create .grepai/config.yaml with default settings
-- Prompt for embedding provider (Ollama or OpenAI)
-- Prompt for storage backend (GOB file or PostgreSQL)
-- Add .grepai/ to .gitignore if present`,
+- Prompt for the embedding provider (ollama, lmstudio, openai, synthetic,
+  openrouter or requesty) and the storage backend (gob, postgres or qdrant)
+- Add .grepai/ to .gitignore if present
+
+Use --provider, --model and --backend to skip those prompts, or --yes to
+accept the defaults (ollama with nomic-embed-text, gob).`,
 	RunE: runInit,
 }
 
 func init() {
 	initCmd.Flags().StringVarP(&initProvider, "provider", "p", "", "Embedding provider (ollama, lmstudio, openai, synthetic, openrouter, or requesty)")
-	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (for openai/openrouter/requesty: text-embedding-3-small, text-embedding-3-large; openrouter also supports qwen3-embedding-8b)")
+	initCmd.Flags().StringVarP(&initModel, "model", "m", "", "Embedding model (default depends on the provider: nomic-embed-text for ollama, text-embedding-3-small for openai; openrouter also accepts text-embedding-3-large and qwen3-embedding-8b)")
 	initCmd.Flags().StringVarP(&initBackend, "backend", "b", "", "Storage backend (gob, postgres, or qdrant)")
 	initCmd.Flags().BoolVar(&initNonInteractive, "yes", false, "Use defaults without prompting")
 	initCmd.Flags().BoolVar(&initInherit, "inherit", false, "Inherit configuration from main worktree (for git worktrees)")
@@ -195,8 +198,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			cfg.Embedder.Provider = initProvider
 			switch initProvider {
+			case "ollama":
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 			case "lmstudio":
-				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
@@ -206,7 +211,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
 				// OpenAI: leave Dimensions nil to use model's native dimensions
 			case "synthetic":
-				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
 				dim := 768
 				cfg.Embedder.Dimensions = &dim
@@ -278,7 +283,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Store.Backend = "gob"
 			}
 		} else {
-			cfg.Store.Backend = initBackend
+			cfg.Store = config.DefaultStoreForBackend(initBackend)
 		}
 	} else if !skipPrompts {
 		// Non-interactive with flags
@@ -286,8 +291,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 			cfg.Embedder.Provider = initProvider
 			// Apply provider-specific settings
 			switch initProvider {
+			case "ollama":
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 			case "lmstudio":
-				cfg.Embedder.Model = "text-embedding-nomic-embed-text-v1.5"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "http://127.0.0.1:1234"
 				dim := lmStudioEmbeddingDimensions
 				cfg.Embedder.Dimensions = &dim
@@ -297,7 +304,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				cfg.Embedder.Dimensions = nil
 				cfg.Embedder.Parallelism = config.DefaultOpenAIParallelism
 			case "synthetic":
-				cfg.Embedder.Model = "hf:nomic-ai/nomic-embed-text-v1.5"
+				cfg.Embedder.Model = resolveInitModel(initProvider, initModel)
 				cfg.Embedder.Endpoint = "https://api.synthetic.new/openai/v1"
 				dim := 768
 				cfg.Embedder.Dimensions = &dim
@@ -312,7 +319,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if initBackend != "" {
-			cfg.Store.Backend = initBackend
+			cfg.Store = config.DefaultStoreForBackend(initBackend)
 		}
 	}
 
@@ -340,8 +347,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	switch cfg.Embedder.Provider {
 	case "ollama":
-		fmt.Println("\nMake sure Ollama is running with the nomic-embed-text model:")
-		fmt.Println("  ollama pull nomic-embed-text")
+		fmt.Printf("\nMake sure Ollama is running with the %s model:\n", cfg.Embedder.Model)
+		fmt.Printf("  ollama pull %s\n", cfg.Embedder.Model)
 	case "lmstudio":
 		fmt.Println("\nMake sure LM Studio is running with an embedding model loaded.")
 		fmt.Printf("  Model: %s\n", cfg.Embedder.Model)
@@ -357,6 +364,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	case "requesty":
 		fmt.Println("\nMake sure REQUESTY_API_KEY or OPENAI_API_KEY is set in your environment.")
 		fmt.Println("  Get your API key at: https://app.requesty.ai/api-keys")
+	}
+
+	switch cfg.Embedder.Provider {
+	case "ollama", "lmstudio", "synthetic":
+		if cfg.Embedder.Model != localDefaultModel(cfg.Embedder.Provider) {
+			fmt.Printf("\nNote: embedder.dimensions is %d. If %s produces vectors of another size,\n", cfg.Embedder.GetDimensions(), cfg.Embedder.Model)
+			fmt.Printf("set embedder.dimensions in %s before indexing.\n", config.GetConfigPath(cwd))
+		}
 	}
 
 	return nil
@@ -390,7 +405,25 @@ func resolveInitModel(provider, requestedModel string) string {
 			return requestedModel
 		}
 		return config.DefaultRequestyEmbeddingModel
+	case "ollama", "lmstudio", "synthetic":
+		if requestedModel != "" {
+			return requestedModel
+		}
+		return localDefaultModel(provider)
 	default:
 		return requestedModel
+	}
+}
+
+// localDefaultModel returns the default model of a provider that uses a
+// fixed 768-dimension default.
+func localDefaultModel(provider string) string {
+	switch provider {
+	case "lmstudio":
+		return config.DefaultLMStudioEmbeddingModel
+	case "synthetic":
+		return config.DefaultSyntheticEmbeddingModel
+	default:
+		return config.DefaultOllamaEmbeddingModel
 	}
 }

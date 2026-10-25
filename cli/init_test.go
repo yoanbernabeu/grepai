@@ -95,3 +95,20 @@ func TestRunInit_OpenAIDefaultsToOpenAISmallModel(t *testing.T) {
 		t.Fatalf("parallelism = %d, want %d", cfg.Embedder.Parallelism, config.DefaultOpenAIParallelism)
 	}
 }
+
+func TestResolveInitModel_LocalProviders(t *testing.T) {
+	tests := []struct {
+		provider, requested, want string
+	}{
+		{"ollama", "", config.DefaultOllamaEmbeddingModel},
+		{"ollama", "mxbai-embed-large", "mxbai-embed-large"},
+		{"lmstudio", "", config.DefaultLMStudioEmbeddingModel},
+		{"lmstudio", "  custom-model  ", "custom-model"},
+		{"synthetic", "", config.DefaultSyntheticEmbeddingModel},
+	}
+	for _, tt := range tests {
+		if got := resolveInitModel(tt.provider, tt.requested); got != tt.want {
+			t.Errorf("resolveInitModel(%q, %q) = %q, want %q", tt.provider, tt.requested, got, tt.want)
+		}
+	}
+}
