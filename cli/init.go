@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -330,7 +331,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nCreated configuration at %s\n", config.GetConfigPath(cwd))
 
-	// Add .grepai/ to .gitignore
+	// Keep .grepai/ out of git: add it to the project's .gitignore, or, when
+	// there is none, ignore the directory from inside (#186).
 	gitignorePath := cwd + "/.gitignore"
 	if _, err := os.Stat(gitignorePath); err == nil {
 		if err := indexer.AddToGitignore(cwd, ".grepai/"); err != nil {
@@ -338,6 +340,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Println("Added .grepai/ to .gitignore")
 		}
+	} else if err := os.WriteFile(filepath.Join(config.GetConfigDir(cwd), ".gitignore"), []byte("*\n"), 0o600); err != nil {
+		fmt.Printf("Warning: could not create .grepai/.gitignore: %v\n", err)
+	} else {
+		fmt.Println("Created .grepai/.gitignore so the index stays out of git")
 	}
 
 	fmt.Println("\ngrepai initialized successfully!")
