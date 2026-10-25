@@ -222,6 +222,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	if err := config.CheckIndexMeta(config.GetIndexMetaPath(projectRoot), cfg.Embedder); err != nil {
+		return err
+	}
 
 	// Initialize embedder
 	emb, err := embedder.NewFromConfig(cfg)
@@ -552,6 +555,9 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathOpt, ws, projects)
 	if err != nil {
 		return fmt.Errorf("invalid --path value: %w", err)
+	}
+	if err := config.CheckWorkspaceIndexMeta(ws, resolvedProjects); err != nil {
+		return err
 	}
 
 	// Validate backend

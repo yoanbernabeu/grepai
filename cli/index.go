@@ -73,6 +73,11 @@ type projectIndexRuntime struct {
 	rpgStore        rpg.RPGStore
 	tracedLanguages []string
 	processor       *framework.ProcessorRegistry
+
+	// indexMetaPath records which embedder built the index (#139).
+	indexMetaPath string
+	embedderMeta  config.IndexMeta
+	saveIndexMeta bool
 }
 
 func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config.Config, emb embedder.Embedder, vectorStore store.VectorStore, extraExtensions []string) (*projectIndexRuntime, error) {
@@ -96,6 +101,8 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 	}
 
 	runtime := &projectIndexRuntime{
+		indexMetaPath:   config.GetIndexMetaPath(projectRoot),
+		embedderMeta:    config.EmbedderIndexMeta(cfg.Embedder),
 		projectRoot:     projectRoot,
 		cfg:             cfg,
 		vectorStore:     vectorStore,
@@ -146,7 +153,47 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 	return runtime, nil
 }
 
+// resetIndexIfEmbedderChanged compares the embedder that built the index with
+// the configured one. Vectors from another model or size are not comparable,
+// so when they differ the project's documents are removed and every file is
+// re-embedded by the scan that follows (#139). An index without metadata
+// (built by an older version) is adopted as is.
+func (runtime *projectIndexRuntime) resetIndexIfEmbedderChanged(ctx context.Context) error {
+	if runtime.indexMetaPath == "" {
+		return nil
+	}
+	meta, err := config.LoadIndexMeta(runtime.indexMetaPath)
+	if err != nil {
+		return err
+	}
+	if meta != nil && *meta == runtime.embedderMeta {
+		return nil
+	}
+	runtime.saveIndexMeta = true
+	if meta == nil {
+		return nil
+	}
+
+	log.Printf("Embedding model changed for %s: index built with %s, config uses %s. Rebuilding the index.", runtime.projectRoot, *meta, runtime.embedderMeta)
+	docs, err := runtime.vectorStore.ListDocuments(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list documents for rebuild: %w", err)
+	}
+	for _, path := range docs {
+		if err := runtime.vectorStore.DeleteByFile(ctx, path); err != nil {
+			return fmt.Errorf("failed to remove %s for rebuild: %w", path, err)
+		}
+		if err := runtime.vectorStore.DeleteDocument(ctx, path); err != nil {
+			return fmt.Errorf("failed to remove %s for rebuild: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), onRPG func(step string, current, total int), onStats watchStatsObserver) error {
+	if err := runtime.resetIndexIfEmbedderChanged(ctx); err != nil {
+		return err
+	}
 	existingDocuments, err := runtime.vectorStore.ListDocuments(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list indexed documents for %s: %w", runtime.projectRoot, err)
@@ -204,6 +251,13 @@ func (runtime *projectIndexRuntime) persistInitialIndex(ctx context.Context) err
 	// (#311). An RPG failure does not affect which files need re-indexing.
 	if len(errs) == 0 && runtime.cfg != nil {
 		persistLastIndexTime(runtime.projectRoot, runtime.cfg, runtime.cfg.Watch.LastIndexTime)
+	}
+	if len(errs) == 0 && runtime.saveIndexMeta {
+		if err := config.SaveIndexMeta(runtime.indexMetaPath, runtime.embedderMeta); err != nil {
+			errs = append(errs, err)
+		} else {
+			runtime.saveIndexMeta = false
+		}
 	}
 	if runtime.rpgStore != nil {
 		if err := runtime.rpgStore.Persist(ctx); err != nil {

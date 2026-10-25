@@ -3065,7 +3065,18 @@ func newWorkspaceProjectIndexRuntime(ctx context.Context, ws *config.Workspace, 
 		projectName:   project.Name,
 		projectPath:   project.Path,
 	}
-	return newProjectIndexRuntime(ctx, project.Path, projectCfg, emb, vectorStore, ws.Chunking.CustomExtensions)
+	runtime, err := newProjectIndexRuntime(ctx, project.Path, projectCfg, emb, vectorStore, ws.Chunking.CustomExtensions)
+	if err != nil {
+		return nil, err
+	}
+	// The workspace embedder, not the project config, builds this index.
+	runtime.embedderMeta = config.EmbedderIndexMeta(ws.Embedder)
+	runtime.indexMetaPath, err = config.GetWorkspaceIndexMetaPath(ws.Name, project.Name)
+	if err != nil {
+		_ = runtime.close()
+		return nil, err
+	}
+	return runtime, nil
 }
 
 func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, project config.ProjectEntry, emb embedder.Embedder, sharedStore store.VectorStore, isBackgroundChild bool) (*workspaceProjectRuntime, watchSource, error) {

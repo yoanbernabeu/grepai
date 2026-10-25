@@ -496,6 +496,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("failed to load configuration: %v", err)), nil
 	}
+	if err := config.CheckIndexMeta(config.GetIndexMetaPath(projectPathToUse), cfg.Embedder); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	// Initialize embedder
 	emb, err := s.createEmbedder(cfg)
@@ -624,6 +627,9 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 	}
 	if validationErr := validateWorkspacePathForProjects(normalizedPath, ws, resolvedProjects); validationErr != "" {
 		return mcp.NewToolResultError(validationErr), nil
+	}
+	if err := config.CheckWorkspaceIndexMeta(ws, resolvedProjects); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	// Validate backend
