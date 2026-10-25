@@ -262,6 +262,11 @@ var languageKeywords = map[string]map[string]bool{
 		"int": true, "float": true, "bool": true, "type": true, "isinstance": true,
 		"hasattr": true, "getattr": true, "setattr": true, "delattr": true,
 		"open": true, "input": true, "super": true,
+		// Syntax keywords: "except (", "in (", "not (" are never calls.
+		"elif": true, "else": true, "except": true, "in": true, "not": true,
+		"and": true, "or": true, "is": true, "import": true, "from": true,
+		"lambda": true, "del": true, "await": true, "async": true, "def": true,
+		"class": true, "try": true, "finally": true, "global": true, "nonlocal": true,
 	},
 	"php": {
 		"if": true, "for": true, "foreach": true, "while": true, "switch": true,

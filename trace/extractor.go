@@ -31,7 +31,7 @@ func (e *RegexExtractor) Mode() string {
 // invalidates every persisted RegexExtractor symbol cache entry on the
 // next scan, forcing fresh extraction. Use semver-ish strings ("regex-v2",
 // "regex-v2-lua-funcs") so the bump intent is visible in diffs.
-const regexExtractorVersion = "regex-v1"
+const regexExtractorVersion = "regex-v2-python-comments"
 
 // Version returns the extractor's signature used for dedup
 // invalidation. See SymbolExtractor.Version.
@@ -562,6 +562,8 @@ func buildIgnoredMask(content string, lang string) []bool {
 		stateBacktick
 		stateLuaLongComment
 		stateLuaLongString
+		stateTripleSingleQuote // Python ''' strings
+		stateTripleDoubleQuote // Python """ strings
 	)
 
 	state := stateNormal
@@ -632,6 +634,24 @@ func buildIgnoredMask(content string, lang string) []bool {
 				state = stateNormal
 			}
 			continue
+		case stateTripleSingleQuote, stateTripleDoubleQuote:
+			mask[i] = true
+			quote := byte('\'')
+			if state == stateTripleDoubleQuote {
+				quote = '"'
+			}
+			if ch == '\\' && i+1 < len(content) {
+				mask[i+1] = true
+				i++
+				continue
+			}
+			if ch == quote && i+2 < len(content) && content[i+1] == quote && content[i+2] == quote {
+				mask[i+1] = true
+				mask[i+2] = true
+				i += 2
+				state = stateNormal
+			}
+			continue
 		case stateLuaLongComment, stateLuaLongString:
 			mask[i] = true
 			if closeLen := luaLongBracketCloseAt(content, i, luaLongEqCount); closeLen > 0 {
@@ -672,14 +692,35 @@ func buildIgnoredMask(content string, lang string) []bool {
 			}
 		}
 
-		if ch == '/' && next == '/' {
+		if lang == "python" {
+			// "#" starts a comment; "//" is floor division, not a comment.
+			if ch == '#' {
+				mask[i] = true
+				state = stateLineComment
+				continue
+			}
+			if (ch == '\'' || ch == '"') && i+2 < len(content) && content[i+1] == ch && content[i+2] == ch {
+				mask[i] = true
+				mask[i+1] = true
+				mask[i+2] = true
+				i += 2
+				if ch == '"' {
+					state = stateTripleDoubleQuote
+				} else {
+					state = stateTripleSingleQuote
+				}
+				continue
+			}
+		}
+
+		if lang != "python" && ch == '/' && next == '/' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
 			state = stateLineComment
 			continue
 		}
-		if ch == '/' && next == '*' {
+		if lang != "python" && ch == '/' && next == '*' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
