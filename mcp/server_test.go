@@ -445,11 +445,11 @@ func TestRegisterTools_should_document_search_path_scope_and_examples(t *testing
 	}
 
 	desc := searchTool.Tool.Description
-	if !strings.Contains(desc, "workspace-only mode") {
-		t.Fatalf("search tool description missing workspace-only example: %q", desc)
+	if !strings.Contains(desc, "path starts with the project name") {
+		t.Fatalf("search tool description missing whole-workspace example: %q", desc)
 	}
-	if !strings.Contains(desc, "workspace + projects mode") {
-		t.Fatalf("search tool description missing workspace+projects example: %q", desc)
+	if !strings.Contains(desc, "path relative to that project") {
+		t.Fatalf("search tool description missing single-project example: %q", desc)
 	}
 
 	pathPropRaw, ok := searchTool.Tool.InputSchema.Properties["path"]
@@ -461,11 +461,52 @@ func TestRegisterTools_should_document_search_path_scope_and_examples(t *testing
 		t.Fatalf("path property is not object, got %T", pathPropRaw)
 	}
 	pathDesc, _ := pathProp["description"].(string)
-	if !strings.Contains(pathDesc, "relative to each selected project root") {
-		t.Fatalf("path description missing selected project root guidance: %q", pathDesc)
+	if !strings.Contains(pathDesc, "relative to that project root") {
+		t.Fatalf("path description missing single-project guidance: %q", pathDesc)
 	}
-	if !strings.Contains(pathDesc, "not workspace root") {
-		t.Fatalf("path description missing workspace-root clarification: %q", pathDesc)
+	if !strings.Contains(pathDesc, "must start with the project name") {
+		t.Fatalf("path description missing whole-workspace guidance: %q", pathDesc)
+	}
+}
+
+// Without exactly one project, a workspace path starts with the project name,
+// like the CLI (stored paths are <workspace>/<project>/<path>).
+func TestValidateWorkspacePathForProjects_requires_project_prefix_without_single_project(t *testing.T) {
+	ws := &config.Workspace{
+		Name: "acme",
+		Projects: []config.ProjectEntry{
+			{Name: "backend", Path: t.TempDir()},
+			{Name: "frontend", Path: t.TempDir()},
+		},
+	}
+
+	for _, tc := range []struct {
+		path     string
+		projects []string
+		wantOK   bool
+	}{
+		{"backend/src", nil, true},
+		{"frontend", nil, true},
+		{"src", nil, false},
+		{"backend/src", []string{"backend", "frontend"}, true},
+		{"frontend/app", []string{"backend", "shared"}, false},
+	} {
+		errMsg := validateWorkspacePathForProjects(tc.path, ws, tc.projects)
+		if (errMsg == "") != tc.wantOK {
+			t.Errorf("validate(%q, %v): got error %q, want ok=%v", tc.path, tc.projects, errMsg, tc.wantOK)
+		}
+	}
+}
+
+// A single-project path is not rejected when the project root does not exist
+// on the machine serving MCP (index built elsewhere).
+func TestValidateWorkspacePathForProjects_skips_missing_local_root(t *testing.T) {
+	ws := &config.Workspace{
+		Name:     "acme",
+		Projects: []config.ProjectEntry{{Name: "backend", Path: "/does/not/exist/backend"}},
+	}
+	if errMsg := validateWorkspacePathForProjects("src", ws, []string{"backend"}); errMsg != "" {
+		t.Fatalf("expected no error for a root missing on this host, got: %s", errMsg)
 	}
 }
 

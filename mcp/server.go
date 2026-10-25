@@ -177,7 +177,7 @@ func rootToolOption() mcp.ToolOption {
 func (s *Server) registerTools() {
 	// grepai_search tool
 	searchTool := mcp.NewTool("grepai_search",
-		mcp.WithDescription("Semantic code search. Search your codebase using natural language queries. Returns the most relevant code chunks with file paths, line numbers, and similarity scores.\n\nExamples:\n- workspace-only mode: workspace='acme', path='src/'\n- workspace + projects mode: workspace='acme', projects='backend,shared', path='api/'"),
+		mcp.WithDescription("Semantic code search. Search your codebase using natural language queries. Returns the most relevant code chunks with file paths, line numbers, and similarity scores.\n\nExamples:\n- whole workspace: workspace='acme', path='backend/src/' (path starts with the project name)\n- single project: workspace='acme', projects='backend', path='src/' (path relative to that project)"),
 		mcp.WithString("query",
 			mcp.Required(),
 			mcp.Description("Natural language search query (e.g., 'user authentication flow', 'error handling middleware')"),
@@ -192,7 +192,7 @@ func (s *Server) registerTools() {
 			mcp.Description("Output format: 'json' (default) or 'toon' (token-efficient)"),
 		),
 		mcp.WithString("path",
-			mcp.Description("Path prefix to filter results. When projects is set, path is relative to each selected project root (not workspace root). Examples: workspace-only path='src/' and workspace+projects path='MM32/src' or 'api/'."),
+			mcp.Description("Path prefix to filter results. Without workspace: relative to the project root, e.g. 'src/'. With workspace and exactly one project in projects: relative to that project root, e.g. 'src/'. With workspace and no single project: must start with the project name, e.g. 'api/src'."),
 		),
 		mcp.WithString("workspace",
 			mcp.Description("Workspace name for cross-project search (optional)"),
@@ -653,11 +653,9 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 	searcher := search.NewSearcher(st, emb, searchCfg)
 
 	// Construct full path prefix for database query. Database stores paths as:
-	// workspaceName/projectName/relativePath. When a single project is specified,
-	// include it in the path prefix to push filtering to database level. If no
-	// project is specified but a user path is provided, we must search using the
-	// workspace prefix and perform post-filtering to match the relative path
-	// across any project (since project name sits between workspace and user path).
+	// workspaceName/projectName/relativePath. With a single project, the path is
+	// relative to that project; otherwise it starts with the project name
+	// (same semantics as the CLI).
 	fullPathPrefix := ws.Name + "/"
 	singleProject := ""
 	if len(resolvedProjects) == 1 {
@@ -675,23 +673,6 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 	results, err = searcher.Search(ctx, query, limit, fullPathPrefix)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
-	}
-
-	// If no single project was specified but a user path was provided, we
-	// post-filter results to match the relative path inside each project.
-	if singleProject == "" && normalizedPath != "" {
-		filtered := make([]store.SearchResult, 0)
-		for _, r := range results {
-			parts := strings.SplitN(r.Chunk.FilePath, "/", 3)
-			if len(parts) < 3 {
-				continue
-			}
-			relative := parts[2]
-			if strings.HasPrefix(relative, normalizedPath) {
-				filtered = append(filtered, r)
-			}
-		}
-		results = filtered
 	}
 
 	// Filter by projects if specified
@@ -783,36 +764,62 @@ func parseProjectNames(projectsStr string) []string {
 	return projects
 }
 
+// validateWorkspacePathForProjects checks a workspace search path against the
+// path semantics shared with the CLI: with exactly one project selected, the
+// path is relative to that project root; otherwise it must start with a
+// project name ("api/src"), because stored paths are <workspace>/<project>/<path>.
 func validateWorkspacePathForProjects(normalizedPath string, ws *config.Workspace, selectedProjects []string) string {
 	if normalizedPath == "" || ws == nil {
 		return ""
 	}
 
-	selected := selectedProjects
-	if len(selected) == 0 {
-		selected = listWorkspaceProjectNames(ws.Projects)
-	}
-	projects := selectWorkspaceProjects(ws, selected)
-	roots := workspaceProjectRoots(projects)
-	if len(roots) == 0 {
+	if len(selectedProjects) == 1 {
+		projects := selectWorkspaceProjects(ws, selectedProjects)
+		roots := workspaceProjectRoots(projects)
+		// The index may have been built on another machine (or the project
+		// moved): only validate against roots that exist on this host.
+		localRoots := make([]string, 0, len(roots))
+		for _, root := range roots {
+			if st, err := os.Stat(root); err == nil && st.IsDir() {
+				localRoots = append(localRoots, root)
+			}
+		}
+		if len(localRoots) == 0 || pathPrefixMatchesProjectRoots(normalizedPath, localRoots) {
+			return ""
+		}
 		return buildWorkspacePathValidationError(
 			normalizedPath,
-			selected,
-			nil,
-			workspacePathExamples(ws.Projects),
-			"no project roots available for selected projects",
+			selectedProjects,
+			localRoots,
+			workspacePathExamples(projects),
+			"path must be relative to the selected project root",
 		)
 	}
-	if pathPrefixMatchesProjectRoots(normalizedPath, roots) {
-		return ""
+
+	candidates := selectedProjects
+	if len(candidates) == 0 {
+		candidates = listWorkspaceProjectNames(ws.Projects)
+	}
+	firstSegment := strings.Trim(normalizedPath, "/")
+	if idx := strings.Index(firstSegment, "/"); idx >= 0 {
+		firstSegment = firstSegment[:idx]
+	}
+	for _, name := range candidates {
+		if name == firstSegment {
+			return ""
+		}
 	}
 
+	examples := make([]string, 0, len(candidates))
+	for _, name := range candidates {
+		examples = append(examples, name+"/")
+	}
 	return buildWorkspacePathValidationError(
 		normalizedPath,
-		selected,
-		roots,
-		workspacePathExamples(projects),
-		"path must be relative to a selected project root (not the workspace root)",
+		candidates,
+		nil,
+		examples,
+		"without exactly one project, path must start with a project name (for example \"api/src\"), or set projects to a single project and pass a path relative to it",
 	)
 }
 
