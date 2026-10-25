@@ -50,9 +50,9 @@ The server registers 14 tools.
 | `grepai_index_status` | Report index health: files, chunks, size, provider, model, symbol and RPG status | `verbose`, `format`, `workspace`, `root` |
 | `grepai_list_workspaces` | List workspace names | `format` |
 | `grepai_list_projects` | List the projects in a workspace | `workspace`, `format` |
-| `grepai_rpg_search` | Search [RPG](/grepai/rpg/) nodes | `query` (required), `scope`, `kinds` (default `symbol`), `limit` (default 10), `format` |
-| `grepai_rpg_fetch` | Fetch one RPG node with its hierarchy and edges | `node_id` (required), `format` |
-| `grepai_rpg_explore` | Walk the RPG graph from a node | `start_node_id` (required), `direction` (default `both`), `depth` (default 2), `edge_types`, `limit` (default 100), `format` |
+| `grepai_rpg_search` | Search [RPG](/grepai/rpg/) nodes | `query` (required), `scope`, `kinds` (default `symbol`), `limit` (default 10), `format`, `workspace`, `project` |
+| `grepai_rpg_fetch` | Fetch one RPG node with its hierarchy and edges | `node_id` (required), `format`, `workspace`, `project` |
+| `grepai_rpg_explore` | Walk the RPG graph from a node | `start_node_id` (required), `direction` (default `both`), `depth` (default 2), `edge_types`, `limit` (default 100), `format`, `workspace`, `project` |
 | `grepai_stats` | Summarize token savings recorded in `.grepai/stats.json` | `history` (default false), `limit` (default 30 days, used with `history`) |
 
 ### Parameter reference
@@ -68,7 +68,7 @@ The server registers 14 tools.
 - `edge_types` (`grepai_rpg_explore`): comma-separated list of `feature_parent`, `contains`, `invokes`, `imports`, `maps_to_chunk`, `semantic_sim`.
 - `verbose` (`grepai_index_status`): accepted, but it does not change the output today.
 
-The RPG tools and `grepai_stats` always use the project the server started in. The RPG tools also need RPG enabled in that project (see [RPG](/grepai/rpg/)).
+`grepai_stats` always uses the project the server started in. The RPG tools use that project too, unless you pass `workspace` (or the server runs with `--workspace`): they then read the graph of one workspace project, set with `project` (optional when the workspace has a single project). RPG must be enabled in that project (see [RPG](/grepai/rpg/)).
 
 ## Configuration
 
@@ -194,7 +194,7 @@ Start the server with `--workspace` to search across all projects of a workspace
 grepai mcp-serve --workspace my-fullstack
 ```
 
-The server then fills in `workspace` for every tool that accepts it. The agent can call `grepai_search` with only a `query`. The workspace must exist in `~/.grepai/workspace.yaml`. If the current directory also holds a grepai project, the server keeps it for `grepai_stats` and the RPG tools.
+The server then fills in `workspace` for every tool that accepts it. The agent can call `grepai_search` with only a `query`. The workspace must exist in `~/.grepai/workspace.yaml`. If the current directory also holds a grepai project, the server keeps it for `grepai_stats`.
 
 **How the server picks its target:**
 

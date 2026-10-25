@@ -941,3 +941,35 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 		t.Errorf("expected result to contain callee 'SendResponse', got: %s", text)
 	}
 }
+
+// RPG tools read the graph of a workspace project (#296).
+func TestRPGProjectRootResolvesWorkspaceProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	apiPath, webPath := t.TempDir(), t.TempDir()
+	wsCfg := &config.WorkspaceConfig{Version: 1}
+	if err := wsCfg.AddWorkspace(config.Workspace{
+		Name:     "acme",
+		Projects: []config.ProjectEntry{{Name: "api", Path: apiPath}, {Name: "web", Path: webPath}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveWorkspaceConfig(wsCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{projectRoot: "/server/project"}
+	req := func(args map[string]any) mcp.CallToolRequest {
+		return mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}}
+	}
+
+	if root, err := s.rpgProjectRoot(req(map[string]any{})); err != nil || root != "/server/project" {
+		t.Fatalf("without workspace: got %q, %v", root, err)
+	}
+	if root, err := s.rpgProjectRoot(req(map[string]any{"workspace": "acme", "project": "web"})); err != nil || root != webPath {
+		t.Fatalf("workspace project: got %q, %v", root, err)
+	}
+	if _, err := s.rpgProjectRoot(req(map[string]any{"workspace": "acme"})); err == nil || !strings.Contains(err.Error(), "api, web") {
+		t.Fatalf("expected an error listing the projects, got %v", err)
+	}
+}
