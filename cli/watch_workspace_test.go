@@ -332,3 +332,19 @@ func TestExistingWorkspaceProjectsSkipsMissingFolders(t *testing.T) {
 		t.Fatalf("existingWorkspaceProjects() = %+v, want only api", got)
 	}
 }
+
+// An existing but invalid project config must not fall back to defaults (#312).
+func TestNewWorkspaceProjectIndexRuntimeRejectsInvalidConfig(t *testing.T) {
+	projectPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectPath, ".grepai"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, ".grepai", "config.yaml"), []byte("embedder: [broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws := &config.Workspace{Name: "acme"}
+	project := config.ProjectEntry{Name: "api", Path: projectPath}
+	if _, err := newWorkspaceProjectIndexRuntime(context.Background(), ws, project, nil, nil); err == nil {
+		t.Fatal("expected an error for an invalid project config")
+	}
+}

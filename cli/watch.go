@@ -3068,14 +3068,17 @@ type workspaceProjectRuntime struct {
 }
 
 func newWorkspaceProjectIndexRuntime(ctx context.Context, ws *config.Workspace, project config.ProjectEntry, emb embedder.Embedder, sharedStore store.VectorStore) (*projectIndexRuntime, error) {
+	// A project without its own config uses the defaults. A config that
+	// exists but cannot be loaded is an error: silently indexing with other
+	// settings would build the wrong index (#312). The caller skips the
+	// project (watch) or reports it (index --workspace).
 	projectCfg := config.DefaultConfig()
 	if config.Exists(project.Path) {
 		loadedCfg, err := config.Load(project.Path)
 		if err != nil {
-			log.Printf("Warning: failed to load config for %s, using defaults: %v", project.Name, err)
-		} else {
-			projectCfg = loadedCfg
+			return nil, fmt.Errorf("invalid config for project %s, fix %s: %w", project.Name, config.GetConfigPath(project.Path), err)
 		}
+		projectCfg = loadedCfg
 	}
 
 	vectorStore := &projectPrefixStore{
