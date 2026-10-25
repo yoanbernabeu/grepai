@@ -142,7 +142,8 @@ func TestStartBackgroundWatchTimeoutStopsChildAndCleansMarkers(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "grepai-watch.pid"), []byte("4242\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "grepai-watch.ready"), []byte("ready\n4242\n"), 0o600); err != nil {
+		// Stale marker from an earlier run: this child never reported progress.
+		if err := os.WriteFile(filepath.Join(dir, "grepai-watch.ready"), []byte("ready\n9999\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return 4242, exitCh, nil
@@ -187,7 +188,8 @@ func TestStartBackgroundWorkspaceTimeoutStopsChildAndCleansMarkers(t *testing.T)
 		if err := os.WriteFile(daemon.GetWorkspacePIDFile(dir, name), []byte("4242\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(daemon.GetWorkspaceReadyFile(dir, name), []byte("ready\n4242\n"), 0o600); err != nil {
+		// Stale marker from an earlier run: this child never reported progress.
+		if err := os.WriteFile(daemon.GetWorkspaceReadyFile(dir, name), []byte("ready\n9999\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return 4242, exitCh, nil
@@ -213,5 +215,43 @@ func TestStartBackgroundWorkspaceTimeoutStopsChildAndCleansMarkers(t *testing.T)
 	}
 	if daemon.IsWorkspaceReady(logDir, ws.Name) {
 		t.Fatal("workspace ready marker remains after timeout")
+	}
+}
+
+// A child that passed its startup checks ("started") but is still building
+// its initial index when the deadline expires keeps running (#218).
+func TestStartBackgroundWatchTimeoutKeepsStartedChild(t *testing.T) {
+	logDir := t.TempDir()
+	exitCh := make(chan struct{})
+	originalSpawn := watchSpawnBackground
+	originalWait := watchWaitForReady
+	originalStop := watchStopProcess
+	t.Cleanup(func() {
+		watchSpawnBackground = originalSpawn
+		watchWaitForReady = originalWait
+		watchStopProcess = originalStop
+	})
+	watchSpawnBackground = func(dir string, _ []string) (int, <-chan struct{}, error) {
+		if err := os.WriteFile(filepath.Join(dir, "grepai-watch.pid"), []byte("4242\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "grepai-watch.ready"), []byte("started\n4242\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return 4242, exitCh, nil
+	}
+	watchWaitForReady = func(<-chan struct{}, int, func(int) bool, time.Duration, time.Duration) error {
+		return errors.New("startup timeout")
+	}
+	watchStopProcess = func(int) error {
+		t.Fatal("a started child must not be stopped")
+		return nil
+	}
+
+	if err := startBackgroundWatch(logDir, ""); err != nil {
+		t.Fatalf("startBackgroundWatch() error = %v", err)
+	}
+	if !daemon.IsStartedForPID(logDir, 4242) || daemon.IsReadyForPID(logDir, 4242) {
+		t.Fatal("started marker should be kept and not count as ready")
 	}
 }

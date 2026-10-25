@@ -77,3 +77,25 @@ func TestStalePIDCleanupAlsoRemovesReadyMarkers(t *testing.T) {
 		})
 	}
 }
+
+func TestStartedMarkerIsNotReady(t *testing.T) {
+	logDir := t.TempDir()
+	if err := WriteStartedFile(logDir); err != nil {
+		t.Fatal(err)
+	}
+	if IsReadyForPID(logDir, os.Getpid()) {
+		t.Fatal("a started marker must not count as ready")
+	}
+	if !IsStartedForPID(logDir, os.Getpid()) {
+		t.Fatal("started marker was not recognized")
+	}
+	if err := WriteReadyFile(logDir); err != nil {
+		t.Fatal(err)
+	}
+	if !IsStartedForPID(logDir, os.Getpid()) || !IsReadyForPID(logDir, os.Getpid()) {
+		t.Fatal("a ready watcher also counts as started")
+	}
+	if IsStartedForPID(logDir, os.Getpid()+1) {
+		t.Fatal("started marker for another PID was accepted")
+	}
+}

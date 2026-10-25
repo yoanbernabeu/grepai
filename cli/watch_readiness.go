@@ -27,6 +27,18 @@ func removeProjectDaemonMarkers(logDir, worktreeID string) error {
 
 var errNotReady = errors.New("not ready")
 
+// stillIndexingAfterTimeout reports whether a background child that missed the
+// readiness deadline is alive and past its startup checks, i.e. still building
+// its initial index. Such a child is kept running instead of being stopped.
+func stillIndexingAfterTimeout(exitCh <-chan struct{}, childPID int, isStarted func(int) bool) bool {
+	select {
+	case <-exitCh:
+		return false
+	default:
+	}
+	return isStarted(childPID)
+}
+
 var backgroundExitTimeout = 5 * time.Second
 
 func waitForBackgroundReady(exitCh <-chan struct{}, expectedPID int, isReady func(int) bool, timeout, pollInterval time.Duration) error {

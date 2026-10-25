@@ -398,13 +398,23 @@ func startBackgroundWatch(logDir, worktreeID string) error {
 		}
 		return daemon.IsReadyForPID(logDir, expectedPID)
 	}
-	if err := watchWaitForReady(exitCh, childPID, isReady, startupTimeout, pollInterval); err != nil {
-		primary := fmt.Errorf("background process failed to become ready: %w (check logs at %s)", err, logFile)
-		return abortBackgroundStart(primary, childPID, exitCh, func() error {
-			return removeProjectDaemonMarkers(logDir, worktreeID)
-		})
+	isStarted := func(expectedPID int) bool {
+		if worktreeID != "" {
+			return daemon.IsWorktreeStartedForPID(logDir, worktreeID, expectedPID)
+		}
+		return daemon.IsStartedForPID(logDir, expectedPID)
 	}
-	fmt.Printf("Background watcher started (PID %d)\n", childPID)
+	if err := watchWaitForReady(exitCh, childPID, isReady, startupTimeout, pollInterval); err != nil {
+		if !stillIndexingAfterTimeout(exitCh, childPID, isStarted) {
+			primary := fmt.Errorf("background process failed to become ready: %w (check logs at %s)", err, logFile)
+			return abortBackgroundStart(primary, childPID, exitCh, func() error {
+				return removeProjectDaemonMarkers(logDir, worktreeID)
+			})
+		}
+		fmt.Printf("Background watcher started (PID %d), initial indexing still in progress\n", childPID)
+	} else {
+		fmt.Printf("Background watcher started (PID %d)\n", childPID)
+	}
 	fmt.Printf("Logs: %s\n", logFile)
 	if worktreeID != "" {
 		fmt.Printf("Worktree ID: %s\n", worktreeID)
@@ -2172,6 +2182,20 @@ func runWatchForeground() error {
 	}
 	defer emb.Close()
 
+	// Startup checks passed: tell the parent this child is alive and indexing,
+	// so a long initial index is not mistaken for a hung start (#218).
+	if isBackgroundChild {
+		var startedErr error
+		if worktreeID != "" {
+			startedErr = daemon.WriteWorktreeStartedFile(logDir, worktreeID)
+		} else {
+			startedErr = daemon.WriteStartedFile(logDir)
+		}
+		if startedErr != nil {
+			return startedErr
+		}
+	}
+
 	// Discover linked worktrees (only from main worktree) for initial ready semantics.
 	linkedWorktrees := discoverWorktreesForWatch(projectRoot)
 	initialTotalProjects := 1 + len(linkedWorktrees)
@@ -2770,15 +2794,21 @@ func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
 	if err := watchWaitForReady(exitCh, childPID, func(expectedPID int) bool {
 		return daemon.IsWorkspaceReadyForPID(logDir, ws.Name, expectedPID)
 	}, startupTimeout, pollInterval); err != nil {
-		primary := fmt.Errorf("workspace background process failed to become ready: %w (check logs at %s)", err, wsLogFile)
-		return abortBackgroundStart(primary, childPID, exitCh, func() error {
-			return errors.Join(
-				daemon.RemoveWorkspaceReadyFile(logDir, ws.Name),
-				daemon.RemoveWorkspacePIDFile(logDir, ws.Name),
-			)
-		})
+		if !stillIndexingAfterTimeout(exitCh, childPID, func(expectedPID int) bool {
+			return daemon.IsWorkspaceStartedForPID(logDir, ws.Name, expectedPID)
+		}) {
+			primary := fmt.Errorf("workspace background process failed to become ready: %w (check logs at %s)", err, wsLogFile)
+			return abortBackgroundStart(primary, childPID, exitCh, func() error {
+				return errors.Join(
+					daemon.RemoveWorkspaceReadyFile(logDir, ws.Name),
+					daemon.RemoveWorkspacePIDFile(logDir, ws.Name),
+				)
+			})
+		}
+		fmt.Printf("Workspace watcher %s started (PID %d), initial indexing still in progress\n", ws.Name, childPID)
+	} else {
+		fmt.Printf("Workspace watcher %s started (PID %d)\n", ws.Name, childPID)
 	}
-	fmt.Printf("Workspace watcher %s started (PID %d)\n", ws.Name, childPID)
 	fmt.Printf("Logs: %s\n", wsLogFile)
 	fmt.Printf("\nUse 'grepai watch --workspace %s --status' to check status\n", ws.Name)
 	fmt.Printf("Use 'grepai watch --workspace %s --stop' to stop the watcher\n", ws.Name)
@@ -2860,6 +2890,13 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	st, err := initializeWorkspaceStore(ctx, ws)
 	if err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+	// Startup checks passed (locks, embedder, store): signal "started" so a long
+	// initial index is not mistaken for a hung start (#218).
+	if isBackgroundChild {
+		if err := daemon.WriteWorkspaceStartedFile(logDir, ws.Name); err != nil {
+			return err
+		}
 	}
 	mutationFence := newWatchMutationFence()
 	abortStores := false
