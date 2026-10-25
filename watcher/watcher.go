@@ -52,7 +52,10 @@ type Watcher struct {
 	// Debouncing state
 	pending   map[string]FileEvent
 	pendingMu sync.Mutex
-	timer     *time.Timer
+	// flushMu serializes flushes so events from an older batch are never
+	// delivered after events from a newer one while the queue is full.
+	flushMu sync.Mutex
+	timer   *time.Timer
 }
 
 func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Watcher, error) {

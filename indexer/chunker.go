@@ -118,6 +118,12 @@ func (c *Chunker) Chunk(filePath string, content string) []ChunkInfo {
 
 		chunkIndex++
 
+		// Stop once this chunk reaches the end of the content: stepping back by
+		// the overlap would only emit one more chunk repeating its tail.
+		if end >= len(content) {
+			break
+		}
+
 		// Move to next chunk with overlap
 		nextPos := end - overlapChars
 		if nextPos <= pos {
@@ -261,6 +267,11 @@ func (c *Chunker) ReChunk(parent ChunkInfo, parentIndex int) []ChunkInfo {
 		})
 
 		subIndex++
+
+		// Stop once this sub-chunk reaches the end of the content (see Chunk).
+		if end >= len(content) {
+			break
+		}
 
 		// Move to next sub-chunk with overlap
 		nextPos := end - overlapChars

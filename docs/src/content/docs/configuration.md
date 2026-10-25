@@ -53,6 +53,10 @@ chunking:
   size: 512
   # Overlap between chunks (for context continuity)
   overlap: 50
+  # Strategy: "fixed" (default) splits at fixed-size windows, "ast" (experimental)
+  # splits at function/class boundaries with tree-sitter (needs a build with the
+  # `treesitter` tag, see Chunking Strategy below)
+  strategy: fixed
   # Optional: index extra extensions beyond the built-in supported set.
   # Entries must include the leading dot, are matched case-insensitively,
   # and still go through the binary-file and minified-file filters.
@@ -255,6 +259,24 @@ chunking:
 - **Larger chunks**: Better context, fewer results, slower
 - **Smaller chunks**: More precise matches, more results, faster
 - **More overlap**: Better continuity, larger index
+
+### Chunking Strategy
+
+> **Experimental**: the `ast` strategy is experimental. Its behavior, defaults and chunk boundaries may change in future releases, which can require re-indexing. `fixed` remains the default and recommended strategy.
+
+```yaml
+chunking:
+  strategy: ast  # "fixed" (default) or "ast"
+```
+
+- **`fixed`** (default): splits files into windows of `chunking.size` tokens, with `chunking.overlap` tokens shared between neighbouring chunks.
+- **`ast`**: parses the file with tree-sitter and splits it along syntax boundaries (functions, classes, declarations) using the [cAST](https://arxiv.org/abs/2506.15655) algorithm. Small neighbouring nodes are merged up to the size budget and nodes larger than the budget are split into their children, so a chunk is usually a whole function or a group of related declarations.
+
+With `ast`, `chunking.size` is still the budget, counted in non-whitespace characters (4 per token), and `chunking.overlap` is not used. Supported files are `.go`, `.py`, `.js`, `.jsx`, `.ts` and `.tsx`; everything else, and files nested too deeply to split, use the fixed chunker.
+
+> **Note**: `ast` requires building with the `treesitter` build tag and CGO (`go build -tags treesitter ./cmd/grepai`); the prebuilt release binaries do not include it. Without it, and for an unknown strategy name, grepai logs a warning and uses `fixed`.
+
+Changing the strategy does not re-chunk files that are already indexed. To apply it to the whole project, delete the index (`rm .grepai/index.gob` for the default GOB store) and run `grepai watch` again.
 
 ### Automatic Re-chunking
 

@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **One-Time Manual Indexing**: Add `grepai index` for updating a project's vector, symbol, and optional RPG indexes without starting a watcher, plus `grepai index --workspace <name>` for explicit multi-project workspace indexing (addresses the manual indexing portion of #193)
 
+## [0.38.0] - 2026-10-24
+
+### Added
+
+- **AST-Aware Chunking (experimental)**: New opt-in, experimental `chunking.strategy: ast` splits Go, Python, JavaScript and TypeScript files along function, class and declaration boundaries (cAST algorithm) instead of fixed-size windows, so a chunk is usually a whole function or a group of related declarations. It requires building with the `treesitter` tag. Other builds and unknown strategy names log a warning and use the fixed-size chunker, as do other file types (#332) - @Don-Yin
+
+### Performance
+
+- **Batched Ollama Indexing**: Ollama indexing now sends up to 64 chunks per request to the modern `/api/embed` endpoint instead of one request per chunk, with `truncate: false` so grepai's adaptive re-chunking stays authoritative. Servers or proxies that only provide the legacy `/api/embeddings` endpoint are detected once and used from then on. Search queries are unchanged, and existing indexes stay compatible since the vectors only differ in norm, not direction (#315, closes #314) - @jeremyakers
+
+### Fixed
+
+- **Redundant Trailing Chunk**: Every file longer than the chunk overlap (200 characters with the default `overlap: 50`) got one extra chunk at the end holding only the last lines of the chunk before it, costing an extra embedding request per file and competing in search with the chunk it duplicated. Chunking now stops once a chunk reaches the end of the file, and so does re-chunking of oversized chunks (#333) - @MaxFreedomPollard
+- **Watcher Exits on Event Bursts**: A burst of file changes that filled the watcher's internal event queue was treated as a fatal error, stopping `grepai watch` and forcing a full rescan on restart. The watcher now waits for room in the queue instead, and flushes are serialized so a stale delete can never be delivered after a newer re-create of the same file (#326) - @greenham13
+
+### Dependencies
+
+- Bump `github.com/jackc/pgx/v5` from 5.10.0 to 5.11.0 (#318)
+- Bump `github.com/qdrant/go-client` from 1.19.0 to 1.19.2 (#317)
+- Bump `google.golang.org/grpc` from 1.83.2 to 1.84.0 (#323)
+
 ## [0.37.0] - 2026-09-10
 
 ### Added
@@ -732,7 +753,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/yoanbernabeu/grepai/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/yoanbernabeu/grepai/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/yoanbernabeu/grepai/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/yoanbernabeu/grepai/compare/v0.35.0...v0.36.0

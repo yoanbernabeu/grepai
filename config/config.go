@@ -235,8 +235,9 @@ type QdrantConfig struct {
 }
 
 type ChunkingConfig struct {
-	Size    int `yaml:"size"`
-	Overlap int `yaml:"overlap"`
+	Size     int    `yaml:"size"`
+	Overlap  int    `yaml:"overlap"`
+	Strategy string `yaml:"strategy"` // "fixed" (default) or "ast"
 	// CustomExtensions extends the built-in SupportedExtensions list with
 	// additional file extensions to index (e.g. [".tengo", ".el"]). Each
 	// entry must include the leading dot and is matched case-insensitively.
@@ -403,8 +404,9 @@ func DefaultConfig() *Config {
 		Embedder: DefaultEmbedderForProvider(DefaultEmbedderProvider),
 		Store:    DefaultStoreForBackend("gob"),
 		Chunking: ChunkingConfig{
-			Size:    512,
-			Overlap: 50,
+			Size:     512,
+			Overlap:  50,
+			Strategy: "fixed",
 		},
 		Framework: FrameworkConfig{
 			Enabled:  true,
@@ -602,6 +604,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Chunking.Overlap == 0 {
 		c.Chunking.Overlap = defaults.Chunking.Overlap
+	}
+	if c.Chunking.Strategy == "" {
+		c.Chunking.Strategy = defaults.Chunking.Strategy
 	}
 
 	// Framework processing defaults

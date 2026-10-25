@@ -84,7 +84,7 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 	scanner := indexer.NewScanner(projectRoot, ignoreMatcher).
 		WithCustomExtensions(extraExtensions).
 		WithCustomExtensions(cfg.Chunking.CustomExtensions)
-	chunker := indexer.NewChunker(cfg.Chunking.Size, cfg.Chunking.Overlap)
+	chunker := indexer.NewFileChunker(cfg.Chunking.Strategy, cfg.Chunking.Size, cfg.Chunking.Overlap)
 	processor := buildFrameworkRegistry(cfg)
 	idx := indexer.NewIndexer(projectRoot, vectorStore, emb, chunker, scanner, cfg.Watch.LastIndexTime, processor)
 
