@@ -129,6 +129,9 @@ func TestComputeBoostFactor(t *testing.T) {
 		{"foo_test.go", 0.5},
 		{"project/src/main.go", 1.1},        // matches /src/
 		{"project/tests/foo_test.go", 0.25}, // matches /tests/ and _test.
+		{"src/main.go", 1.1},                // top-level directory matches /src/
+		{"tests/helpers.go", 0.5},           // top-level directory matches /tests/
+		{"mysrc/main.go", 1.0},              // a directory merely ending in "src" does not match
 	}
 
 	for _, tt := range tests {

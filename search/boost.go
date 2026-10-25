@@ -1,6 +1,7 @@
 package search
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/yoanbernabeu/grepai/config"
@@ -29,6 +30,7 @@ func ApplyBoost(results []store.SearchResult, boostCfg config.BoostConfig) []sto
 // Multiple matching rules are multiplied together.
 func computeBoostFactor(filePath string, boostCfg config.BoostConfig) float32 {
 	factor := float32(1.0)
+	filePath = boostMatchPath(filePath)
 
 	for _, rule := range boostCfg.Penalties {
 		if matchesPattern(filePath, rule.Pattern) {
@@ -49,4 +51,16 @@ func computeBoostFactor(filePath string, boostCfg config.BoostConfig) float32 {
 // Patterns are simple substring matches (case-sensitive).
 func matchesPattern(filePath, pattern string) bool {
 	return strings.Contains(filePath, pattern)
+}
+
+// boostMatchPath returns the path in the form patterns are written against:
+// slash-separated and starting with "/". Indexed paths are project-relative
+// ("src/main.go", or `src\main.go` on Windows), so without this a pattern such
+// as "/src/" never matched a top-level directory.
+func boostMatchPath(filePath string) string {
+	p := filepath.ToSlash(filePath)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return p
 }
