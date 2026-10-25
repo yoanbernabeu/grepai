@@ -45,6 +45,10 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("expected chunk overlap 50, got %d", cfg.Chunking.Overlap)
 	}
 
+	if cfg.Chunking.Strategy != "fixed" {
+		t.Errorf("expected chunking strategy fixed, got %q", cfg.Chunking.Strategy)
+	}
+
 	if !cfg.Framework.Enabled {
 		t.Error("expected framework_processing.enabled=true by default")
 	}
@@ -214,6 +218,39 @@ func TestConfigLoad_FrameworkProcessingDefaultsRespectExplicitFalseAndNestedDefa
 			}
 			if cfg.Framework.Frameworks.Svelte.Enabled != tt.wantSvelteEnabled {
 				t.Fatalf("framework svelte enabled = %v, want %v", cfg.Framework.Frameworks.Svelte.Enabled, tt.wantSvelteEnabled)
+			}
+		})
+	}
+}
+
+func TestConfigLoad_ChunkingStrategy(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ConfigDir), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := GetConfigPath(tmpDir)
+
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"absent defaults to fixed", "chunking:\n  size: 256\n", "fixed"},
+		{"no chunking section defaults to fixed", "version: 1\n", "fixed"},
+		{"ast is preserved", "chunking:\n  strategy: ast\n", "ast"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := Load(tmpDir)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+			if cfg.Chunking.Strategy != tt.want {
+				t.Fatalf("chunking strategy = %q, want %q", cfg.Chunking.Strategy, tt.want)
 			}
 		})
 	}

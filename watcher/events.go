@@ -128,6 +128,9 @@ func (w *Watcher) debounceEvent(event FileEvent) {
 }
 
 func (w *Watcher) flush() {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+
 	w.pendingMu.Lock()
 	events := make([]FileEvent, 0, len(w.pending))
 	for _, event := range w.pending {
@@ -141,9 +144,6 @@ func (w *Watcher) flush() {
 		case <-w.done:
 			return
 		case w.events <- event:
-		default:
-			w.publishFatal(&FatalError{Operation: "enqueue file event", Path: event.Path, Cause: errEventQueueFull})
-			return
 		}
 	}
 }

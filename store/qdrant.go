@@ -201,6 +201,14 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 	payload["hash"] = hashVal
 	payload["updated_at"] = updatedAtVal
 
+	if chunk.FileHash != "" {
+		fileHashVal, err := qdrant.NewValue(chunk.FileHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file_hash value: %w", err)
+		}
+		payload["file_hash"] = fileHashVal
+	}
+
 	if chunk.ContentHash != "" {
 		contentHashVal, err := qdrant.NewValue(chunk.ContentHash)
 		if err != nil {
@@ -307,6 +315,9 @@ func (s *QdrantStore) parseChunkPayload(payload map[string]*qdrant.Value) *Chunk
 			chunk.UpdatedAt = t
 		}
 	}
+	if val, ok := payload["file_hash"]; ok {
+		chunk.FileHash = val.GetStringValue()
+	}
 	if val, ok := payload["content_hash"]; ok {
 		chunk.ContentHash = val.GetStringValue()
 	}
@@ -324,8 +335,8 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Filter:         filter,
-		Limit:          qdrant.PtrOf(uint32(1)),
-		WithPayload:    qdrant.NewWithPayloadInclude("chunk_ids"),
+		Limit:          qdrant.PtrOf(uint32(1000)),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "file_hash"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get document: %w", err)
@@ -335,18 +346,30 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 		return nil, nil
 	}
 
+	// Document metadata lives on chunks. For files with more than 1000
+	// chunks, ChunkIDs length is a lower bound, sufficient for skip decisions.
 	doc := &Document{
 		Path:     filePath,
-		ChunkIDs: []string{},
+		ChunkIDs: make([]string, len(scrollResult)),
+	}
+	for i, point := range scrollResult {
+		doc.ChunkIDs[i] = point.GetId().String()
+		if doc.Hash == "" {
+			// Older points have no file_hash; keep Hash empty so the hash
+			// comparison requests re-indexing rather than using a chunk hash.
+			doc.Hash = point.GetPayload()["file_hash"].GetStringValue()
+		}
 	}
 
 	return doc, nil
 }
 
+// SaveDocument is a no-op: document metadata is stored in chunk payloads by SaveChunks.
 func (s *QdrantStore) SaveDocument(ctx context.Context, doc Document) error {
 	return nil
 }
 
+// DeleteDocument is a no-op: DeleteByFile removes the chunks and their document metadata.
 func (s *QdrantStore) DeleteDocument(ctx context.Context, filePath string) error {
 	return nil
 }

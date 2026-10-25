@@ -51,6 +51,8 @@ embedder:
   dimensions: 768
 ```
 
+During indexing, grepai sends multiple code chunks per request through Ollama's `/api/embed` endpoint. Servers that do not provide that endpoint automatically fall back to the legacy `/api/embeddings` API.
+
 ### Available Models
 
 | Model | Dimensions | Speed | Quality | Languages |
@@ -85,9 +87,10 @@ embedder:
 curl http://localhost:11434/api/tags
 
 # Test embedding
-curl http://localhost:11434/api/embeddings -d '{
+curl http://localhost:11434/api/embed -d '{
   "model": "nomic-embed-text",
-  "prompt": "Hello world"
+  "input": "Hello world",
+  "truncate": false
 }'
 ```
 
@@ -249,8 +252,8 @@ Each embedding model produces vectors of a fixed size. Using incorrect dimension
 **For Ollama:**
 
 ```bash
-curl -s http://localhost:11434/api/embeddings \
-  -d '{"model": "MODEL_NAME", "prompt": "test"}' | jq '.embedding | length'
+curl -s http://localhost:11434/api/embed \
+  -d '{"model": "MODEL_NAME", "input": "test"}' | jq '.embeddings[0] | length'
 ```
 
 **For LM Studio:**

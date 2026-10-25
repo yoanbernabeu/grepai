@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -91,6 +93,57 @@ func (m *mockVectorStore) GetChunksForFile(_ context.Context, filePath string) (
 
 func (m *mockVectorStore) GetAllChunks(_ context.Context) ([]store.Chunk, error) {
 	return m.getAllChunksItems, nil
+}
+
+var _ store.EmbeddingCache = (*projectPrefixStore)(nil)
+
+type mockPrefixEmbeddingCache struct {
+	mockVectorStore
+	lookup func(context.Context, string) ([]float32, bool, error)
+}
+
+func (m *mockPrefixEmbeddingCache) LookupByContentHash(ctx context.Context, hash string) ([]float32, bool, error) {
+	return m.lookup(ctx, hash)
+}
+
+func TestProjectPrefixStore_EmbeddingCache(t *testing.T) {
+	lookupErr := errors.New("cache unavailable")
+	for _, tc := range []struct {
+		name   string
+		vector []float32
+		found  bool
+		err    error
+	}{
+		{"hit", []float32{1, 2, 3}, true, nil},
+		{"miss", nil, false, nil},
+		{"error", nil, false, lookupErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			called := false
+			backing := &mockPrefixEmbeddingCache{lookup: func(gotCtx context.Context, hash string) ([]float32, bool, error) {
+				called = true
+				if gotCtx != ctx || hash != "content-hash" {
+					t.Errorf("lookup did not preserve context/hash: %q", hash)
+				}
+				return tc.vector, tc.found, tc.err
+			}}
+			p := &projectPrefixStore{store: backing, workspaceName: "workspace", projectName: "project"}
+			var cache store.EmbeddingCache = p
+			vector, found, err := cache.LookupByContentHash(ctx, "content-hash")
+			if !called || !reflect.DeepEqual(vector, tc.vector) || found != tc.found || !errors.Is(err, tc.err) {
+				t.Fatalf("lookup = %v, %v, %v; called=%v", vector, found, err, called)
+			}
+		})
+	}
+	t.Run("backend without cache", func(t *testing.T) {
+		p := &projectPrefixStore{store: &mockVectorStore{}}
+		vector, found, err := p.LookupByContentHash(context.Background(), "content-hash")
+		if vector != nil || found || err != nil {
+			t.Fatalf("lookup = %v, %v, %v; want cache miss", vector, found, err)
+		}
+	})
 }
 
 func TestDescribeRetryReason(t *testing.T) {

@@ -154,6 +154,70 @@ func TestChunker_MixedContent(t *testing.T) {
 	}
 }
 
+func TestChunker_NoRedundantTrailingChunk(t *testing.T) {
+	tests := []struct {
+		name       string
+		chunkSize  int
+		overlap    int
+		content    string
+		wantChunks int
+		lastLine   int
+	}{
+		{
+			name:       "file shorter than one chunk",
+			chunkSize:  512,
+			overlap:    50,
+			content:    strings.Repeat(strings.Repeat("x", 99)+"\n", 10),
+			wantChunks: 1,
+			lastLine:   10,
+		},
+		{
+			name:       "file spanning two chunks",
+			chunkSize:  100,
+			overlap:    10,
+			content:    strings.Repeat("line of code\n", 50),
+			wantChunks: 2,
+			lastLine:   50,
+		},
+		{
+			name:       "file spanning three chunks",
+			chunkSize:  512,
+			overlap:    50,
+			content:    strings.Repeat(strings.Repeat("y", 49)+"\n", 100),
+			wantChunks: 3,
+			lastLine:   100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := NewChunker(tt.chunkSize, tt.overlap).Chunk("test.go", tt.content)
+
+			if len(chunks) != tt.wantChunks {
+				t.Fatalf("expected %d chunks, got %d", tt.wantChunks, len(chunks))
+			}
+			assertNoRedundantChunks(t, chunks, tt.lastLine)
+		})
+	}
+}
+
+// assertNoRedundantChunks checks that the last chunk ends at lastLine and that
+// every chunk extends past the end of the chunk before it.
+func assertNoRedundantChunks(t *testing.T, chunks []ChunkInfo, lastLine int) {
+	t.Helper()
+
+	if got := chunks[len(chunks)-1].EndLine; got != lastLine {
+		t.Errorf("last chunk ends at line %d, expected %d", got, lastLine)
+	}
+	for i := 1; i < len(chunks); i++ {
+		if chunks[i].EndLine <= chunks[i-1].EndLine {
+			t.Errorf("chunk %d (lines %d-%d) does not extend past chunk %d (lines %d-%d)",
+				i, chunks[i].StartLine, chunks[i].EndLine,
+				i-1, chunks[i-1].StartLine, chunks[i-1].EndLine)
+		}
+	}
+}
+
 func TestGetLineNumber(t *testing.T) {
 	content := "line1\nline2\nline3\nline4"
 	lineStarts := buildLineStarts(content)
@@ -303,6 +367,27 @@ func TestChunker_ReChunk(t *testing.T) {
 			idSet[subChunk.ID] = true
 		}
 	})
+}
+
+func TestChunker_ReChunkNoRedundantTrailingChunk(t *testing.T) {
+	// ReChunk halves both settings: 100-token sub-chunks with a 10-token overlap.
+	chunker := NewChunker(200, 20)
+
+	parentChunk := ChunkInfo{
+		ID:        "test.go_0",
+		FilePath:  "test.go",
+		StartLine: 1,
+		EndLine:   100,
+		Content:   "File: test.go\n\n" + strings.Repeat("code line\n", 100),
+		Hash:      "abc123",
+	}
+
+	subChunks := chunker.ReChunk(parentChunk, 0)
+
+	if len(subChunks) != 3 {
+		t.Fatalf("expected 3 sub-chunks, got %d", len(subChunks))
+	}
+	assertNoRedundantChunks(t, subChunks, 100)
 }
 
 func TestChunker_ChunkSize(t *testing.T) {

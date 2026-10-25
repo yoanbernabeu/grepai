@@ -14,7 +14,8 @@ type Chunk struct {
 	Content     string    `json:"content"`
 	Vector      []float32 `json:"vector"`
 	Hash        string    `json:"hash"`
-	ContentHash string    `json:"content_hash"` // SHA256 of raw content (path-independent)
+	FileHash    string    `json:"file_hash,omitempty"` // SHA256 of the whole source file
+	ContentHash string    `json:"content_hash"`        // SHA256 of raw content (path-independent)
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 

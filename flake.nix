@@ -10,14 +10,14 @@
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
-      version = "0.37.0";
+      version = "0.38.0";
 
       mkGrepai = pkgs: pkgs.buildGoModule {
         pname = "grepai";
         inherit version;
         src = ./.;
 
-        vendorHash = "sha256-WFrXPfBk2zo+uYPFmzns1p3r4IbeWgKuUMmEU/DbKqA=";
+        vendorHash = "sha256-8YZAsuDmOIs6tpVZGLtq30xEsCQWr6OUG65MIWOfHW8=";
 
         # Tests shell out to external tools during checkPhase: git (worktree
         # discovery, status hints) and node (Vue SFC framework processor).

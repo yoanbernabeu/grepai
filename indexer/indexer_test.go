@@ -226,6 +226,84 @@ func (m *mockEmbedder) Close() error {
 	return nil
 }
 
+// TestFileHash_UnchangedFiles exercises both hash propagation and the scan decision
+// with persisted document metadata, without relying on the mtime fast path.
+func TestFileHash_UnchangedFiles(t *testing.T) {
+	for _, mode := range []string{"sequential", "batched", "cached-batched"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "test.go"), []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			ignore, err := NewIgnoreMatcher(root, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			scanner := NewScanner(root, ignore)
+			file, err := scanner.ScanFile("test.go")
+			if err != nil || file == nil {
+				t.Fatalf("ScanFile: file=%v err=%v", file, err)
+			}
+			backing := newMockStore()
+			var vectorStore store.VectorStore = backing
+			if mode == "cached-batched" {
+				vectorStore = &fileHashCacheStore{mockStore: backing}
+			}
+			idx := NewIndexer(root, vectorStore, newMockEmbedder(), NewChunker(512, 50), scanner, time.Time{})
+			if mode == "sequential" {
+				_, err = idx.IndexFile(context.Background(), *file)
+			} else {
+				batch := newMockBatchEmbedder()
+				_, _, err = idx.indexFilesBatched(context.Background(), []FileInfo{*file}, batch, nil)
+				if mode == "cached-batched" && batch.embedCalled {
+					t.Error("fully cached file called embedder")
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(backing.chunks) == 0 {
+				t.Fatal("no chunks saved")
+			}
+			for _, chunk := range backing.chunks {
+				if chunk.FileHash != file.Hash {
+					t.Errorf("FileHash = %q, want %q", chunk.FileHash, file.Hash)
+				}
+			}
+			for _, tc := range []struct {
+				name        string
+				hash        string
+				ids         []string
+				wantReindex bool
+			}{
+				{"matching", file.Hash, []string{"chunk"}, false},
+				{"legacy missing hash", "", []string{"chunk"}, true},
+				{"changed", "different", []string{"chunk"}, true},
+				{"no chunks", file.Hash, nil, true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					if err := backing.SaveDocument(context.Background(), store.Document{Path: file.Path, Hash: tc.hash, ChunkIDs: tc.ids}); err != nil {
+						t.Fatal(err)
+					}
+					decision, err := idx.decideFileScan(context.Background(), FileMeta{Path: file.Path, ModTime: file.ModTime})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if (decision.file != nil) != tc.wantReindex {
+						t.Errorf("reindex = %v, want %v", decision.file != nil, tc.wantReindex)
+					}
+				})
+			}
+		})
+	}
+}
+
+type fileHashCacheStore struct{ *mockStore }
+
+func (s *fileHashCacheStore) LookupByContentHash(context.Context, string) ([]float32, bool, error) {
+	return []float32{0.1, 0.2, 0.3}, true, nil
+}
+
 // TestIndexAllWithProgress_UnchangedFilesSkipped tests that files with matching ModTimes are skipped
 func TestIndexAllWithProgress_UnchangedFilesSkipped(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -868,7 +946,7 @@ func TestPrepareFileChunks(t *testing.T) {
 	})
 }
 
-func TestCreateStoreChunks(t *testing.T) {
+func TestCreateStoreChunks_FileHash(t *testing.T) {
 	now := time.Now()
 
 	t.Run("creates chunks with correct fields", func(t *testing.T) {
@@ -881,13 +959,19 @@ func TestCreateStoreChunks(t *testing.T) {
 			{0.4, 0.5, 0.6},
 		}
 
-		chunks, chunkIDs := createStoreChunks(chunkInfos, embeddings, now)
+		chunks, chunkIDs := createStoreChunks(chunkInfos, embeddings, "file-hash", now)
 
 		if len(chunks) != 2 {
 			t.Fatalf("expected 2 chunks, got %d", len(chunks))
 		}
 		if len(chunkIDs) != 2 {
 			t.Fatalf("expected 2 chunkIDs, got %d", len(chunkIDs))
+		}
+
+		for _, chunk := range chunks {
+			if chunk.FileHash != "file-hash" {
+				t.Errorf("FileHash = %q, want file-hash", chunk.FileHash)
+			}
 		}
 
 		// Verify first chunk
@@ -920,7 +1004,7 @@ func TestCreateStoreChunks(t *testing.T) {
 	})
 
 	t.Run("handles empty input", func(t *testing.T) {
-		chunks, chunkIDs := createStoreChunks([]ChunkInfo{}, [][]float32{}, now)
+		chunks, chunkIDs := createStoreChunks([]ChunkInfo{}, [][]float32{}, "", now)
 
 		if len(chunks) != 0 {
 			t.Errorf("expected 0 chunks, got %d", len(chunks))

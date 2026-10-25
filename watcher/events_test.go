@@ -3,11 +3,14 @@ package watcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -99,26 +102,104 @@ func TestRelativePathFailurePublishesFatal(t *testing.T) {
 	_ = w.Close()
 }
 
-func TestFullEventQueuePublishesFatalAndStops(t *testing.T) {
-	root := t.TempDir()
-	w := newTestWatcher(t, root)
-	if err := w.Start(context.Background()); err != nil {
-		t.Fatal(err)
+func TestFullEventQueueAppliesBackpressure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		w := &Watcher{
+			events:  make(chan FileEvent, 100),
+			errors:  make(chan error, 1),
+			done:    make(chan struct{}),
+			pending: make(map[string]FileEvent),
+		}
+		defer w.Abort()
+		for i := 0; i <= cap(w.events); i++ {
+			path := string(rune('a' + i))
+			w.pending[path] = FileEvent{Type: EventModify, Path: path}
+		}
+		total := len(w.pending)
+		flushed := make(chan struct{})
+		go func() { w.flush(); close(flushed) }()
+		synctest.Wait()
+		if got := len(w.events); got != cap(w.events) {
+			t.Fatalf("queue holds %d events, want %d", got, cap(w.events))
+		}
+		select {
+		case <-flushed:
+			t.Fatal("flush returned while the queue was full; want it to wait")
+		case err := <-w.Errors():
+			t.Fatalf("full queue must not be fatal, got %v", err)
+		default:
+		}
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		for i := 0; i < total; i++ {
+			select {
+			case <-w.Events():
+			case err := <-w.Errors():
+				t.Fatalf("full queue must not be fatal, got %v", err)
+			case <-deadline.C:
+				t.Fatalf("only received %d of %d events", i, total)
+			}
+		}
+		select {
+		case <-flushed:
+		case <-deadline.C:
+			t.Fatal("flush did not finish after the queue was drained")
+		}
+		select {
+		case err := <-w.Errors():
+			t.Fatalf("full queue must not be fatal, got %v", err)
+		default:
+		}
+	})
+}
+
+// TestConcurrentFlushesPreserveEventOrder checks that while the queue is full,
+// a newer flush cannot deliver its events before an older, still-blocked flush:
+// otherwise a stale delete could land after a re-create and drop a file that
+// exists from the index.
+func TestConcurrentFlushesPreserveEventOrder(t *testing.T) {
+	for trial := 0; trial < 50; trial++ {
+		w := &Watcher{
+			events:  make(chan FileEvent, 100),
+			errors:  make(chan error, 1),
+			done:    make(chan struct{}),
+			pending: make(map[string]FileEvent),
+		}
+		for i := 0; i < 150; i++ {
+			path := fmt.Sprintf("file%d", i)
+			w.pending[path] = FileEvent{Type: EventModify, Path: path}
+		}
+		w.pending["target"] = FileEvent{Type: EventDelete, Path: "target"}
+		total := len(w.pending) + 1
+
+		go w.flush()
+		for len(w.events) < cap(w.events) {
+			time.Sleep(time.Microsecond)
+		}
+		w.pendingMu.Lock()
+		w.pending["target"] = FileEvent{Type: EventCreate, Path: "target"}
+		w.pendingMu.Unlock()
+		go w.flush()
+		time.Sleep(time.Millisecond)
+
+		deadline := time.NewTimer(2 * time.Second)
+		var last EventType
+		for i := 0; i < total; i++ {
+			select {
+			case event := <-w.Events():
+				if event.Path == "target" {
+					last = event.Type
+				}
+			case <-deadline.C:
+				t.Fatalf("trial %d: only received %d of %d events", trial, i, total)
+			}
+		}
+		deadline.Stop()
+		close(w.done)
+		if last != EventCreate {
+			t.Fatalf("trial %d: last event for target = %v, want create", trial, last)
+		}
 	}
-	defer w.Close()
-	w.pendingMu.Lock()
-	for i := 0; i <= cap(w.events); i++ {
-		path := filepath.Join(root, string(rune('a'+i)))
-		w.pending[path] = FileEvent{Type: EventModify, Path: path}
-	}
-	w.pendingMu.Unlock()
-	w.flush()
-	err := <-w.Errors()
-	var fatalErr *FatalError
-	if !errors.As(err, &fatalErr) || fatalErr.Operation != "enqueue file event" {
-		t.Fatalf("Errors() = %T %v, want enqueue FatalError", err, err)
-	}
-	<-w.processingDone
 }
 
 func TestUnexpectedBackendChannelClosureIsFatal(t *testing.T) {

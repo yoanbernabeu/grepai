@@ -140,12 +140,14 @@ func TestWorkspaceWatchLoopFatalWaitsForEventMutation(t *testing.T) {
 		release:  make(chan struct{}),
 	}
 	runtime := &workspaceProjectRuntime{
-		project:     config.ProjectEntry{Name: "api", Path: root},
-		cfg:         config.DefaultConfig(),
-		idx:         indexer.NewIndexer(root, st, nil, nil, nil, time.Time{}),
-		symbolStore: trace.NewGOBSymbolStore(filepath.Join(root, "symbols.gob")),
-		vectorStore: st,
-		watcher:     source,
+		projectIndexRuntime: &projectIndexRuntime{
+			cfg:         config.DefaultConfig(),
+			idx:         indexer.NewIndexer(root, st, nil, nil, nil, time.Time{}),
+			symbolStore: trace.NewGOBSymbolStore(filepath.Join(root, "symbols.gob")),
+			vectorStore: st,
+		},
+		project: config.ProjectEntry{Name: "api", Path: root},
+		watcher: source,
 	}
 	runtimes := map[string]*workspaceProjectRuntime{canonicalPath(root): runtime}
 	events := make(chan workspaceWatchEvent, 1)

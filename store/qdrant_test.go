@@ -2,12 +2,215 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
+
+func TestQdrantFileHashPayload(t *testing.T) {
+	s := &QdrantStore{}
+	for _, hash := range []string{"", strings.Repeat("a", 64)} {
+		chunk := Chunk{FilePath: "file.go", FileHash: hash, Hash: "chunk-hash", ContentHash: "content-hash"}
+		payload, err := s.buildChunkPayload(chunk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, present := payload["file_hash"]
+		if present != (hash != "") || value.GetStringValue() != hash {
+			t.Fatalf("file_hash = %v, present=%v, want %q", value, present, hash)
+		}
+		parsed := s.parseChunkPayload(payload)
+		if parsed.FileHash != hash || parsed.Hash != chunk.Hash || parsed.ContentHash != chunk.ContentHash {
+			t.Fatalf("hashes did not round-trip: %+v", parsed)
+		}
+	}
+}
+
+type fileHashPointsServer struct {
+	qdrant.UnimplementedPointsServer
+	scroll func(*qdrant.ScrollPoints) (*qdrant.ScrollResponse, error)
+}
+
+func (s *fileHashPointsServer) Scroll(_ context.Context, request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+	return s.scroll(request)
+}
+
+func TestQdrantGetDocumentFileHash(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hashes   []string
+		wantHash string
+		fail     bool
+	}{
+		{"missing file", nil, "", false},
+		{"legacy points", []string{"", ""}, "", false},
+		{"file hash", []string{"file-hash", "file-hash"}, "file-hash", false},
+		{"hash on later point", []string{"", "file-hash"}, "file-hash", false},
+		{"scroll error", nil, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := grpc.NewServer()
+			qdrant.RegisterPointsServer(server, &fileHashPointsServer{scroll: func(request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+				if request.GetCollectionName() != "test_grepai_filehash" || request.GetLimit() != 1000 ||
+					!proto.Equal(request.GetFilter(), &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatch("file_path", "file.go")}}) ||
+					!proto.Equal(request.GetWithPayload(), qdrant.NewWithPayloadInclude("file_path", "file_hash")) {
+					t.Errorf("unexpected scroll request: %v", request)
+				}
+				if tc.fail {
+					return nil, status.Error(codes.Unavailable, "test scroll failure")
+				}
+				points := make([]*qdrant.RetrievedPoint, len(tc.hashes))
+				for i, hash := range tc.hashes {
+					payload := map[string]*qdrant.Value{"hash": mustCreateValue(t, "not-a-file-hash")}
+					if hash != "" {
+						payload["file_hash"] = mustCreateValue(t, hash)
+					}
+					points[i] = &qdrant.RetrievedPoint{Id: qdrant.NewIDNum(uint64(i + 1)), Payload: payload}
+				}
+				return &qdrant.ScrollResponse{Result: points}, nil
+			}})
+			t.Cleanup(server.Stop)
+			go func() {
+				if err := server.Serve(listener); err != nil {
+					t.Errorf("serve: %v", err)
+				}
+			}()
+			client, err := qdrant.NewClient(&qdrant.Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, SkipCompatibilityCheck: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := client.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			s := &QdrantStore{client: client, collectionName: "test_grepai_filehash"}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			doc, err := s.GetDocument(ctx, "file.go")
+			if tc.fail {
+				if err == nil || !strings.Contains(err.Error(), "test scroll failure") || doc != nil {
+					t.Fatalf("doc=%v err=%v", doc, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.hashes) == 0 {
+				if doc != nil {
+					t.Fatalf("missing file returned %+v", doc)
+				}
+				return
+			}
+			wantIDs := make([]string, len(tc.hashes))
+			for i := range wantIDs {
+				wantIDs[i] = qdrant.NewIDNum(uint64(i + 1)).String()
+			}
+			if doc == nil || doc.Path != "file.go" || doc.Hash != tc.wantHash || !reflect.DeepEqual(doc.ChunkIDs, wantIDs) {
+				t.Fatalf("unexpected document: %+v", doc)
+			}
+		})
+	}
+}
+
+func TestQdrantFileHashIntegration(t *testing.T) {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:6333", time.Second)
+	if err != nil {
+		t.Skipf("local Qdrant unavailable: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client, err := qdrant.NewClient(&qdrant.Config{Host: "127.0.0.1", Port: 6334})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	const collection = "test_grepai_filehash"
+	exists, err := client.CollectionExists(ctx, collection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("test collection already exists; refusing to change an unowned collection")
+	}
+	if err := client.CreateCollection(ctx, &qdrant.CreateCollection{
+		CollectionName: collection,
+		VectorsConfig:  qdrant.NewVectorsConfig(&qdrant.VectorParams{Size: 3, Distance: qdrant.Distance_Cosine}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if err := client.DeleteCollection(cleanupCtx, collection); err != nil {
+			t.Error(err)
+		}
+	})
+	s := &QdrantStore{client: client, collectionName: collection}
+	var points []*qdrant.PointStruct
+	for _, fixture := range []struct {
+		path, hash string
+		count      int
+	}{
+		{"current.go", "whole-file-hash", 2},
+		{"legacy.go", "", 1},
+		{"large.go", "large-file-hash", 1001},
+	} {
+		for i := 0; i < fixture.count; i++ {
+			chunk := Chunk{ID: fmt.Sprintf("%s_%d", fixture.path, i), FilePath: fixture.path, FileHash: fixture.hash, Hash: "chunk-hash"}
+			payload, err := s.buildChunkPayload(chunk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			points = append(points, &qdrant.PointStruct{Id: qdrant.NewID(s.getUUIDForChunk(chunk.ID).String()), Payload: payload, Vectors: qdrant.NewVectors(1, 0, 0)})
+		}
+	}
+	// Wait for application, not just acknowledgement, before reading the fixtures.
+	if _, err := client.Upsert(ctx, &qdrant.UpsertPoints{CollectionName: collection, Wait: qdrant.PtrOf(true), Points: points}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path, hash string
+		count      int
+	}{
+		{"missing.go", "", 0}, {"current.go", "whole-file-hash", 2},
+		{"legacy.go", "", 1}, {"large.go", "large-file-hash", 1000},
+	} {
+		doc, err := s.GetDocument(ctx, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.count == 0 {
+			if doc != nil {
+				t.Fatalf("missing file: %+v", doc)
+			}
+		} else if doc == nil || doc.Path != tc.path || doc.Hash != tc.hash || len(doc.ChunkIDs) != tc.count {
+			t.Fatalf("%s: unexpected document %+v", tc.path, doc)
+		}
+	}
+}
 
 func mustCreateValue(t *testing.T, value interface{}) *qdrant.Value {
 	t.Helper()

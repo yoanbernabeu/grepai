@@ -2,12 +2,73 @@ package store
 
 import (
 	"context"
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
+
+func TestGOBStore_FileHashCompatibility(t *testing.T) {
+	// Encode the old on-disk shape, deliberately without a FileHash field.
+	type legacyChunk struct {
+		ID, FilePath, Content, Hash, ContentHash string
+		StartLine, EndLine                       int
+		Vector                                   []float32
+		UpdatedAt                                time.Time
+	}
+	path := filepath.Join(t.TempDir(), "index.gob")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := struct {
+		Chunks    map[string]legacyChunk
+		Documents map[string]Document
+	}{
+		Chunks:    map[string]legacyChunk{"chunk": {ID: "chunk", FilePath: "file.go", Content: "package main", Hash: "chunk-hash", ContentHash: "content-hash", Vector: []float32{1, 0, 0}}},
+		Documents: map[string]Document{"file.go": {Path: "file.go", Hash: "file-hash", ChunkIDs: []string{"chunk"}}},
+	}
+	encodeErr := gob.NewEncoder(file).Encode(legacy)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	ctx := context.Background()
+	s := NewGOBStore(path)
+	if err := s.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := s.GetChunksForFile(ctx, "file.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 1 || chunks[0].FileHash != "" || chunks[0].Hash != "chunk-hash" || chunks[0].ContentHash != "content-hash" {
+		t.Fatalf("legacy chunks: %+v", chunks)
+	}
+	chunks[0].FileHash = "file-hash"
+	if err := s.SaveChunks(ctx, chunks); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Persist(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewGOBStore(path)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err = reloaded.GetChunksForFile(ctx, "file.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 1 || chunks[0].FileHash != "file-hash" {
+		t.Fatalf("reloaded chunks: %+v", chunks)
+	}
+}
 
 func TestGOBStore_SaveAndSearchChunks(t *testing.T) {
 	tmpDir := t.TempDir()
