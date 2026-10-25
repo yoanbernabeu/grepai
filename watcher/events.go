@@ -65,6 +65,9 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 	if err != nil {
 		return &FatalError{Operation: "resolve filesystem event path", Path: event.Name, Cause: err}
 	}
+	// Indexed paths are slash-separated on every OS (see Scanner); event
+	// paths must match them, or deletes and renames miss on Windows.
+	relPath = filepath.ToSlash(relPath)
 	if relPath == "." && (event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
 		return &FatalError{Operation: "watch root", Path: w.root, Cause: errWatchRootLost}
 	}

@@ -289,3 +289,26 @@ func TestReadyRefusesAlreadyPublishedFatal(t *testing.T) {
 		t.Fatal("Ready() invoked callback after fatal publication")
 	}
 }
+
+// Event paths must be slash-separated like the indexed paths, otherwise
+// deletes and renames never match the stored document on Windows.
+func TestEventPathsAreSlashSeparated(t *testing.T) {
+	root := t.TempDir()
+	w := newTestWatcher(t, root)
+	events := make(chan fsnotify.Event)
+	w.backendEvents, w.backendErrors = events, make(chan error)
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	events <- fsnotify.Event{Name: filepath.Join(root, "sub", "gone.go"), Op: fsnotify.Remove}
+	select {
+	case ev := <-w.Events():
+		if ev.Path != "sub/gone.go" {
+			t.Fatalf("event path = %q, want %q", ev.Path, "sub/gone.go")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the delete event")
+	}
+}

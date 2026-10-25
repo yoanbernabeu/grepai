@@ -248,7 +248,7 @@ func TestScanner_RespectsGitignore(t *testing.T) {
 	}
 
 	// Should only find src/main.go
-	expectedPath := filepath.Join("src", "main.go")
+	expectedPath := "src/main.go" // scanner paths are slash-separated on every OS
 	if len(files) != 1 {
 		t.Errorf("expected 1 file, got %d", len(files))
 		for _, f := range files {
@@ -397,7 +397,7 @@ func TestScanner_RespectsNestedGitignore(t *testing.T) {
 		}
 	}
 
-	expectedPath := filepath.Join("src", "main.go")
+	expectedPath := "src/main.go" // scanner paths are slash-separated on every OS
 	if len(files) > 0 && files[0].Path != expectedPath {
 		t.Errorf("expected %s, got %s", expectedPath, files[0].Path)
 	}
@@ -900,8 +900,8 @@ func TestScanner_RespectsGrepaiIgnoreNegation(t *testing.T) {
 	}
 
 	expectedFiles := []string{
-		filepath.Join("src", "main.go"),
-		filepath.Join("vendor", "pkg", "lib.go"),
+		"src/main.go",
+		"vendor/pkg/lib.go",
 	}
 
 	for _, expected := range expectedFiles {
