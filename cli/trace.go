@@ -852,9 +852,8 @@ func captureTOON(result trace.TraceResult) (string, error) {
 	return output + "\n", nil
 }
 
-// recordTraceStats fires a goroutine to record a trace stats entry without blocking.
+// recordTraceStats records a stats entry for a trace command.
 func recordTraceStats(projectRoot, commandType string, resultCount int, outputStr string) {
-	rec := gstats.NewRecorder(projectRoot)
 	entry := gstats.Entry{
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		CommandType:  commandType,
@@ -863,11 +862,7 @@ func recordTraceStats(projectRoot, commandType string, resultCount int, outputSt
 		OutputTokens: embedder.EstimateTokens(outputStr),
 		GrepTokens:   gstats.GrepEquivalentTokens(resultCount),
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		_ = rec.Record(ctx, entry)
-	}()
+	recordStatsEntry(projectRoot, entry)
 }
 
 func displayCallersResult(result trace.TraceResult) error {

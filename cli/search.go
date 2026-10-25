@@ -373,9 +373,8 @@ func outputModeFromFlags(jsonFlag, toonFlag, compactFlag bool) stats.OutputMode 
 	return stats.Full
 }
 
-// recordSearchStats fires a goroutine to record a stats entry without blocking.
+// recordSearchStats records a stats entry for a search command.
 func recordSearchStats(projectRoot, commandType, outputMode string, resultCount int, outputStr string) {
-	rec := stats.NewRecorder(projectRoot)
 	entry := stats.Entry{
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		CommandType:  commandType,
@@ -384,11 +383,7 @@ func recordSearchStats(projectRoot, commandType, outputMode string, resultCount 
 		OutputTokens: embedder.EstimateTokens(outputStr),
 		GrepTokens:   stats.GrepEquivalentTokens(resultCount),
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		_ = rec.Record(ctx, entry)
-	}()
+	recordStatsEntry(projectRoot, entry)
 }
 
 // captureSearchJSON returns JSON-encoded results as a string.
