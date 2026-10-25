@@ -91,7 +91,7 @@ func runWorkspaceWatchLoop(l *workspaceWatchLoop) error {
 					eventCtx, runtime.idx, runtime.scanner, runtime.extractor,
 					runtime.symbolStore, runtime.rpgEncoder, runtime.vectorStore,
 					runtime.tracedLanguages, runtime.project.Path, runtime.cfg,
-					&runtime.lastConfigWrite, runtime.manager, event.event, nil, nil,
+					runtime.manager, event.event, nil, nil,
 					runtime.processor,
 				)
 			}); err != nil {

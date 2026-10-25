@@ -253,7 +253,6 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	lastWrite := time.Time{}
 	handleFileEvent(
 		ctx,
 		idx,
@@ -265,7 +264,6 @@ func TestHandleFileEvent_SkipsUnchangedFile(t *testing.T) {
 		[]string{".go"},
 		projectRoot,
 		cfg,
-		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 		nil,
@@ -349,9 +347,8 @@ func TestHandleWorkspaceFileEvent_SkipsUnchangedFile(t *testing.T) {
 	idx := indexer.NewIndexer(projectPath, wrappedStore, emb, chunker, scanner, time.Time{})
 	extractor := trace.NewRegexExtractor()
 	cfg := config.DefaultConfig()
-	var lastConfigWrite time.Time
 
-	handleFileEvent(ctx, idx, scanner, extractor, nil, nil, wrappedStore, nil, projectPath, cfg, &lastConfigWrite, nil, watcher.FileEvent{
+	handleFileEvent(ctx, idx, scanner, extractor, nil, nil, wrappedStore, nil, projectPath, cfg, nil, watcher.FileEvent{
 		Type: watcher.EventModify,
 		Path: "proj/main.go",
 	}, nil, nil)
@@ -407,7 +404,6 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 	defer symbolStore.Close()
 
 	cfg := config.DefaultConfig()
-	lastWrite := time.Time{}
 	handleFileEvent(
 		ctx,
 		idx,
@@ -419,7 +415,6 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 		[]string{".go"},
 		projectRoot,
 		cfg,
-		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"},
 		nil,
@@ -431,9 +426,6 @@ func TestHandleFileEvent_IndexesChangedFileAndUpdatesSymbols(t *testing.T) {
 	}
 	if cfg.Watch.LastIndexTime.IsZero() {
 		t.Fatal("expected changed file to update config last index time")
-	}
-	if lastWrite.IsZero() {
-		t.Fatal("expected last config write timestamp to be updated")
 	}
 
 	realSymbols, err := symbolStore.LookupSymbol(ctx, "real")
@@ -482,7 +474,6 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	lastWrite := time.Time{}
 	handleFileEvent(
 		ctx,
 		idx,
@@ -494,7 +485,6 @@ func TestHandleFileEvent_DeleteRemovesIndexAndSymbols(t *testing.T) {
 		[]string{".go"},
 		projectRoot,
 		cfg,
-		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventDelete, Path: "main.go"},
 		nil,

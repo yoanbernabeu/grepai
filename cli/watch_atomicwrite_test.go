@@ -26,7 +26,6 @@ type atomicWriteHarness struct {
 	symbolStore *trace.GOBSymbolStore
 	emb         *countingEmbedder
 	cfg         *config.Config
-	lastWrite   time.Time
 }
 
 func newAtomicWriteHarness(t *testing.T) *atomicWriteHarness {
@@ -76,7 +75,7 @@ func (h *atomicWriteHarness) dispatch(ctx context.Context, ev watcher.FileEvent)
 	handleFileEvent(
 		ctx, h.idx, h.scanner, trace.NewRegexExtractor(), h.symbolStore,
 		nil, h.vecStore, []string{".go"}, h.projectRoot, h.cfg,
-		&h.lastWrite, nil, ev, nil, nil,
+		nil, ev, nil, nil,
 	)
 }
 

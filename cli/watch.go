@@ -474,7 +474,6 @@ func initializeStore(ctx context.Context, cfg *config.Config, projectRoot string
 	}
 }
 
-const configWriteThrottle = 30 * time.Second
 const rpgDerivedFailureThreshold = 3
 
 type rpgRealtimeManager struct {
@@ -713,7 +712,6 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	defer persistTicker.Stop()
 
 	// Config write throttling - only write every 30 seconds at most
-	var lastConfigWrite time.Time
 
 	// persistAndExit persists all stores before returning from the event loop.
 	persistAndExit := func() error {
@@ -750,7 +748,7 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			}
 
 		case event := <-w.Events():
-			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event, nil, nil, processors...)
+			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, nil, event, nil, nil, processors...)
 
 		case err := <-w.Errors():
 			_ = persistAndExit()
@@ -759,8 +757,10 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 	}
 }
 
-// refreshLastIndexTimeAfterScan updates watch.last_index_time after a
-// successful startup scan and persists the project config.
+// refreshLastIndexTimeAfterScan updates watch.last_index_time in memory after
+// a successful startup scan. It is written to disk by persistInitialIndex,
+// only once the indexes themselves are saved: a stamp saved before the index
+// would make a crash skip files whose new content was never persisted (#311).
 //
 // scanStartedAt is the timestamp captured before the scan began. Using the
 // scan start (not the scan end) keeps files modified during a slow scan from
@@ -785,7 +785,6 @@ func refreshLastIndexTimeAfterScan(cfg *config.Config, projectRoot string, stats
 		scanStartedAt = time.Now()
 	}
 	cfg.Watch.LastIndexTime = scanStartedAt
-	persistLastIndexTime(projectRoot, cfg, scanStartedAt)
 }
 
 // persistLastIndexTime flushes watch.last_index_time without
@@ -1107,7 +1106,7 @@ type watchSessionEventObserver func(projectRoot string, event watcher.FileEvent)
 
 const (
 	worktreeReconcileInterval = 3 * time.Second
-	sessionShutdownTimeout    = 2 * time.Second
+	sessionShutdownTimeout    = 30 * time.Second // lets large indexes finish their final save (#235)
 	maxSessionRetryBackoff    = 30 * time.Second
 )
 
@@ -1344,7 +1343,6 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 		}
 	}()
 
-	var lastConfigWrite time.Time
 	var rpgManager *rpgRealtimeManager
 	rpgWorker := completedWatchMutationWorker()
 	if rpgEncoder != nil && rpgStore != nil {
@@ -1354,10 +1352,13 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 	persistAndShutdown := func() {
 		mutationFence.cleanup(ctx, func() {
 			<-rpgWorker.done
+			persisted := true
 			if err := st.Persist(ctx); err != nil {
+				persisted = false
 				log.Printf("Warning: failed to persist index on shutdown for %s: %v", projectRoot, err)
 			}
 			if err := symbolStore.Persist(ctx); err != nil {
+				persisted = false
 				log.Printf("Warning: failed to persist symbol index on shutdown for %s: %v", projectRoot, err)
 			}
 			if rpgStore != nil {
@@ -1369,8 +1370,8 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 			// use the mtime fast-path gate without re-hashing every file.
 			// Only the stamp is written when a config already exists on disk;
 			// other fields the user may have edited during the session are left
-			// alone.
-			if cfg != nil {
+			// alone. Skipped when the index was not saved (#311).
+			if cfg != nil && persisted {
 				persistLastIndexTime(projectRoot, cfg, cfg.Watch.LastIndexTime)
 			}
 		})
@@ -1387,7 +1388,7 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 			return nil
 
 		case <-persistTicker.C:
-			if err := persistProjectPeriodically(ctx, mutationFence, st, symbolStore, rpgStore, projectRoot); err != nil {
+			if err := persistProjectPeriodically(ctx, mutationFence, st, symbolStore, rpgStore, projectRoot, cfg); err != nil {
 				if ctx.Err() != nil {
 					persistAndShutdown()
 					return nil
@@ -1402,7 +1403,7 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 				if onEvent != nil {
 					onEvent(projectRoot, event)
 				}
-				handleFileEvent(eventCtx, idx, scanner, extractor, symbolStore, rpgEncoder, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, event, onActivity, onStats, processors...)
+				handleFileEvent(eventCtx, idx, scanner, extractor, symbolStore, rpgEncoder, st, tracedLanguages, projectRoot, cfg, rpgManager, event, onActivity, onStats, processors...)
 			}); err != nil {
 				if ctx.Err() != nil {
 					persistAndShutdown()
@@ -2345,7 +2346,7 @@ func extractSymbolsWithFramework(ctx context.Context, extractor trace.SymbolExtr
 	return symbols, refs, nil
 }
 
-func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, lastConfigWrite *time.Time, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
+func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer.Scanner, extractor *trace.RegexExtractor, symbolStore *trace.GOBSymbolStore, rpgEncoder *rpg.RPGEncoder, vectorStore store.VectorStore, enabledLanguages []string, projectRoot string, cfg *config.Config, rpgManager *rpgRealtimeManager, event watcher.FileEvent, onActivity watchActivityObserver, onStats watchStatsObserver, processors ...*framework.ProcessorRegistry) {
 	// An atomic write -- write to a temp file, then rename it over the target
 	// -- surfaces on the destination path as RENAME/REMOVE with no follow-up
 	// CREATE or WRITE. Editors and coding agents (Claude Code, Cursor) save
@@ -2428,14 +2429,10 @@ func handleFileEvent(ctx context.Context, idx *indexer.Indexer, scanner *indexer
 			onStats(projectRoot, delta)
 		}
 
-		// Advance last_index_time in memory on every successful index so a
-		// clean shutdown can flush it. Disk writes stay throttled.
-		now := time.Now()
-		cfg.Watch.LastIndexTime = now
-		if now.Sub(*lastConfigWrite) >= configWriteThrottle {
-			persistLastIndexTime(projectRoot, cfg, now)
-			*lastConfigWrite = now
-		}
+		// Advance last_index_time in memory on every successful index. It is
+		// written to disk after the next successful index persist (periodic or
+		// on shutdown), never before the index it describes (#311).
+		cfg.Watch.LastIndexTime = time.Now()
 
 		// Extract symbols if language is supported
 		ext := strings.ToLower(filepath.Ext(event.Path))
@@ -3046,10 +3043,9 @@ type workspaceWatchEvent struct {
 
 type workspaceProjectRuntime struct {
 	*projectIndexRuntime
-	project         config.ProjectEntry
-	lastConfigWrite time.Time
-	manager         *rpgRealtimeManager
-	watcher         watchSource
+	project config.ProjectEntry
+	manager *rpgRealtimeManager
+	watcher watchSource
 }
 
 func newWorkspaceProjectIndexRuntime(ctx context.Context, ws *config.Workspace, project config.ProjectEntry, emb embedder.Embedder, sharedStore store.VectorStore) (*projectIndexRuntime, error) {

@@ -4,23 +4,32 @@ import (
 	"context"
 	"log"
 
+	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/store"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
-func persistProjectPeriodically(ctx context.Context, fence *watchMutationFence, st store.VectorStore, symbolStore trace.SymbolStore, rpgStore rpg.RPGStore, projectRoot string) error {
+func persistProjectPeriodically(ctx context.Context, fence *watchMutationFence, st store.VectorStore, symbolStore trace.SymbolStore, rpgStore rpg.RPGStore, projectRoot string, cfg *config.Config) error {
 	return fence.handle(ctx, func(persistCtx context.Context) {
+		persisted := true
 		if err := st.Persist(persistCtx); err != nil {
+			persisted = false
 			log.Printf("Warning: failed to persist index for %s: %v", projectRoot, err)
 		}
 		if err := symbolStore.Persist(persistCtx); err != nil {
+			persisted = false
 			log.Printf("Warning: failed to persist symbol index for %s: %v", projectRoot, err)
 		}
 		if rpgStore != nil {
 			if err := rpgStore.Persist(persistCtx); err != nil {
 				log.Printf("Warning: failed to persist RPG graph for %s: %v", projectRoot, err)
 			}
+		}
+		// The stamp follows the index it describes: written only after the
+		// vector and symbol indexes are saved (#311).
+		if persisted && cfg != nil {
+			persistLastIndexTime(projectRoot, cfg, cfg.Watch.LastIndexTime)
 		}
 	})
 }
@@ -46,6 +55,8 @@ func persistWorkspacePeriodically(ctx context.Context, fence *watchMutationFence
 func persistWorkspaceOnShutdown(ctx context.Context, st store.VectorStore, runtimes map[string]*workspaceProjectRuntime) {
 	if err := persistWorkspaceStores(ctx, st, runtimes); err != nil {
 		log.Printf("Warning: failed to persist workspace indexes on shutdown: %v", err)
+		// Keep the previous stamps: the index they would describe was not saved (#311).
+		return
 	}
 	// Flush per-project watch.last_index_time surgically (stamp only when a
 	// config file already exists) so restarts can use the mtime gate.

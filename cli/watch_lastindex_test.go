@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,12 +44,9 @@ func TestRefreshLastIndexTimeAfterScan_RepairsZeroValue(t *testing.T) {
 		t.Fatalf("expected LastIndexTime to equal scan start %v, got %v", scanStarted, cfg.Watch.LastIndexTime)
 	}
 
-	loaded, err := config.Load(projectRoot)
-	if err != nil {
-		t.Fatalf("failed to load config: %v", err)
-	}
-	if !loaded.Watch.LastIndexTime.Equal(scanStarted) {
-		t.Fatalf("expected persisted last_index_time %v, got %v", scanStarted, loaded.Watch.LastIndexTime)
+	// The stamp is only written to disk after the index is saved (#311).
+	if _, err := os.Stat(config.GetConfigPath(projectRoot)); !os.IsNotExist(err) {
+		t.Fatalf("refresh must not write the config before the index is persisted (stat err: %v)", err)
 	}
 }
 
@@ -148,7 +146,7 @@ func TestPersistLastIndexTimeOnShutdown_WritesConfigWhenMissing(t *testing.T) {
 // TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled ensures a
 // successful index always advances the in-memory stamp even when the disk
 // write is inside the 30s throttle window.
-func TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled(t *testing.T) {
+func TestHandleFileEvent_AdvancesLastIndexTimeOnlyInMemory(t *testing.T) {
 	ctx := context.Background()
 	projectRoot := t.TempDir()
 
@@ -176,10 +174,6 @@ func TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled(t *testing.T
 	defer symbolStore.Close()
 
 	cfg := config.DefaultConfig()
-	// Pretend a disk write just happened so the next event is throttled.
-	throttleAnchor := time.Now()
-	lastWrite := throttleAnchor
-
 	handleFileEvent(
 		ctx,
 		idx,
@@ -191,7 +185,6 @@ func TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled(t *testing.T
 		[]string{".go"},
 		projectRoot,
 		cfg,
-		&lastWrite,
 		nil,
 		watcher.FileEvent{Type: watcher.EventCreate, Path: "main.go"},
 		nil,
@@ -201,8 +194,9 @@ func TestHandleFileEvent_AdvancesLastIndexTimeInMemoryWhenThrottled(t *testing.T
 	if cfg.Watch.LastIndexTime.IsZero() {
 		t.Fatal("expected in-memory last_index_time to advance on successful index")
 	}
-	if !lastWrite.Equal(throttleAnchor) {
-		t.Fatalf("expected lastConfigWrite to remain %v (disk write throttled), got %v", throttleAnchor, lastWrite)
+	// Written to disk only after the next successful index persist (#311).
+	if _, err := os.Stat(config.GetConfigPath(projectRoot)); !os.IsNotExist(err) {
+		t.Fatalf("file event must not write the config before the index is persisted (stat err: %v)", err)
 	}
 }
 
@@ -210,6 +204,10 @@ func TestIndexTimestampPreservesUserIgnore(t *testing.T) {
 	for _, phase := range []string{"initial scan", "file event"} {
 		t.Run(phase, func(t *testing.T) {
 			h := newAtomicWriteHarness(t)
+			// The project config exists, as after grepai init.
+			if err := h.cfg.Save(h.projectRoot); err != nil {
+				t.Fatal(err)
+			}
 			onDisk, err := config.Load(h.projectRoot)
 			if err != nil {
 				t.Fatal(err)
@@ -225,9 +223,10 @@ func TestIndexTimestampPreservesUserIgnore(t *testing.T) {
 				if err := os.WriteFile(h.srcPath, []byte("package main\n\nfunc updated() {}\n"), 0644); err != nil {
 					t.Fatal(err)
 				}
-				h.lastWrite = time.Time{}
 				h.dispatch(context.Background(), watcher.FileEvent{Type: watcher.EventModify, Path: "main.go"})
 			}
+			// The stamp is written once the index is saved.
+			persistLastIndexTime(h.projectRoot, h.cfg, h.cfg.Watch.LastIndexTime)
 
 			saved, err := config.Load(h.projectRoot)
 			if err != nil {
@@ -317,5 +316,47 @@ func TestRunInitialScan_ReusesHashedFilesForSymbols(t *testing.T) {
 	}
 	if len(realSymbols) == 0 {
 		t.Fatal("expected real symbols to be extracted from reused HashedFiles content")
+	}
+}
+
+// failingPersistStore makes Persist fail to simulate a crash or a timeout
+// during the index save.
+type failingPersistStore struct{ *store.GOBStore }
+
+func (f failingPersistStore) Persist(context.Context) error { return errors.New("disk full") }
+
+// last_index_time must not move past an index that was not saved, or the next
+// restart would mtime-skip files whose new content was lost (#311).
+func TestPersistProjectPeriodically_KeepsStampWhenIndexNotSaved(t *testing.T) {
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+	cfg := config.DefaultConfig()
+	before := time.Now().Add(-time.Hour).Truncate(time.Second)
+	cfg.Watch.LastIndexTime = before
+	if err := cfg.Save(projectRoot); err != nil {
+		t.Fatal(err)
+	}
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(projectRoot, "symbols.gob"))
+	defer symbolStore.Close()
+
+	cfg.Watch.LastIndexTime = time.Now()
+	failing := failingPersistStore{store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))}
+	if err := persistProjectPeriodically(ctx, newWatchMutationFence(), failing, symbolStore, nil, projectRoot, cfg); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := config.Load(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !onDisk.Watch.LastIndexTime.Equal(before) {
+		t.Fatalf("stamp advanced to %v although the index was not saved", onDisk.Watch.LastIndexTime)
+	}
+
+	ok := store.NewGOBStore(filepath.Join(projectRoot, "index.gob"))
+	if err := persistProjectPeriodically(ctx, newWatchMutationFence(), ok, symbolStore, nil, projectRoot, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk, _ = config.Load(projectRoot); !onDisk.Watch.LastIndexTime.Equal(cfg.Watch.LastIndexTime.Truncate(time.Second)) && !onDisk.Watch.LastIndexTime.Equal(cfg.Watch.LastIndexTime) {
+		t.Fatalf("stamp not written after a successful save: got %v want %v", onDisk.Watch.LastIndexTime, cfg.Watch.LastIndexTime)
 	}
 }

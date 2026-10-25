@@ -586,11 +586,21 @@ func (idx *Indexer) indexFilesBatched(
 const maxReChunkAttempts = 3
 
 // IndexFile indexes a single file
-func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
+func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (n int, err error) {
 	// Remove existing chunks for this file
 	if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
 		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
+	// If indexing fails from here on, the file's chunks are already gone.
+	// Drop its document too, so the next scan sees the file as not indexed
+	// and retries it instead of trusting stale chunk IDs (#311).
+	defer func() {
+		if err != nil {
+			if delErr := idx.store.DeleteDocument(context.WithoutCancel(ctx), file.Path); delErr != nil {
+				log.Printf("Warning: failed to drop document for %s after indexing error: %v", file.Path, delErr)
+			}
+		}
+	}()
 
 	embedContent, lineMap := idx.embeddingContent(ctx, file)
 

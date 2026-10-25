@@ -71,7 +71,7 @@ func TestProjectPeriodicPersistenceQuiescesBeforeFatalWithdrawal(t *testing.T) {
 	symbolStore := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
 	persistDone := make(chan error, 1)
 	go func() {
-		persistDone <- persistProjectPeriodically(context.Background(), fence, st, symbolStore, nil, "/project")
+		persistDone <- persistProjectPeriodically(context.Background(), fence, st, symbolStore, nil, "/project", nil)
 	}()
 	awaitWatchTestSignal(t, st.started, "periodic persistence admission")
 

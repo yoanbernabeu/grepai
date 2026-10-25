@@ -200,6 +200,11 @@ func (runtime *projectIndexRuntime) persistInitialIndex(ctx context.Context) err
 	if err := runtime.symbolStore.Persist(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("failed to persist symbol index for %s: %w", runtime.projectRoot, err))
 	}
+	// Write last_index_time only once the vector and symbol indexes are saved
+	// (#311). An RPG failure does not affect which files need re-indexing.
+	if len(errs) == 0 && runtime.cfg != nil {
+		persistLastIndexTime(runtime.projectRoot, runtime.cfg, runtime.cfg.Watch.LastIndexTime)
+	}
 	if runtime.rpgStore != nil {
 		if err := runtime.rpgStore.Persist(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to persist RPG graph for %s: %w", runtime.projectRoot, err))
