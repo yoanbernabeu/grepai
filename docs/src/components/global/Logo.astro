@@ -1,39 +1,29 @@
 ---
 interface Props {
   size?: number;
-  animated?: boolean;
+  showText?: boolean;
 }
 
-const { size = 32, animated = false } = Astro.props;
+const { size = 28, showText = true } = Astro.props;
 ---
 
-<div class:list={['inline-flex items-center gap-2', { 'animate-glow animate-float': animated }]}>
+<span class="inline-flex items-center gap-2 text-ink">
+  <!-- Lens with the gold thread: the path from a query to the code it finds -->
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
     height={size}
     viewBox="0 0 24 24"
     fill="none"
-    stroke="url(#logoGradient)"
-    stroke-width="1.5"
     stroke-linecap="round"
     stroke-linejoin="round"
     class="shrink-0"
+    aria-hidden="true"
   >
-    <defs>
-      <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" style="stop-color:#818cf8" />
-        <stop offset="50%" style="stop-color:#a78bfa" />
-        <stop offset="100%" style="stop-color:#c084fc" />
-      </linearGradient>
-    </defs>
-    <circle cx="11" cy="11" r="8" />
-    <path d="m21 21-4.3-4.3" />
-    <path d="M11 8a3 3 0 0 0-3 3" />
-    <path d="M8 6h.01" />
-    <path d="M14 6h.01" />
-    <path d="M6 14h.01" />
-    <path d="M14 14h.01" />
+    <circle cx="10.5" cy="10.5" r="7.5" stroke="currentColor" stroke-width="1.7" />
+    <path d="m16 16 5 5" stroke="currentColor" stroke-width="2.2" />
+    <path d="M5.6 12.6c1.9 0 1.9-4.4 4.4-4.4s1.6 3.2 3.6 3.2" stroke="rgb(var(--gold))" stroke-width="1.7" />
+    <circle cx="14" cy="11.4" r="1.1" fill="rgb(var(--gold))" />
   </svg>
-  <span class="font-bold text-xl gradient-text">grepai</span>
-</div>
+  {showText && <span class="font-display text-[1.35rem] leading-none tracking-tight">grepai</span>}
+</span>

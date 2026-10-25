@@ -5,7 +5,8 @@
 <script>
   function initCopyButtons() {
     document.querySelectorAll('pre').forEach((pre) => {
-      // Skip if already has a copy button
+      // Skip sample output panels and blocks that already have a button
+      if (pre.hasAttribute('data-no-copy')) return;
       if (pre.parentElement?.classList.contains('code-block-wrapper')) return;
 
       // Create wrapper
@@ -16,14 +17,15 @@
 
       // Create copy button
       const btn = document.createElement('button');
-      btn.className = 'copy-btn absolute top-3 right-3 p-2 rounded-lg bg-white/10 hover:bg-white/20 text-gray-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all z-10 backdrop-blur-sm';
-      btn.setAttribute('aria-label', 'Copy to clipboard');
+      btn.className = 'copy-btn absolute top-2.5 right-2.5 p-1.5 rounded-sm bg-code-fg/10 hover:bg-code-fg/20 text-code-muted hover:text-code-fg md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity z-10';
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'Copy code');
       btn.innerHTML = `
         <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
           <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
         </svg>
-        <svg class="check-icon hidden text-green-400" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="check-icon hidden text-gold" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20 6 9 17l-5-5"/>
         </svg>
       `;

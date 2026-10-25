@@ -7,12 +7,13 @@ import CopyCodeButton from '../components/global/CopyCodeButton.astro';
 interface Props {
   title: string;
   description?: string;
+  software?: boolean;
 }
 
-const { title, description } = Astro.props;
+const { title, description, software = false } = Astro.props;
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout title={title} description={description} software={software}>
   <Header />
 
   <main class="flex-1">

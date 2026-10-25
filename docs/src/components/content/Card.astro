@@ -20,26 +20,25 @@ const icons: Record<string, string> = {
 };
 ---
 
-<div class="glass glass-hover p-6 rounded-xl group">
+<div class="p-5 rounded-md border border-rule bg-paper-raised">
   {icon && icons[icon] && (
-    <div class="w-10 h-10 rounded-lg bg-primary-400/10 flex items-center justify-center mb-4 group-hover:bg-primary-400/20 transition-colors">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="text-primary-400"
-        set:html={icons[icon]}
-      />
-    </div>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.7"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class="text-ink-muted mb-3"
+      aria-hidden="true"
+      set:html={icons[icon]}
+    />
   )}
-  <h3 class="text-lg font-semibold text-white mb-2">{title}</h3>
-  <div class="text-gray-400 text-sm leading-relaxed">
+  <h3 class="text-base font-semibold text-ink mb-1.5">{title}</h3>
+  <div class="text-ink-muted text-sm leading-relaxed">
     <slot />
   </div>
 </div>

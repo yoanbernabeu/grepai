@@ -7,6 +7,8 @@ import TableOfContents from '../components/docs/TableOfContents.astro';
 import Breadcrumbs from '../components/docs/Breadcrumbs.astro';
 import Pagination from '../components/docs/Pagination.astro';
 import CopyCodeButton from '../components/global/CopyCodeButton.astro';
+import { sectionArt } from '../utils/sections';
+import { responsiveArt } from '../utils/art';
 
 interface Props {
   title: string;
@@ -17,27 +19,80 @@ interface Props {
 }
 
 const { title, description, headings = [], section, slug } = Astro.props;
+
+const pageSlug = (slug ?? '').replace(/\.(md|mdx)$/, '');
+const art = sectionArt(section);
+const banner = art ? await responsiveArt(art.image, [640, 960, 1440]) : undefined;
+const pageUrl = new URL(Astro.url.pathname, Astro.site).toString();
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'TechArticle',
+    headline: title,
+    ...(description ? { description } : {}),
+    url: pageUrl,
+    inLanguage: 'en',
+    isPartOf: { '@type': 'WebSite', name: 'grepai documentation', url: 'https://yoanbernabeu.github.io/grepai/' },
+    about: { '@type': 'SoftwareApplication', name: 'grepai', applicationCategory: 'DeveloperApplication' },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'grepai', item: 'https://yoanbernabeu.github.io/grepai/' },
+      ...(section ? [{ '@type': 'ListItem', position: 2, name: section }] : []),
+      { '@type': 'ListItem', position: section ? 3 : 2, name: title, item: pageUrl },
+    ],
+  },
+];
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout
+  title={title}
+  description={description}
+  type="article"
+  image={`/grepai/og/${pageSlug}.jpg`}
+  imageAlt={`${title}, grepai documentation`}
+  jsonLd={jsonLd}
+  markdownUrl={`/grepai/${pageSlug}.md`}
+>
   <Header />
 
   <div class="flex-1 flex">
     <!-- Sidebar -->
     <aside class="hidden lg:block w-64 flex-shrink-0">
-      <div class="sidebar-container fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-8 px-4 border-r border-glass-border bg-surface-50">
+      <div class="sidebar-container fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-8 px-3 border-r border-rule bg-paper">
         <Sidebar currentSlug={slug} />
       </div>
     </aside>
 
     <!-- Main content -->
     <main class="flex-1 min-w-0">
-      <div class="max-w-4xl mx-auto px-6 py-12">
+      <div class="gutter max-w-3xl mx-auto py-10 lg:py-12">
         <Breadcrumbs section={section} title={title} />
 
-        <article class="prose prose-invert max-w-none" data-pagefind-body>
-          <h1 class="text-4xl font-extrabold gradient-text mb-4">{title}</h1>
-          {description && <p class="text-xl text-gray-400 mb-8">{description}</p>}
+        {art && banner && (
+          <picture>
+            <source type="image/avif" srcset={banner.avif} sizes="(min-width: 768px) 768px, 100vw" />
+            <source type="image/webp" srcset={banner.webp} sizes="(min-width: 768px) 768px, 100vw" />
+            <img
+              src={banner.fallback}
+              srcset={banner.jpeg}
+              sizes="(min-width: 768px) 768px, 100vw"
+              width={banner.width}
+              height={banner.height}
+              alt=""
+              decoding="async"
+              class="doc-banner"
+              style={`object-position: ${art.focus}`}
+            />
+          </picture>
+        )}
+
+        <article class="prose max-w-none" data-pagefind-body>
+          <h1 class="font-display font-normal text-[2.1rem] sm:text-[2.6rem] leading-[1.1] tracking-[-0.015em] mb-3">{title}</h1>
+          {description && <p class="text-lg text-ink-muted mt-0 mb-10">{description}</p>}
 
           <slot />
         </article>
@@ -48,7 +103,7 @@ const { title, description, headings = [], section, slug } = Astro.props;
 
     <!-- Table of Contents -->
     <aside class="hidden xl:block w-64 flex-shrink-0">
-      <div class="fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-8 px-4">
+      <div class="fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-12 px-4">
         <TableOfContents headings={headings} />
       </div>
     </aside>
@@ -94,22 +149,21 @@ const { title, description, headings = [], section, slug } = Astro.props;
   </script>
 
   <style>
-    /* Custom scrollbar for sidebar */
-    .sidebar-container::-webkit-scrollbar {
-      width: 4px;
+    /* Section illustration: decorative, same world as the home page */
+    .doc-banner {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 5;
+      object-fit: cover;
+      border-radius: 6px;
+      margin-bottom: 2rem;
+      background: #172629;
     }
 
-    .sidebar-container::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .sidebar-container::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-    }
-
-    .sidebar-container::-webkit-scrollbar-thumb:hover {
-      background: rgba(255, 255, 255, 0.2);
+    .sidebar-container {
+      scrollbar-width: thin;
+      scrollbar-color: rgb(var(--rule)) transparent;
     }
   </style>
 </BaseLayout>

@@ -3,211 +3,180 @@
 @tailwind utilities;
 
 /* ========================================
-   Base Styles - grepai Documentation
+   grepai docs: "Le Cartographe"
+   Ink teal and parchment from the hero illustration, one gold accent
+   reserved for the path from a query to its answer (links, active
+   navigation, the thread in the steps).
    ======================================== */
 
 @layer base {
+  /* Light: parchment page, ink text. Values are RGB channels for Tailwind alpha. */
   :root {
-    /* Primary gradient */
-    --gradient-start: #818cf8;
-    --gradient-mid: #a78bfa;
-    --gradient-end: #c084fc;
+    --paper: 244 236 218;        /* #F4ECDA */
+    --paper-raised: 250 245 234; /* #FAF5EA */
+    --paper-sunk: 233 222 196;   /* #E9DEC4 */
+    --rule: 215 200 170;         /* #D7C8AA */
+    --ink: 23 38 41;             /* #172629 */
+    --ink-muted: 72 88 91;       /* #48585B */
+    --gold: 227 165 43;          /* #E3A52B, lines and fills only */
+    --gold-ink: 133 84 6;        /* #855406, gold readable as text on paper */
+    --on-gold: 23 38 41;
+    --code-bg: 19 35 42;         /* #13232A */
+    --code-fg: 236 226 203;      /* #ECE2CB */
+    --code-muted: 150 166 165;   /* #96A6A5 */
+    color-scheme: light;
+  }
 
-    /* Glow effects */
-    --glow-primary: rgba(129, 140, 248, 0.4);
-    --glow-violet: rgba(167, 139, 250, 0.4);
-
-    /* Glass */
-    --glass-bg: rgba(255, 255, 255, 0.03);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --glass-hover: rgba(255, 255, 255, 0.06);
-
-    /* Terminal Catppuccin Mocha */
-    --terminal-bg: #1e1e2e;
-    --terminal-header: #313244;
-    --terminal-text: #cdd6f4;
-    --terminal-green: #a6e3a1;
-    --terminal-yellow: #f9e2af;
-    --terminal-red: #f38ba8;
-    --terminal-blue: #89b4fa;
-    --terminal-purple: #cba6f7;
+  /* Dark: the shadow side of the illustration. */
+  :root[data-theme='dark'] {
+    --paper: 14 26 30;           /* #0E1A1E */
+    --paper-raised: 20 36 41;    /* #142429 */
+    --paper-sunk: 27 46 52;      /* #1B2E34 */
+    --rule: 40 60 66;            /* #283C42 */
+    --ink: 236 226 203;          /* #ECE2CB */
+    --ink-muted: 165 178 175;    /* #A5B2AF */
+    --gold: 227 165 43;
+    --gold-ink: 240 183 70;      /* #F0B746 */
+    --on-gold: 19 35 42;
+    --code-bg: 9 20 23;          /* #091417 */
+    --code-fg: 236 226 203;
+    --code-muted: 136 154 153;
+    color-scheme: dark;
   }
 
   html {
     scroll-behavior: smooth;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(129, 140, 248, 0.3) transparent;
+    scroll-padding-top: 5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   }
 
   body {
-    @apply bg-surface text-gray-200 font-sans antialiased;
-    background-image: radial-gradient(
-      ellipse at top,
-      rgba(129, 140, 248, 0.08) 0%,
-      transparent 50%
-    );
+    @apply bg-paper text-ink font-sans antialiased;
+    font-size: 16px;
+    line-height: 1.6;
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+  h1, h2, h3 {
+    text-wrap: balance;
   }
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: rgba(129, 140, 248, 0.3);
-    border-radius: 4px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgba(129, 140, 248, 0.5);
-  }
-
-  /* Selection */
   ::selection {
-    background: rgba(129, 140, 248, 0.3);
-    color: white;
+    background: rgb(var(--gold) / 0.35);
+    color: rgb(var(--ink));
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--gold-ink));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  code, kbd, pre {
+    @apply font-mono;
   }
 }
 
 @layer components {
-  /* Glass card effect */
-  .glass {
-    @apply bg-glass-bg backdrop-blur-xl border border-glass-border rounded-xl;
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+  /* Page gutter shared by header, sections and footer */
+  .gutter {
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  }
+  @media (min-width: 640px) {
+    .gutter {
+      padding-left: max(1.5rem, env(safe-area-inset-left, 0px));
+      padding-right: max(1.5rem, env(safe-area-inset-right, 0px));
+    }
   }
 
-  .glass-hover {
-    @apply transition-all duration-300 ease-out;
-  }
-
-  .glass-hover:hover {
-    @apply bg-glass-hover border-white/10;
-    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
-  }
-
-  /* Glow button */
+  /* Buttons: one filled (gold, the single accent moment), one quiet. */
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-white;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
-    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
-    transition: all 0.3s ease;
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-5 py-2.5 font-semibold text-gold-on bg-gold transition-colors;
   }
-
   .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(99, 102, 241, 0.6);
-    background: linear-gradient(135deg, #4338ca, #6d28d9);
+    background: rgb(var(--gold) / 0.85);
   }
-
   .btn-secondary {
-    @apply inline-flex items-center gap-2 px-6 py-3 rounded-lg font-medium;
-    @apply bg-glass-bg border border-glass-border text-gray-200 backdrop-blur-lg;
-    transition: all 0.3s ease;
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-5 py-2.5 font-medium text-ink border border-rule bg-paper-raised transition-colors;
   }
-
   .btn-secondary:hover {
-    @apply bg-glass-hover;
-    transform: translateY(-2px);
+    @apply border-ink-muted;
   }
 
-  /* Gradient text */
-  .gradient-text {
-    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-mid), var(--gradient-end));
-    background-size: 200% 200%;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    animation: gradient-flow 4s ease infinite;
+  /* Plain text link with the gold underline */
+  .link {
+    @apply font-medium underline decoration-gold/60 underline-offset-4 transition-colors;
+  }
+  .link:hover {
+    @apply decoration-gold decoration-2;
   }
 
-  /* Glow effect */
-  .glow {
-    filter: drop-shadow(0 0 15px var(--glow-primary));
+  /* Copyable shell command */
+  .cmd {
+    @apply flex items-center gap-3 rounded-sm bg-code-bg text-code-fg font-mono text-sm pl-4 pr-1.5 py-1.5 min-w-0;
+  }
+  .cmd-text {
+    @apply flex-1 min-w-0 overflow-x-auto whitespace-nowrap py-1.5;
+    scrollbar-width: none;
+  }
+  .cmd-text::-webkit-scrollbar { display: none; }
+  .cmd-text::before {
+    content: '$ ';
+    color: rgb(var(--code-muted));
+  }
+  .cmd-copy {
+    @apply shrink-0 rounded-sm bg-gold text-gold-on font-sans text-xs font-semibold px-2.5 py-1.5 transition-colors;
+  }
+  .cmd-copy:hover {
+    background: rgb(var(--gold) / 0.85);
   }
 
-  .glow-hover {
-    transition: filter 0.3s ease;
+  /* Small section label above headings: sentence case, no tracking tricks */
+  .kicker {
+    @apply text-sm font-semibold text-gold-ink;
   }
 
-  .glow-hover:hover {
-    filter: drop-shadow(0 0 25px var(--glow-primary));
-  }
-
-  /* Sidebar navigation */
-  .nav-link {
-    @apply block px-3 py-2 rounded-lg text-sm text-gray-400 transition-all duration-200;
-  }
-
-  .nav-link:hover {
-    @apply text-gray-200 bg-white/5;
-  }
-
-  .nav-link.active {
-    @apply text-primary-400 bg-primary-400/10;
-  }
-
-  /* Code blocks */
+  /* Code blocks (Markdown, homepage panels) */
   pre {
-    @apply my-4 p-4 rounded-xl overflow-x-auto;
-    background: var(--terminal-bg) !important;
-    border: 1px solid var(--glass-border);
+    @apply my-5 p-4 rounded-md overflow-x-auto text-code-fg;
+    background: rgb(var(--code-bg)) !important;
+  }
+  pre code {
+    @apply text-[0.85rem] leading-relaxed;
+  }
+  :root[data-theme='dark'] pre {
+    border: 1px solid rgb(var(--rule));
   }
 
-  code {
-    @apply font-mono text-sm;
-  }
-
-  /* Inline code */
-  :not(pre) > code {
-    @apply px-1.5 py-0.5 rounded text-terminal-purple;
-    background: rgba(203, 166, 247, 0.1);
-  }
-
-  /* Callout/Alert boxes */
+  /* Callouts */
   .callout {
-    @apply p-4 rounded-xl border-l-4 my-4;
+    @apply p-4 rounded-md my-5 border border-rule bg-paper-raised;
   }
-
-  .callout-note {
-    @apply bg-blue-500/10 border-blue-500;
+  .callout-title {
+    @apply font-semibold mb-1 flex items-center gap-2;
   }
-
-  .callout-warning {
-    @apply bg-yellow-500/10 border-yellow-500;
-  }
-
-  .callout-tip {
-    @apply bg-green-500/10 border-green-500;
-  }
-
-  .callout-caution {
-    @apply bg-red-500/10 border-red-500;
-  }
+  .callout-note .callout-title { color: rgb(var(--ink)); }
+  .callout-tip .callout-title { color: rgb(var(--gold-ink)); }
+  .callout-warning { border-color: rgb(var(--gold) / 0.7); }
+  .callout-warning .callout-title { color: rgb(var(--gold-ink)); }
+  .callout-caution { border-color: #b4472f; }
+  .callout-caution .callout-title { color: #b4472f; }
+  :root[data-theme='dark'] .callout-caution { border-color: #e07a5f; }
+  :root[data-theme='dark'] .callout-caution .callout-title { color: #e07a5f; }
 }
 
 @layer utilities {
-  /* Text balance */
-  .text-balance {
-    text-wrap: balance;
-  }
+  .text-balance { text-wrap: balance; }
 
-  /* Hide scrollbar */
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
-  /* Focus visible outline */
   .focus-ring {
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-surface;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-ink focus-visible:ring-offset-2 focus-visible:ring-offset-paper;
   }
 }

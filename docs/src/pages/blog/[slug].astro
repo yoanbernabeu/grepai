@@ -29,6 +29,7 @@ const { Content, headings } = await render(post);
   tags={post.data.tags}
   image={post.data.image}
   headings={headings}
+  slug={post.id.replace(/\.(md|mdx)$/, '')}
 >
   <Content />
 </BlogLayout>

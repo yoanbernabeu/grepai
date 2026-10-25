@@ -4,6 +4,8 @@ import Header from '../components/global/Header.astro';
 import Footer from '../components/global/Footer.astro';
 import TableOfContents from '../components/docs/TableOfContents.astro';
 import CopyCodeButton from '../components/global/CopyCodeButton.astro';
+import { blogCover } from '../utils/blogCovers';
+import { responsiveArt } from '../utils/art';
 
 interface Props {
   title: string;
@@ -14,9 +16,30 @@ interface Props {
   tags?: string[];
   image?: string;
   headings?: { depth: number; slug: string; text: string }[];
+  slug: string;
 }
 
-const { title, description, pubDate, updatedDate, author, tags = [], image, headings = [] } = Astro.props;
+const { title, description, pubDate, updatedDate, author, tags = [], image, headings = [], slug } = Astro.props;
+
+const pageUrl = new URL(Astro.url.pathname, Astro.site).toString();
+const coverArt = blogCover(slug);
+const cover = coverArt ? await responsiveArt(coverArt.image, [640, 960, 1440, 2000]) : undefined;
+const ogImage = image ?? `/grepai/og/blog/${slug}.jpg`;
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: title,
+    description,
+    url: pageUrl,
+    datePublished: pubDate.toISOString(),
+    ...(updatedDate ? { dateModified: updatedDate.toISOString() } : {}),
+    author: { '@type': author === 'grepai Team' ? 'Organization' : 'Person', name: author },
+    image: new URL(ogImage, Astro.site).toString(),
+    keywords: tags.join(', '),
+    inLanguage: 'en',
+  },
+];
 
 const formattedPubDate = pubDate.toLocaleDateString('en-US', {
   year: 'numeric',
@@ -31,17 +54,25 @@ const formattedUpdatedDate = updatedDate?.toLocaleDateString('en-US', {
 });
 ---
 
-<BaseLayout title={title} description={description} type="article">
+<BaseLayout
+  title={title}
+  description={description}
+  type="article"
+  image={ogImage}
+  imageAlt={`${title}, grepai blog`}
+  jsonLd={jsonLd}
+  markdownUrl={`/grepai/blog/${slug}.md`}
+>
   <Header />
 
   <div class="flex-1 flex justify-center">
     <!-- Main content -->
-    <main class="flex-1 min-w-0 max-w-4xl">
-      <div class="px-6 py-12">
+    <main class="flex-1 min-w-0 max-w-3xl">
+      <div class="gutter py-10 lg:py-12">
         <!-- Back to blog -->
         <a
           href="/grepai/blog/"
-          class="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-8"
+          class="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink transition-colors mb-8"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="m15 18-6-6 6-6"/>
@@ -49,23 +80,23 @@ const formattedUpdatedDate = updatedDate?.toLocaleDateString('en-US', {
           Back to blog
         </a>
 
-        <article class="prose prose-invert max-w-none" data-pagefind-body>
+        <article class="prose max-w-none" data-pagefind-body>
           <!-- Article header -->
           <header class="mb-10 not-prose">
             {tags.length > 0 && (
-              <div class="flex flex-wrap gap-2 mb-4">
+              <div class="flex flex-wrap gap-3 mb-4">
                 {tags.map((tag) => (
-                  <span class="px-3 py-1 text-xs font-medium bg-accent/10 text-accent rounded-full">
-                    {tag}
+                  <span class="text-xs font-medium text-ink-muted">
+                    #{tag}
                   </span>
                 ))}
               </div>
             )}
 
-            <h1 class="text-4xl font-extrabold gradient-text mb-4">{title}</h1>
-            <p class="text-xl text-gray-400 mb-6">{description}</p>
+            <h1 class="font-display font-normal text-[2.1rem] sm:text-[2.8rem] leading-[1.1] tracking-[-0.015em] mb-4">{title}</h1>
+            <p class="text-lg text-ink-muted mb-6">{description}</p>
 
-            <div class="flex items-center gap-4 text-sm text-gray-500">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-muted pb-6 border-b border-rule">
               <span class="flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
@@ -83,22 +114,40 @@ const formattedUpdatedDate = updatedDate?.toLocaleDateString('en-US', {
                 {formattedPubDate}
               </span>
               {formattedUpdatedDate && (
-                <span class="text-gray-600">
+                <span>
                   (Updated: {formattedUpdatedDate})
                 </span>
               )}
             </div>
           </header>
 
+          {cover && (
+            <picture class="not-prose block mb-10">
+              <source type="image/avif" srcset={cover.avif} sizes="(min-width: 768px) 768px, 100vw" />
+              <source type="image/webp" srcset={cover.webp} sizes="(min-width: 768px) 768px, 100vw" />
+              <img
+                src={cover.fallback}
+                srcset={cover.jpeg}
+                sizes="(min-width: 768px) 768px, 100vw"
+                width={cover.width}
+                height={cover.height}
+                alt=""
+                decoding="async"
+                fetchpriority="high"
+                class="block w-full h-auto rounded-md bg-[#172629]"
+              />
+            </picture>
+          )}
+
           <!-- Article content -->
           <slot />
         </article>
 
         <!-- Back to blog (bottom) -->
-        <div class="mt-12 pt-8 border-t border-glass-border">
+        <div class="mt-12 pt-8 border-t border-rule">
           <a
             href="/grepai/blog/"
-            class="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+            class="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6"/>
@@ -112,7 +161,7 @@ const formattedUpdatedDate = updatedDate?.toLocaleDateString('en-US', {
     <!-- Table of Contents -->
     {headings.length > 0 && (
       <aside class="hidden xl:block w-64 flex-shrink-0">
-        <div class="fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-8 px-4">
+        <div class="fixed top-16 w-64 h-[calc(100vh-4rem)] overflow-y-auto py-12 px-4">
           <TableOfContents headings={headings} />
         </div>
       </aside>

@@ -1,108 +1,137 @@
 ---
+import { latestVersion } from '../utils/project';
+
 interface Props {
   title: string;
   description?: string;
+  /** Absolute or site-relative Open Graph image (1200x630) */
   image?: string;
+  imageAlt?: string;
   type?: 'website' | 'article';
+  /** Extra JSON-LD objects for this page */
+  jsonLd?: Record<string, unknown>[];
+  /** Site-relative URL of the Markdown version of this page */
+  markdownUrl?: string;
+  /** Adds the SoftwareApplication JSON-LD (home page) */
+  software?: boolean;
 }
 
 const {
   title,
-  description = 'grepai is a privacy-first semantic code search CLI. Give your AI coding agents a semantic map of your codebase. Find relevant code with natural language.',
+  description = 'grepai is a semantic code search CLI for developers and AI coding agents. Search code by meaning, trace callers and callees, run it locally.',
   image,
-  type = 'website'
+  imageAlt = 'grepai: give your agent a map of the code',
+  type = 'website',
+  jsonLd = [],
+  markdownUrl,
+  software = false,
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
-const socialImageURL = image || new URL('/grepai/og-image.png', Astro.site);
+const socialImageURL = new URL(image || '/grepai/og-image.png', Astro.site);
+const fullTitle = title === 'grepai' ? title : `${title} | grepai`;
+const version = latestVersion();
 
-// Schema.org structured data for SoftwareApplication
-const schemaOrg = {
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "grepai",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "macOS, Linux, Windows",
-  "description": description,
-  "url": "https://yoanbernabeu.github.io/grepai/",
-  "downloadUrl": "https://github.com/yoanbernabeu/grepai/releases",
-  "softwareVersion": "0.17.0",
-  "author": {
-    "@type": "Person",
-    "name": "Yoan Bernabeu",
-    "url": "https://github.com/yoanbernabeu"
-  },
-  "license": "https://opensource.org/licenses/MIT",
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
-  },
-  "featureList": [
-    "Semantic code search with natural language",
-    "Call graph tracing (callers, callees)",
-    "100% local with Ollama",
-    "MCP server integration",
-    "Real-time file watching",
-    "JSON output for AI agents"
-  ],
-  "keywords": "code search, semantic search, AI agent, CLI, developer tools, Cursor, Claude Code"
-};
+const schemas: Record<string, unknown>[] = [...jsonLd];
+if (software) {
+  schemas.unshift({
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'grepai',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'macOS, Linux, Windows',
+    description,
+    url: 'https://yoanbernabeu.github.io/grepai/',
+    downloadUrl: 'https://github.com/yoanbernabeu/grepai/releases',
+    ...(version ? { softwareVersion: version } : {}),
+    author: { '@type': 'Person', name: 'Yoan Bernabeu', url: 'https://github.com/yoanbernabeu' },
+    license: 'https://opensource.org/licenses/MIT',
+    isAccessibleForFree: true,
+    codeRepository: 'https://github.com/yoanbernabeu/grepai',
+    programmingLanguage: 'Go',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    featureList: [
+      'Semantic code search with natural language queries',
+      'Call graph tracing: callers, callees and graphs',
+      'Data references: readers and writers of a property',
+      'Repository Planning Graph for feature-level navigation',
+      'Local embeddings with Ollama or LM Studio',
+      'MCP server for AI coding agents',
+      'Real-time file watching and one-shot indexing',
+      'Multi-project workspaces',
+    ],
+  });
+}
 ---
 
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="generator" content={Astro.generator} />
 
     <!-- Primary Meta Tags -->
-    <title>{title} | grepai</title>
-    <meta name="title" content={`${title} | grepai`} />
+    <title>{fullTitle}</title>
     <meta name="description" content={description} />
-    <meta name="keywords" content="grepai, semantic code search, AI agent, code search CLI, Cursor, Claude Code, Windsurf, MCP, developer tools, code indexing, call graph" />
     <meta name="author" content="Yoan Bernabeu" />
-    <meta name="robots" content="index, follow" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
 
     <!-- Canonical -->
     <link rel="canonical" href={canonicalURL} />
+    <link rel="sitemap" href="/grepai/sitemap-index.xml" />
+    <link rel="alternate" type="application/rss+xml" title="grepai blog" href="/grepai/blog/rss.xml" />
+    {markdownUrl && <link rel="alternate" type="text/markdown" title="Markdown version" href={markdownUrl} />}
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content={type} />
     <meta property="og:url" content={canonicalURL} />
-    <meta property="og:title" content={`${title} | grepai`} />
+    <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content={socialImageURL} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={imageAlt} />
     <meta property="og:site_name" content="grepai" />
     <meta property="og:locale" content="en_US" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:url" content={canonicalURL} />
-    <meta name="twitter:title" content={`${title} | grepai`} />
+    <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageURL} />
+    <meta name="twitter:image:alt" content={imageAlt} />
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/grepai/favicon.svg" />
     <link rel="apple-touch-icon" href="/grepai/favicon.svg" />
 
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts: self-hosted (src/styles/fonts.css); preload the two faces above the fold -->
+    <link rel="preload" href="/grepai/fonts/young-serif-latin-9.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/grepai/fonts/public-sans-latin-7.woff2" as="font" type="font/woff2" crossorigin />
+
+    <!-- Theme: stored choice, else the system preference. Runs before paint. -->
+    <script is:inline>
+      (function () {
+        var theme;
+        try { theme = localStorage.getItem('grepai-theme'); } catch (e) {}
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <meta name="theme-color" content="#F4ECDA" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0E1A1E" media="(prefers-color-scheme: dark)" />
 
     <!-- Schema.org structured data -->
-    <script type="application/ld+json" set:html={JSON.stringify(schemaOrg)} />
+    {schemas.map((schema) => <script type="application/ld+json" set:html={JSON.stringify(schema)} />)}
 
     <!-- Styles -->
     <style is:global>
+      @import '../styles/fonts.css';
       @import '../styles/global.css';
-      @import '../styles/animations.css';
     </style>
   </head>
   <body class="min-h-screen flex flex-col">

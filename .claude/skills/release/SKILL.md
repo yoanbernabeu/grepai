@@ -79,7 +79,7 @@ Update comparison links at bottom:
 
 #### 4.2 Documentation Hero
 
-Update version in `docs/src/components/homepage/HeroAnimated.astro` line 6:
+Update version in `docs/src/components/homepage/Hero.astro` line 6:
 
 ```astro
 const { version = "X.Y.Z" } = Astro.props;
@@ -104,7 +104,7 @@ version = "X.Y.Z";
 ### Step 5: Commit and Push
 
 ```bash
-git add CHANGELOG.md docs/src/components/homepage/HeroAnimated.astro flake.nix
+git add CHANGELOG.md docs/src/components/homepage/Hero.astro flake.nix
 git commit -m "chore(release): bump version to X.Y.Z
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"

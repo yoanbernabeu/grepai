@@ -16,18 +16,18 @@ const filteredHeadings = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
 ---
 
 {filteredHeadings.length > 0 && (
-  <div class="sticky top-8">
-    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+  <div>
+    <h4 class="text-xs font-semibold text-ink-muted mb-3">
       On this page
     </h4>
     <nav id="toc-nav">
-      <ul class="space-y-2 text-sm">
+      <ul class="space-y-1.5 text-[0.8125rem]">
         {filteredHeadings.map((heading) => (
           <li>
             <a
               href={`#${heading.slug}`}
               class:list={[
-                'toc-link block text-gray-400 hover:text-gray-200 transition-colors',
+                'toc-link block text-ink-muted hover:text-ink transition-colors',
                 { 'pl-4': heading.depth === 3 }
               ]}
               data-slug={heading.slug}
@@ -45,20 +45,23 @@ const filteredHeadings = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
   .toc-link {
     position: relative;
     padding-left: 0.75rem;
-    border-left: 2px solid transparent;
-  }
-
-  .toc-link:hover {
-    border-left-color: rgba(129, 140, 248, 0.3);
+    border-left: 1px solid rgb(var(--rule));
+    line-height: 1.45;
+    padding-block: 0.15rem;
   }
 
   .toc-link.active {
-    color: #818cf8;
-    border-left-color: #818cf8;
+    color: rgb(var(--ink));
+    border-left: 2px solid rgb(var(--gold));
+    padding-left: calc(0.75rem - 1px);
   }
 
   .toc-link[class*="pl-4"] {
     padding-left: 1.5rem;
+  }
+
+  .toc-link.active[class*="pl-4"] {
+    padding-left: calc(1.5rem - 1px);
   }
 </style>
 

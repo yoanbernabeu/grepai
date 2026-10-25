@@ -3,21 +3,32 @@ import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import Header from '../../components/global/Header.astro';
 import Footer from '../../components/global/Footer.astro';
+import { blogCover } from '../../utils/blogCovers';
+import { responsiveArt } from '../../utils/art';
 
 const posts = (await getCollection('blog'))
   .filter((post) => !post.data.draft)
   .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+
+const thumbs = new Map(
+  await Promise.all(
+    posts.map(async (post) => {
+      const cover = blogCover(post.id.replace(/\.(md|mdx)$/, ''));
+      return [post.id, cover ? await responsiveArt(cover.image, [320, 640]) : undefined] as const;
+    })
+  )
+);
 ---
 
 <BaseLayout title="Blog" description="News, tutorials, and updates about grepai">
   <Header />
 
   <main class="flex-1">
-    <div class="max-w-4xl mx-auto px-6 py-12">
+    <div class="gutter max-w-3xl mx-auto py-12 lg:py-16">
       <!-- Header -->
-      <header class="mb-12">
-        <h1 class="text-4xl font-extrabold gradient-text mb-4">Blog</h1>
-        <p class="text-xl text-gray-400">
+      <header class="mb-10 pb-8 border-b border-rule">
+        <h1 class="font-display text-[2.6rem] sm:text-5xl leading-[1.05] tracking-[-0.015em] mb-3">Blog</h1>
+        <p class="text-lg text-ink-muted">
           News, tutorials, and updates about grepai
         </p>
       </header>
@@ -25,10 +36,10 @@ const posts = (await getCollection('blog'))
       <!-- Posts list -->
       {posts.length === 0 ? (
         <div class="text-center py-12">
-          <p class="text-gray-400">No posts yet. Stay tuned!</p>
+          <p class="text-ink-muted">No posts yet. New posts will show up here.</p>
         </div>
       ) : (
-        <div class="space-y-8">
+        <div class="divide-y divide-rule">
           {posts.map((post) => {
             const formattedDate = post.data.pubDate.toLocaleDateString('en-US', {
               year: 'numeric',
@@ -40,27 +51,43 @@ const posts = (await getCollection('blog'))
               <article class="group">
                 <a
                   href={`/grepai/blog/${post.id.replace(/\.(md|mdx)$/, '')}/`}
-                  class="block p-6 -mx-6 rounded-xl hover:bg-white/5 transition-colors"
+                  class="grid gap-5 py-7 sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-start"
                 >
+                  {thumbs.get(post.id) ? (
+                    <picture>
+                      <source type="image/avif" srcset={thumbs.get(post.id)!.avif} sizes="(min-width: 640px) 208px, 100vw" />
+                      <source type="image/webp" srcset={thumbs.get(post.id)!.webp} sizes="(min-width: 640px) 208px, 100vw" />
+                      <img
+                        src={thumbs.get(post.id)!.fallback}
+                        srcset={thumbs.get(post.id)!.jpeg}
+                        sizes="(min-width: 640px) 208px, 100vw"
+                        width={thumbs.get(post.id)!.width}
+                        height={thumbs.get(post.id)!.height}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        class="block w-full h-auto aspect-video object-cover rounded-md bg-[#172629]"
+                      />
+                    </picture>
+                  ) : <div class="hidden sm:block"></div>}
+                  <div class="min-w-0">
                   {post.data.tags && post.data.tags.length > 0 && (
-                    <div class="flex flex-wrap gap-2 mb-3">
+                    <div class="flex flex-wrap gap-3 mb-2">
                       {post.data.tags.map((tag) => (
-                        <span class="px-2 py-1 text-xs font-medium bg-accent/10 text-accent rounded-full">
-                          {tag}
-                        </span>
+                        <span class="text-xs font-medium text-ink-muted">#{tag}</span>
                       ))}
                     </div>
                   )}
 
-                  <h2 class="text-2xl font-bold text-white group-hover:text-accent transition-colors mb-2">
+                  <h2 class="font-display text-2xl leading-tight mb-2 group-hover:underline group-hover:decoration-gold group-hover:decoration-2 underline-offset-4">
                     {post.data.title}
                   </h2>
 
-                  <p class="text-gray-400 mb-4">
+                  <p class="text-ink-muted mb-3">
                     {post.data.description}
                   </p>
 
-                  <div class="flex items-center gap-4 text-sm text-gray-500">
+                  <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-muted">
                     <span class="flex items-center gap-2">
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
@@ -77,6 +104,7 @@ const posts = (await getCollection('blog'))
                       </svg>
                       {formattedDate}
                     </span>
+                  </div>
                   </div>
                 </a>
               </article>

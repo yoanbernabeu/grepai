@@ -8,30 +8,7 @@ interface Props {
 const { title, description, href } = Astro.props;
 ---
 
-<a href={href} class="block glass glass-hover p-6 rounded-xl group hover-lift">
-  <div class="flex items-start justify-between gap-4">
-    <div>
-      <h3 class="text-lg font-semibold text-white group-hover:text-primary-400 transition-colors mb-1">
-        {title}
-      </h3>
-      {description && (
-        <p class="text-gray-400 text-sm">{description}</p>
-      )}
-    </div>
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      class="text-gray-500 group-hover:text-primary-400 group-hover:translate-x-1 transition-all flex-shrink-0"
-    >
-      <path d="M5 12h14" />
-      <path d="m12 5 7 7-7 7" />
-    </svg>
-  </div>
+<a href={href} class="group block p-5 rounded-md border border-rule bg-paper-raised hover:border-ink-muted transition-colors no-underline">
+  <span class="block font-semibold text-ink group-hover:underline group-hover:decoration-gold group-hover:underline-offset-4">{title}</span>
+  {description && <span class="block mt-1 text-sm text-ink-muted">{description}</span>}
 </a>

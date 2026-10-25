@@ -1,0 +1,230 @@
+---
+interface Props {
+  version?: string;
+}
+
+const { version = "0.39.0" } = Astro.props;
+
+import { responsiveArt } from '../../utils/art';
+import heroWide from '../../assets/illustrations/hero.jpg';
+import heroTall from '../../assets/illustrations/hero-mobile.jpg';
+
+const installCommand = 'curl -sSL https://raw.githubusercontent.com/yoanbernabeu/grepai/main/install.sh | sh';
+
+const [wide, tall] = await Promise.all([
+  responsiveArt(heroWide, [960, 1440, 1920, 2400]),
+  responsiveArt(heroTall, [600, 900, 1200]),
+]);
+
+// GitHub stats at build time (the site is rebuilt on every push to main).
+// Nothing is shown when the API is unreachable, rather than a made-up number.
+let stars: number | null = null;
+let downloads: number | null = null;
+
+try {
+  const headers: Record<string, string> = { 'User-Agent': 'grepai-docs' };
+  const [repoRes, releasesRes] = await Promise.all([
+    fetch('https://api.github.com/repos/yoanbernabeu/grepai', { headers }),
+    fetch('https://api.github.com/repos/yoanbernabeu/grepai/releases?per_page=100', { headers }),
+  ]);
+  if (repoRes.ok) {
+    stars = (await repoRes.json()).stargazers_count;
+  }
+  if (releasesRes.ok) {
+    const releases = await releasesRes.json();
+    downloads = releases.reduce((total: number, release: any) =>
+      total + release.assets.reduce((sum: number, asset: any) => sum + asset.download_count, 0), 0);
+  }
+} catch (e) {
+  // Offline build: stats stay hidden until the client script fills them
+}
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-art relative overflow-hidden">
+    <picture>
+      <source media="(max-width: 767px)" type="image/avif" srcset={tall.avif} sizes="100vw" />
+      <source media="(max-width: 767px)" type="image/webp" srcset={tall.webp} sizes="100vw" />
+      <source media="(max-width: 767px)" srcset={tall.jpeg} sizes="100vw" />
+      <source type="image/avif" srcset={wide.avif} sizes="100vw" />
+      <source type="image/webp" srcset={wide.webp} sizes="100vw" />
+      <img
+        src={wide.fallback}
+        srcset={wide.jpeg}
+        sizes="100vw"
+        width={wide.width}
+        height={wide.height}
+        alt="An explorer holding a lantern stands on a cliff above a vast labyrinth city at dawn. A thin golden thread runs from the lantern through the streets to one lit building."
+        class="absolute inset-0 w-full h-full object-cover"
+        fetchpriority="high"
+        decoding="async"
+      />
+    </picture>
+    <div class="hero-scrim absolute inset-0 pointer-events-none" aria-hidden="true"></div>
+  </div>
+
+  <div class="hero-content">
+    <h1 id="hero-title" class="hero-title gutter font-display font-normal">
+      Give your agent a map of the code.
+    </h1>
+
+    <div class="hero-copy gutter">
+      <p class="hero-sub">
+        Coding agents burn time and tokens opening file after file to find the right code. With grepai they ask in plain
+        English and go straight to it. Free, open source, and it runs on your machine.
+      </p>
+
+      <div class="mt-6 flex flex-col gap-3 max-w-[34rem]">
+        <div class="cmd">
+          <code class="cmd-text">{installCommand}</code>
+          <button type="button" class="cmd-copy" data-copy={installCommand}>Copy</button>
+        </div>
+        <p class="hero-links text-sm">
+          macOS and Linux. <a href="/grepai/installation/" class="link">Homebrew, Windows and other options</a>
+          <span aria-hidden="true" class="mx-1.5">·</span>
+          <a href="/grepai/getting-started/" class="link">Read the docs</a>
+        </p>
+      </div>
+
+      <p class="hero-meta mt-6 text-sm">
+        <a href="https://github.com/yoanbernabeu/grepai" target="_blank" rel="noopener noreferrer" class="hover:underline underline-offset-4">
+          Open source, MIT<span hidden={stars === null}>, <span>{stars?.toLocaleString('en-US')}</span> stars on GitHub</span><span hidden={!downloads}>, <span>{downloads?.toLocaleString('en-US')}</span> downloads</span>.
+          Latest release v{version}.
+        </a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* Text over the painting uses fixed colors: the sky is light in both themes. */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    background: #172629;
+    color: #172629;
+  }
+
+  /* Mobile: tall crop with the title in the sky, copy below on ink. */
+  .hero-art {
+    grid-area: 1 / 1;
+    aspect-ratio: 1208 / 1500;
+    max-height: 82vh;
+    width: 100%;
+  }
+  .hero-art img {
+    object-position: center 72%;
+  }
+  .hero-scrim {
+    background: linear-gradient(180deg, rgb(244 232 204 / 0.6) 0%, rgb(244 232 204 / 0) 42%);
+  }
+  .hero-content {
+    display: contents;
+  }
+  .hero-title {
+    grid-area: 1 / 1;
+    align-self: start;
+    position: relative;
+    z-index: 1;
+    padding-top: 1.75rem;
+    font-size: clamp(2.2rem, 10vw, 3.2rem);
+    line-height: 1.03;
+    letter-spacing: -0.015em;
+    max-width: 13ch;
+    box-sizing: content-box;
+  }
+  .hero-copy {
+    color: #ece2cb;
+    padding-top: 1.75rem;
+    padding-bottom: 2.75rem;
+  }
+  .hero-sub {
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    max-width: 36rem;
+  }
+  .hero-links,
+  .hero-meta {
+    color: #b9c3bf;
+  }
+  .hero-links :global(.link) {
+    color: #ece2cb;
+  }
+
+  /* Desktop: the wide painting is the stage, title and copy sit in the dawn sky. */
+  @media (min-width: 768px) {
+    .hero-art {
+      aspect-ratio: auto;
+      max-height: none;
+      min-height: 640px;
+      height: min(calc(100vh - 4rem), 58vw);
+    }
+    .hero-art img {
+      object-position: center 38%;
+    }
+    .hero-scrim {
+      background: radial-gradient(ellipse 62% 92% at 16% 46%, rgb(244 232 204 / 0.93) 0%, rgb(244 232 204 / 0.76) 52%, rgb(244 232 204 / 0) 82%);
+    }
+    .hero-content {
+      display: block;
+      grid-area: 1 / 1;
+      align-self: center;
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 80rem;
+      margin: 0 auto;
+      padding-left: max(1.5rem, env(safe-area-inset-left, 0px));
+      padding-right: max(1.5rem, env(safe-area-inset-right, 0px));
+    }
+    .hero-title,
+    .hero-copy {
+      padding-left: 0;
+      padding-right: 0;
+    }
+    .hero-title {
+      padding-top: 0;
+      font-size: clamp(3rem, 5.2vw, 4.75rem);
+      line-height: 1.02;
+      max-width: 10.5ch;
+    }
+    .hero-copy {
+      max-width: 34rem;
+      color: #1f3236;
+      padding-top: 1.5rem;
+      padding-bottom: 0;
+    }
+    .hero-sub {
+      font-size: 1.125rem;
+    }
+    .hero-links,
+    .hero-meta {
+      color: #2f4448;
+    }
+    .hero-links :global(.link) {
+      color: #172629;
+    }
+  }
+</style>
+
+<script>
+  // Copy buttons for install commands (hero and closing section)
+  document.querySelectorAll<HTMLButtonElement>('button[data-copy]').forEach((btn) => {
+    if (btn.dataset.ready) return;
+    btn.dataset.ready = 'true';
+    btn.addEventListener('click', async () => {
+      const label = btn.textContent;
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy || '');
+        btn.textContent = 'Copied';
+      } catch (e) {
+        // Clipboard refused: select the command so it can be copied by hand
+        const code = btn.parentElement?.querySelector('code');
+        if (code) window.getSelection()?.selectAllChildren(code);
+        btn.textContent = 'Selected';
+      }
+      setTimeout(() => { btn.textContent = label; }, 1600);
+    });
+  });
+
+</script>

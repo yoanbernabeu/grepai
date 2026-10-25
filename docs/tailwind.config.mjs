@@ -1,138 +1,132 @@
 /** @type {import('tailwindcss').Config} */
+
+// Colors are CSS variables (RGB channels) defined in src/styles/global.css,
+// so every utility follows the light/dark theme without a `dark:` variant.
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+
 export default {
   content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        // Primary gradient colors
-        primary: {
-          DEFAULT: '#818cf8',
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
-          950: '#1e1b4b',
+        paper: {
+          DEFAULT: token('paper'),
+          raised: token('paper-raised'),
+          sunk: token('paper-sunk'),
         },
-        violet: {
-          DEFAULT: '#a78bfa',
-          glow: 'rgba(167, 139, 250, 0.4)',
+        rule: token('rule'),
+        ink: {
+          DEFAULT: token('ink'),
+          muted: token('ink-muted'),
         },
-        purple: {
-          DEFAULT: '#c084fc',
-          glow: 'rgba(192, 132, 252, 0.4)',
+        gold: {
+          DEFAULT: token('gold'),
+          ink: token('gold-ink'),
+          on: token('on-gold'),
         },
-        // Surface colors (dark mode)
-        surface: {
-          DEFAULT: '#0f0f17',
-          50: '#18181f',
-          100: '#1e1e28',
-          200: '#24242f',
-          300: '#2a2a36',
-          400: '#32323e',
-          500: '#3a3a47',
-        },
-        // Terminal Catppuccin Mocha
-        terminal: {
-          bg: '#1e1e2e',
-          header: '#313244',
-          text: '#cdd6f4',
-          green: '#a6e3a1',
-          yellow: '#f9e2af',
-          red: '#f38ba8',
-          blue: '#89b4fa',
-          purple: '#cba6f7',
-          teal: '#94e2d5',
-          pink: '#f5c2e7',
-        },
-        // Glass colors
-        glass: {
-          bg: 'rgba(255, 255, 255, 0.03)',
-          border: 'rgba(255, 255, 255, 0.08)',
-          hover: 'rgba(255, 255, 255, 0.06)',
+        code: {
+          bg: token('code-bg'),
+          fg: token('code-fg'),
+          muted: token('code-muted'),
         },
       },
       fontFamily: {
-        sans: ['Inter Variable', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        display: ['"Young Serif"', 'Georgia', 'serif'],
+        sans: ['"Public Sans"', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
-      backdropBlur: {
-        xs: '2px',
+      borderRadius: {
+        // Two radii only: controls (3px) and framed blocks (6px).
+        sm: '3px',
+        DEFAULT: '3px',
+        md: '6px',
       },
-      boxShadow: {
-        glow: '0 0 20px rgba(129, 140, 248, 0.3)',
-        'glow-lg': '0 0 40px rgba(129, 140, 248, 0.4)',
-        'glow-violet': '0 0 30px rgba(167, 139, 250, 0.4)',
-        glass: '0 4px 30px rgba(0, 0, 0, 0.3)',
-      },
-      animation: {
-        'gradient-flow': 'gradient-flow 4s ease infinite',
-        'glow': 'glow 3s ease-in-out infinite',
-        'float': 'float 6s ease-in-out infinite',
-        'fade-in': 'fade-in 0.3s ease forwards',
-        'slide-up': 'slide-up 0.8s ease-out',
-        'blink': 'blink 1s step-end infinite',
+      maxWidth: {
+        prose: '68ch',
       },
       typography: {
         DEFAULT: {
           css: {
-            '--tw-prose-body': '#cdd6f4',
-            '--tw-prose-headings': '#f5f5f5',
-            '--tw-prose-lead': '#a6adc8',
-            '--tw-prose-links': '#818cf8',
-            '--tw-prose-bold': '#f5f5f5',
-            '--tw-prose-counters': '#a6adc8',
-            '--tw-prose-bullets': '#6c7086',
-            '--tw-prose-hr': '#313244',
-            '--tw-prose-quotes': '#cdd6f4',
-            '--tw-prose-quote-borders': '#818cf8',
-            '--tw-prose-captions': '#a6adc8',
-            '--tw-prose-code': '#cba6f7',
-            '--tw-prose-pre-code': '#cdd6f4',
-            '--tw-prose-pre-bg': '#1e1e2e',
-            '--tw-prose-th-borders': '#313244',
-            '--tw-prose-td-borders': '#24242f',
+            '--tw-prose-body': 'rgb(var(--ink))',
+            '--tw-prose-headings': 'rgb(var(--ink))',
+            '--tw-prose-lead': 'rgb(var(--ink-muted))',
+            '--tw-prose-links': 'rgb(var(--gold-ink))',
+            '--tw-prose-bold': 'rgb(var(--ink))',
+            '--tw-prose-counters': 'rgb(var(--ink-muted))',
+            '--tw-prose-bullets': 'rgb(var(--ink-muted))',
+            '--tw-prose-hr': 'rgb(var(--rule))',
+            '--tw-prose-quotes': 'rgb(var(--ink))',
+            '--tw-prose-quote-borders': 'rgb(var(--rule))',
+            '--tw-prose-captions': 'rgb(var(--ink-muted))',
+            '--tw-prose-code': 'rgb(var(--ink))',
+            '--tw-prose-pre-code': 'rgb(var(--code-fg))',
+            '--tw-prose-pre-bg': 'rgb(var(--code-bg))',
+            '--tw-prose-th-borders': 'rgb(var(--rule))',
+            '--tw-prose-td-borders': 'rgb(var(--rule))',
             maxWidth: 'none',
-            code: {
-              backgroundColor: 'rgba(203, 166, 247, 0.1)',
-              padding: '0.2em 0.4em',
-              borderRadius: '0.25rem',
-              fontWeight: '400',
-            },
-            'code::before': {
-              content: '""',
-            },
-            'code::after': {
-              content: '""',
-            },
+            lineHeight: '1.7',
             a: {
-              textDecoration: 'none',
-              borderBottom: '1px solid rgba(129, 140, 248, 0.3)',
-              transition: 'all 0.2s ease',
+              fontWeight: '500',
+              textDecorationLine: 'underline',
+              textDecorationColor: 'rgb(var(--gold) / 0.6)',
+              textDecorationThickness: '1px',
+              textUnderlineOffset: '3px',
               '&:hover': {
-                borderBottomColor: '#818cf8',
+                textDecorationColor: 'rgb(var(--gold))',
+                textDecorationThickness: '2px',
               },
             },
-            pre: {
-              backgroundColor: '#1e1e2e',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              borderRadius: '0.75rem',
-            },
-            h1: {
-              fontWeight: '800',
+            'h1, h2': {
+              fontFamily: '"Young Serif", Georgia, serif',
+              fontWeight: '400',
+              letterSpacing: '-0.01em',
             },
             h2: {
-              fontWeight: '700',
-              marginTop: '2em',
+              marginTop: '2.2em',
+              paddingTop: '0.4em',
             },
             h3: {
               fontWeight: '600',
+            },
+            code: {
+              backgroundColor: 'rgb(var(--paper-sunk))',
+              padding: '0.15em 0.35em',
+              borderRadius: '3px',
+              fontWeight: '400',
+              fontSize: '0.875em',
+            },
+            'code::before': { content: '""' },
+            'code::after': { content: '""' },
+            'a code': { color: 'inherit' },
+            pre: {
+              borderRadius: '6px',
+              fontSize: '0.85em',
+              lineHeight: '1.65',
+            },
+            'pre code': {
+              backgroundColor: 'transparent',
+              padding: '0',
+            },
+            blockquote: {
+              fontStyle: 'normal',
+              fontWeight: '400',
+              backgroundColor: 'rgb(var(--paper-sunk) / 0.6)',
+              borderLeftWidth: '2px',
+              padding: '0.6em 1em',
+              borderRadius: '0 6px 6px 0',
+            },
+            'blockquote p:first-of-type::before': { content: 'none' },
+            'blockquote p:last-of-type::after': { content: 'none' },
+            table: {
+              fontSize: '0.9em',
+            },
+            'thead th': {
+              fontWeight: '600',
+              backgroundColor: 'rgb(var(--paper-sunk) / 0.7)',
+              padding: '0.6em 0.8em',
+            },
+            'tbody td, tfoot td': {
+              padding: '0.6em 0.8em',
             },
           },
         },

@@ -2,26 +2,45 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/global/Header.astro';
 import Footer from '../components/global/Footer.astro';
+import { responsiveArt } from '../utils/art';
+import lostImage from '../assets/illustrations/lost.jpg';
+
+const lost = await responsiveArt(lostImage, [800, 1200, 1600, 2000]);
 ---
 
 <BaseLayout title="Page Not Found">
   <Header />
 
-  <main class="flex-1 flex items-center justify-center px-4">
-    <div class="text-center">
-      <h1 class="text-8xl md:text-9xl font-extrabold gradient-text mb-4">404</h1>
-      <p class="text-xl md:text-2xl text-gray-400 mb-8">Page not found</p>
-      <p class="text-gray-500 mb-8 max-w-md mx-auto">
-        The page you're looking for doesn't exist or has been moved.
-      </p>
-      <a href="/grepai/" class="btn-primary">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          <polyline points="9 22 9 12 15 12 15 22" />
-        </svg>
-        Back to Home
-      </a>
-    </div>
+  <main class="flex-1">
+    <section class="relative overflow-hidden bg-[#1c2b2f] text-[#ece2cb]">
+      <picture>
+        <source type="image/avif" srcset={lost.avif} sizes="100vw" />
+        <source type="image/webp" srcset={lost.webp} sizes="100vw" />
+        <img
+          src={lost.fallback}
+          srcset={lost.jpeg}
+          sizes="100vw"
+          width={lost.width}
+          height={lost.height}
+          alt="The explorer stands in thick fog between labyrinth walls, lantern raised, reading a map. No golden thread in sight."
+          class="block w-full h-auto md:absolute md:inset-0 md:h-full md:object-cover md:object-[center_60%]"
+          decoding="async"
+        />
+      </picture>
+      <div class="relative gutter max-w-7xl mx-auto py-10 md:py-0 md:min-h-[min(72vh,760px)] md:flex md:items-start">
+        <div class="max-w-md md:mt-[10vh] md:p-6 md:-ml-6 md:rounded-md md:bg-[#14232a]/75">
+          <p class="text-sm font-semibold text-[#e3a52b]">404</p>
+          <h1 class="mt-2 font-display text-4xl md:text-5xl leading-[1.05]">This path goes nowhere.</h1>
+          <p class="mt-4 text-[#c9d1cd]">
+            The page may have moved, or the link has a typo. Search the docs, or start again from the beginning.
+          </p>
+          <div class="mt-6 flex flex-wrap gap-3">
+            <a href="/grepai/" class="btn-primary">Back to the home page</a>
+            <a href="/grepai/getting-started/" class="inline-flex items-center rounded-sm px-5 py-2.5 font-medium border border-[#ece2cb]/40 hover:border-[#ece2cb] transition-colors">Open the docs</a>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <Footer />

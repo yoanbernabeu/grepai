@@ -1,11 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="url(#faviconGradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <defs>
-    <linearGradient id="faviconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#818cf8"/>
-      <stop offset="50%" style="stop-color:#a78bfa"/>
-      <stop offset="100%" style="stop-color:#c084fc"/>
-    </linearGradient>
-  </defs>
-  <circle cx="11" cy="11" r="8"/>
-  <path d="m21 21-4.3-4.3"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <style>.i{stroke:#172629}@media (prefers-color-scheme: dark){.i{stroke:#ECE2CB}}</style>
+  <circle class="i" cx="10.5" cy="10.5" r="7.5" stroke-width="2"/>
+  <path class="i" d="m16 16 5 5" stroke-width="2.6"/>
+  <path d="M5.6 12.6c1.9 0 1.9-4.4 4.4-4.4s1.6 3.2 3.6 3.2" stroke="#E3A52B" stroke-width="2"/>
+  <circle cx="14" cy="11.4" r="1.3" fill="#E3A52B"/>
 </svg>

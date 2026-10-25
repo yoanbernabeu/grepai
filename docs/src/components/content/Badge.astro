@@ -8,11 +8,11 @@ interface Props {
 const { text, variant = 'default', size = 'medium' } = Astro.props;
 
 const variantClasses: Record<string, string> = {
-  default: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
-  success: 'bg-green-500/20 text-green-400 border-green-500/30',
-  warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  caution: 'bg-red-500/20 text-red-400 border-red-500/30',
-  note: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  default: 'text-ink-muted border-rule',
+  success: 'text-ink border-ink-muted',
+  warning: 'text-gold-ink border-gold/70',
+  caution: 'text-[#b4472f] border-[#b4472f]/60',
+  note: 'text-ink-muted border-rule bg-paper-sunk/60',
 };
 
 const sizeClasses: Record<string, string> = {
@@ -23,7 +23,7 @@ const sizeClasses: Record<string, string> = {
 
 <span
   class:list={[
-    'inline-flex items-center rounded-full border font-medium',
+    'inline-flex items-center rounded-sm border font-medium',
     variantClasses[variant],
     sizeClasses[size],
   ]}

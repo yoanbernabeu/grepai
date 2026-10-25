@@ -9,7 +9,7 @@ const id = `tabs-${Math.random().toString(36).slice(2, 9)}`;
 
 <div class="tabs-container my-6" data-tabs-id={id}>
   <!-- Tab buttons -->
-  <div class="flex border-b border-glass-border mb-4 overflow-x-auto no-scrollbar" role="tablist">
+  <div class="flex border-b border-rule mb-4 overflow-x-auto no-scrollbar" role="tablist">
     {labels.map((label, index) => (
       <button
         type="button"
@@ -34,18 +34,18 @@ const id = `tabs-${Math.random().toString(36).slice(2, 9)}`;
 
 <style>
   .tab-button {
-    color: #9ca3af;
+    color: rgb(var(--ink-muted));
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
   }
 
   .tab-button:hover {
-    color: #e5e7eb;
+    color: rgb(var(--ink));
   }
 
   .tab-button.active {
-    color: #818cf8;
-    border-bottom-color: #818cf8;
+    color: rgb(var(--ink));
+    border-bottom-color: rgb(var(--gold));
   }
 </style>
 

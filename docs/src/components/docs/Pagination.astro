@@ -10,65 +10,18 @@ const { prev, next } = findPrevNext(currentSlug);
 ---
 
 {(prev || next) && (
-  <nav class="flex items-center justify-between mt-16 pt-8 border-t border-glass-border">
+  <nav class="grid grid-cols-2 gap-4 mt-16 pt-8 border-t border-rule" aria-label="Previous and next pages">
     {prev ? (
-      <a
-        href={prev.href}
-        class="group flex items-center gap-3 p-4 rounded-xl glass glass-hover max-w-[45%]"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="text-gray-500 group-hover:text-primary-400 transition-colors"
-        >
-          <path d="m15 18-6-6 6-6" />
-        </svg>
-        <div class="text-right">
-          <span class="text-xs text-gray-500 block">Previous</span>
-          <span class="text-sm font-medium text-gray-300 group-hover:text-white transition-colors truncate block">
-            {prev.label}
-          </span>
-        </div>
+      <a href={prev.href} class="group block p-4 rounded-md border border-rule hover:border-ink-muted transition-colors min-w-0">
+        <span class="block text-xs text-ink-muted">Previous</span>
+        <span class="block mt-1 font-medium text-ink truncate group-hover:underline group-hover:decoration-gold group-hover:underline-offset-4">{prev.label}</span>
       </a>
-    ) : (
-      <div></div>
-    )}
-
+    ) : <div></div>}
     {next ? (
-      <a
-        href={next.href}
-        class="group flex items-center gap-3 p-4 rounded-xl glass glass-hover max-w-[45%] ml-auto"
-      >
-        <div class="text-left">
-          <span class="text-xs text-gray-500 block">Next</span>
-          <span class="text-sm font-medium text-gray-300 group-hover:text-white transition-colors truncate block">
-            {next.label}
-          </span>
-        </div>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="text-gray-500 group-hover:text-primary-400 transition-colors"
-        >
-          <path d="m9 18 6-6-6-6" />
-        </svg>
+      <a href={next.href} class="group block p-4 rounded-md border border-rule hover:border-ink-muted transition-colors text-right min-w-0">
+        <span class="block text-xs text-ink-muted">Next</span>
+        <span class="block mt-1 font-medium text-ink truncate group-hover:underline group-hover:decoration-gold group-hover:underline-offset-4">{next.label}</span>
       </a>
-    ) : (
-      <div></div>
-    )}
+    ) : <div></div>}
   </nav>
 )}

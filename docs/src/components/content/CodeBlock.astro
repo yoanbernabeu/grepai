@@ -10,10 +10,11 @@ const id = `code-${Math.random().toString(36).slice(2, 9)}`;
 
 <div class="code-block-wrapper relative group my-4">
   <button
-    class="copy-btn absolute top-3 right-3 p-2 rounded-lg bg-surface-300/80 hover:bg-surface-400 text-gray-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all z-10"
+    type="button"
+    class="copy-btn absolute top-2.5 right-2.5 p-1.5 rounded-sm bg-code-fg/10 hover:bg-code-fg/20 text-code-muted hover:text-code-fg md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity z-10"
     data-code={code}
     data-id={id}
-    aria-label="Copy to clipboard"
+    aria-label="Copy code"
   >
     <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
