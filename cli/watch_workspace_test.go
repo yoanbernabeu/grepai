@@ -317,3 +317,18 @@ func TestPrintProgressAndBatchProgress_NoUIModeUsesNewlines(t *testing.T) {
 		t.Fatalf("expected inline progress output, got %q", out)
 	}
 }
+
+func TestExistingWorkspaceProjectsSkipsMissingFolders(t *testing.T) {
+	present := t.TempDir()
+	ws := &config.Workspace{
+		Name: "acme",
+		Projects: []config.ProjectEntry{
+			{Name: "api", Path: present},
+			{Name: "old", Path: filepath.Join(present, "deleted")},
+		},
+	}
+	got := existingWorkspaceProjects(ws, true)
+	if len(got) != 1 || got[0].Name != "api" {
+		t.Fatalf("existingWorkspaceProjects() = %+v, want only api", got)
+	}
+}

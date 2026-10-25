@@ -2812,6 +2812,25 @@ func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
 	return nil
 }
 
+// existingWorkspaceProjects returns the workspace projects whose folder exists,
+// warning about the others.
+func existingWorkspaceProjects(ws *config.Workspace, isBackgroundChild bool) []config.ProjectEntry {
+	existing := make([]config.ProjectEntry, 0, len(ws.Projects))
+	for _, p := range ws.Projects {
+		if _, err := os.Stat(p.Path); os.IsNotExist(err) {
+			msg := fmt.Sprintf("Warning: skipping project %s, its path does not exist (%s)", p.Name, p.Path)
+			if isBackgroundChild {
+				log.Print(msg)
+			} else {
+				fmt.Println(msg)
+			}
+			continue
+		}
+		existing = append(existing, p)
+	}
+	return existing
+}
+
 func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2851,11 +2870,11 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 		log.Printf("Projects: %d", len(ws.Projects))
 	}
 
-	// Check all project paths exist
-	for _, p := range ws.Projects {
-		if _, err := os.Stat(p.Path); os.IsNotExist(err) {
-			return fmt.Errorf("project path does not exist: %s (%s)", p.Name, p.Path)
-		}
+	// Skip projects whose folder was moved or deleted instead of refusing to
+	// watch the whole workspace (#127). Their indexed data is left as is.
+	ws.Projects = existingWorkspaceProjects(ws, isBackgroundChild)
+	if len(ws.Projects) == 0 {
+		return fmt.Errorf("no project of workspace %s exists on disk; check the paths with 'grepai workspace show %s'", ws.Name, ws.Name)
 	}
 
 	// Acquire every project lifetime lock before any workspace store is loaded.
