@@ -211,14 +211,16 @@ var gdscriptPatterns = &LanguagePatterns{
 	Extension: ".gd",
 	Language:  "gdscript",
 	Functions: []*regexp.Regexp{
-		// func function_name(params) -> ReturnType:
-		regexp.MustCompile(`(?m)^func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
-		// static func function_name(params):
-		regexp.MustCompile(`(?m)^static\s+func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// [@annotation(...)] func function_name(params) -> ReturnType:
+		// Annotations may share the declaration line; [ \t] (not \s) keeps the
+		// optional annotation prefix from matching across a newline.
+		regexp.MustCompile(`(?m)^(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?[ \t]+)*func[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
+		// [@annotation(...)] static func function_name(params):
+		regexp.MustCompile(`(?m)^(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?[ \t]+)*static[ \t]+func[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
 	},
 	Methods: []*regexp.Regexp{
-		// func method_name(params): inside an inner class (indented)
-		regexp.MustCompile(`(?m)^[ \t]+(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		// [@annotation(...)] func method_name(params): inside an inner class (indented)
+		regexp.MustCompile(`(?m)^[ \t]+(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?[ \t]+)*(?:static[ \t]+)?func[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`),
 	},
 	Classes: []*regexp.Regexp{
 		// class_name ClassName
@@ -300,11 +302,12 @@ var languageKeywords = map[string]map[string]bool{
 		"var": true, "const": true, "static": true, "pass": true, "break": true,
 		"continue": true, "new": true, "super": true, "self": true, "in": true,
 		"as": true, "is": true, "assert": true, "print": true, "str": true,
-		"int": true, "float": true, "bool": true, "len": true, "range": true,
+		"int": true, "float": true, "bool": true, "range": true,
 		"typeof": true, "preload": true, "load": true, "get_node": true,
 		"get_parent": true, "queue_free": true, "connect": true,
 		"emit_signal": true, "call": true, "callv": true, "call_deferred": true,
-		"has_method": true,
+		"has_method": true, "size": true, "length": true, "instantiate": true,
+		"duplicate": true,
 	},
 	"php": {
 		"if": true, "for": true, "foreach": true, "while": true, "switch": true,

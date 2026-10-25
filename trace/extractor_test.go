@@ -2,6 +2,7 @@ package trace
 
 import (
 	"context"
+	"sort"
 	"testing"
 )
 
@@ -1475,8 +1476,7 @@ func TestRegexExtractor_ExtractSymbols_GDScript(t *testing.T) {
 	extractor := NewRegexExtractor()
 	ctx := context.Background()
 
-	content := `class_name PlayerStats
-extends Node
+	content := `class_name PlayerStats extends Node
 
 signal stats_changed
 
@@ -1488,10 +1488,21 @@ func _ready():
 static func create_default() -> PlayerStats:
 	return PlayerStats.new()
 
-func get_total_likes() -> int:
+@rpc("any_peer", "call_local")
+func take_hit(dmg: int) -> void:
+	total_likes -= dmg
+
+@export static func make_from_config(cfg: Dictionary) -> PlayerStats:
+	return PlayerStats.new()
+
+func get_total_likes(
+		include_bonus: bool,
+		bonus: int
+) -> int:
 	return total_likes
 
 class InnerHelper extends RefCounted:
+	@warning_ignore("unused_parameter")
 	func assist(value):
 		return value + 1
 `
@@ -1501,41 +1512,55 @@ class InnerHelper extends RefCounted:
 		t.Fatalf("ExtractSymbols failed: %v", err)
 	}
 
-	foundFunctions := make(map[string]bool)
-	foundMethods := make(map[string]bool)
-	foundClasses := make(map[string]bool)
-	exported := make(map[string]bool)
+	seen := make(map[string]map[string]bool) // name -> {"function"/"method"/"class"/"exported"} -> value
 	for _, sym := range symbols {
+		kinds, ok := seen[sym.Name]
+		if !ok {
+			kinds = make(map[string]bool)
+			seen[sym.Name] = kinds
+		}
 		switch sym.Kind {
 		case KindFunction:
-			foundFunctions[sym.Name] = true
+			kinds["function"] = true
 		case KindMethod:
-			foundMethods[sym.Name] = true
+			kinds["method"] = true
 		case KindClass:
-			foundClasses[sym.Name] = true
+			kinds["class"] = true
 		}
-		exported[sym.Name] = sym.Exported
+		if sym.Exported {
+			kinds["exported"] = true
+		}
 	}
 
-	for _, name := range []string{"_ready", "create_default", "get_total_likes"} {
-		if !foundFunctions[name] {
-			t.Errorf("missing function: %s", name)
+	assertSeen := func(name, kind string, wantExported bool) {
+		t.Helper()
+		entry, ok := seen[name]
+		if !ok || !entry[kind] {
+			t.Errorf("missing %s symbol: %s (seen: %v)", kind, name, seenKeys(seen))
+			return
+		}
+		if entry["exported"] != wantExported {
+			t.Errorf("%s exported = %v, want %v", name, entry["exported"], wantExported)
 		}
 	}
-	if !foundMethods["assist"] {
-		t.Errorf("missing inner-class method: assist")
+
+	assertSeen("_ready", "function", false)
+	assertSeen("create_default", "function", true)
+	assertSeen("take_hit", "function", true)         // own-line annotation
+	assertSeen("make_from_config", "function", true) // same-line annotation + static
+	assertSeen("get_total_likes", "function", true)  // multiline parameter list
+	assertSeen("assist", "method", true)             // inner class, annotated
+	assertSeen("PlayerStats", "class", true)         // class_name with extends
+	assertSeen("InnerHelper", "class", true)
+}
+
+func seenKeys(m map[string]map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	for _, name := range []string{"PlayerStats", "InnerHelper"} {
-		if !foundClasses[name] {
-			t.Errorf("missing class: %s", name)
-		}
-	}
-	if exported["_ready"] {
-		t.Errorf("underscore-prefixed _ready should not be exported")
-	}
-	if !exported["get_total_likes"] {
-		t.Errorf("get_total_likes should be exported")
-	}
+	sort.Strings(keys)
+	return keys
 }
 
 func TestRegexExtractor_ExtractReferences_GDScript(t *testing.T) {
