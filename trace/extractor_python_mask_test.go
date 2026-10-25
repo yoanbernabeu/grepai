@@ -37,3 +37,25 @@ func TestExtractReferences_PythonCommentsAndStringsDoNotHideCalls(t *testing.T) 
 		t.Errorf("text inside a comment was extracted as a call: %v", found)
 	}
 }
+
+// GDScript has the same "#" comments as Python.
+func TestExtractReferences_GDScriptCommentsDoNotHideCalls(t *testing.T) {
+	content := `func _ready():
+	# don't start before the scene is loaded
+	var player = spawn_player()
+	connect_signals(player)
+`
+	refs, err := NewRegexExtractor().ExtractReferences(context.Background(), "scenes/main.gd", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, r := range refs {
+		found[r.SymbolName] = true
+	}
+	for _, want := range []string{"spawn_player", "connect_signals"} {
+		if !found[want] {
+			t.Errorf("missing call to %s; got %v", want, found)
+		}
+	}
+}

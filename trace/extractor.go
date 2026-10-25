@@ -562,8 +562,8 @@ func buildIgnoredMask(content string, lang string) []bool {
 		stateBacktick
 		stateLuaLongComment
 		stateLuaLongString
-		stateTripleSingleQuote // Python ''' strings
-		stateTripleDoubleQuote // Python """ strings
+		stateTripleSingleQuote // Python/GDScript ''' strings
+		stateTripleDoubleQuote // Python/GDScript """ strings
 	)
 
 	state := stateNormal
@@ -692,8 +692,9 @@ func buildIgnoredMask(content string, lang string) []bool {
 			}
 		}
 
-		if lang == "python" {
-			// "#" starts a comment; "//" is floor division, not a comment.
+		if lang == "python" || lang == "gdscript" {
+			// "#" starts a comment; "//" is not a comment in Python (floor
+			// division) nor in GDScript.
 			if ch == '#' {
 				mask[i] = true
 				state = stateLineComment
@@ -713,14 +714,14 @@ func buildIgnoredMask(content string, lang string) []bool {
 			}
 		}
 
-		if lang != "python" && ch == '/' && next == '/' {
+		if lang != "python" && lang != "gdscript" && ch == '/' && next == '/' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
 			state = stateLineComment
 			continue
 		}
-		if lang != "python" && ch == '/' && next == '*' {
+		if lang != "python" && lang != "gdscript" && ch == '/' && next == '*' {
 			mask[i] = true
 			mask[i+1] = true
 			i++
