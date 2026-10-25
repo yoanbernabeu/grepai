@@ -1,18 +1,39 @@
 ---
 title: Quick Start
-description: Get up and running with grepai in 5 minutes
+description: Index your first project with grepai and run a natural language code search in a few minutes.
 ---
+
+This page takes you from an installed `grepai` binary to your first semantic search. It assumes you have [installed grepai](/grepai/installation/) and that Ollama is running with the `nomic-embed-text` model (the default setup).
+
+The whole flow:
+
+```bash
+cd /path/to/your/project
+grepai init --yes        # create .grepai/config.yaml with the defaults
+grepai index             # build the index once
+grepai search "error handling middleware"
+```
+
+The steps below explain each command and the options you have.
 
 ## 1. Initialize grepai
 
-Navigate to your project directory and run:
+From the root of your project, run:
 
 ```bash
 cd /path/to/your/project
 grepai init
 ```
 
-This creates a `.grepai/` directory with a `config.yaml` file.
+grepai asks you to pick an embedding provider (Ollama is the default) and a storage backend (a local GOB file is the default). Press Enter to accept each default. Other ways to run it:
+
+```bash
+grepai init --yes                      # accept all defaults, no prompts
+grepai init --ui                       # interactive wizard in the terminal
+grepai init -p openai -b gob --yes     # pick provider and backend with flags
+```
+
+This creates `.grepai/config.yaml`. If the project has a `.gitignore`, grepai adds `.grepai/` to it. See [Configuration](/grepai/configuration/) to change settings later, and [grepai init](/grepai/commands/grepai_init/) for all flags.
 
 ## 2. Start the Indexing Daemon
 
@@ -20,41 +41,89 @@ This creates a `.grepai/` directory with a `config.yaml` file.
 grepai watch
 ```
 
-If you're in an interactive terminal, this opens the watch UI by default.
-To force plain output (for scripts or logs), use:
+`grepai watch` does two things:
+
+1. It runs an initial scan: it splits each supported file into chunks, embeds them, and stores the vectors. Files that have not changed since the last run are skipped.
+2. It keeps running and re-indexes files as you create, edit, rename or delete them.
+
+In an interactive terminal, `grepai watch` opens a live dashboard. Use `--no-ui` for plain log output (for scripts or CI), or run it in the background:
 
 ```bash
-grepai watch --no-ui
+grepai watch --no-ui        # plain output
+grepai watch --background   # detach and write logs to a file
+grepai watch --status       # check the background watcher
+grepai watch --stop         # stop it
 ```
 
-This will:
-1. Scan your codebase
-2. Split files into chunks
-3. Generate embeddings for each chunk
-4. Store vectors in the local index
-5. Watch for file changes and update the index in real-time
+**Don't need a daemon?** `grepai index` runs the same scan once and exits. Run it again whenever you want to refresh the index:
 
-You'll see a progress bar during the initial indexing.
+```bash
+grepai index
+```
+
+See the [File Watching guide](/grepai/watch-guide/) for details.
 
 ## 3. Search Your Code
 
-Open a new terminal and search:
+In another terminal (or after `grepai index` finishes):
 
 ```bash
-# Find authentication code
+# Describe what the code does
 grepai search "user authentication"
-
-# Find error handling
 grepai search "how errors are handled"
 
-# Find API endpoints
-grepai search "REST API routes"
+# Return 5 results instead of the default 10
+grepai search "database queries" --limit 5
 
-# Limit results
-grepai search "database queries" --limit 10
+# Only search under a path
+grepai search "REST API routes" --path internal/api
 
-# JSON output for AI agents (--compact saves ~80% tokens)
+# JSON output for scripts and AI agents (--compact drops the code content)
 grepai search "authentication" --json --compact
+```
+
+See [grepai search](/grepai/commands/grepai_search/) for all flags, including the token-efficient `--toon` format.
+
+## Example Output
+
+```
+$ grepai search "error handling middleware" --limit 2
+Found 2 results for: "error handling middleware"
+
+─── Result 1 (score: 0.6864) ───
+File: middleware/error.go:1-15
+
+   1 │ package middleware
+   2 │
+   3 │ import "net/http"
+   4 │
+   5 │ // ErrorHandler recovers from panics and returns a 500 response.
+   6 │ func ErrorHandler(next http.Handler) http.Handler {
+   7 │ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+   ...
+
+─── Result 2 (score: 0.5687) ───
+File: handlers/user.go:1-11
+
+   1 │ package handlers
+   2 │
+   3 │ import "errors"
+   ...
+```
+
+Each result shows its rank, its similarity score, the file and line range, and up to 15 lines of the chunk. Scores are relative: compare them within one search rather than across searches.
+
+With `--json --compact`, you get only the location and score:
+
+```json
+[
+  {
+    "file_path": "middleware/error.go",
+    "start_line": 1,
+    "end_line": 15,
+    "score": 0.68637824
+  }
+]
 ```
 
 ## 4. Check Index Status
@@ -63,61 +132,39 @@ grepai search "authentication" --json --compact
 grepai status
 ```
 
-For plain script-friendly status output:
-
-```bash
-grepai status --no-ui
-```
-
-This shows:
-- Number of indexed files
-- Number of chunks
-- Storage backend status
-- Last update time
-
-## Example Output
+In an interactive terminal, this opens a browser where you can list indexed files and inspect their chunks. For a plain summary, use `--no-ui`:
 
 ```
-$ grepai search "error handling middleware"
-
-Score: 0.89 | middleware/error.go:15-45
-────────────────────────────────────────
-func ErrorHandler() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        c.Next()
-        if len(c.Errors) > 0 {
-            err := c.Errors.Last()
-            // ... handle error
-        }
-    }
-}
-
-Score: 0.82 | handlers/api.go:78-95
-────────────────────────────────────────
-// handleAPIError wraps errors with context
-func handleAPIError(w http.ResponseWriter, err error) {
-    // ...
-}
+$ grepai status --no-ui
+grepai index status
+Files indexed: 2
+Total chunks: 2
+Index size: 10.6 KB
+Last updated: 2026-10-25 12:29:27
+Provider: ollama (nomic-embed-text)
+Watcher: not running
+Watcher log: /Users/you/Library/Logs/grepai/grepai-worktree-3890120fa89c.log
 ```
 
 ## 5. Connect to Your AI Agent
 
-Your index is built, but your AI agent doesn't know it exists yet. The recommended way to connect grepai is through **[MCP](/grepai/mcp/)**, which exposes search, trace, and index status as native tools for any MCP-compatible agent.
+Your AI agent does not know about the index yet. The recommended way to connect it is **[MCP](/grepai/mcp/)**: `grepai mcp-serve` exposes search, trace and index status as native tools for any MCP-compatible agent.
 
-If your agent doesn't support MCP, `grepai agent-setup` is an alternative that appends CLI usage instructions to agent config files (CLAUDE.md, .cursorrules, etc.) so the agent calls grepai through the command line. This is not needed if you use MCP.
+If your agent does not support MCP, run `grepai agent-setup`. It appends instructions for using the grepai CLI to the agent files it finds in your project (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.cursor/rules`, `.windsurfrules`). You do not need it if you use MCP.
 
-For Claude Code users, there is also an optional **[subagent](/grepai/subagent/)** that gives exploration agents grepai access in their isolated context.
+Claude Code users can also add the optional **[subagent](/grepai/subagent/)** (`grepai agent-setup --with-subagent`), which gives exploration agents grepai access in their own context.
 
 ## Tips for Better Searches
 
-- **Be descriptive**: "user login validation" works better than "login"
-- **Use natural language**: "where are users saved" instead of "save user"
-- **Think about intent**: describe *what* the code does, not *how* it's written
+- **Be descriptive**: "user login validation" works better than "login".
+- **Describe intent**: say what the code does, not how it is written ("where are users saved" rather than "func saveUser").
+- **Write queries in English**: the default model, `nomic-embed-text`, is trained mainly on English.
+- **Keep grep for exact matches**: to find a known identifier or string, `grep` or `ripgrep` is still the right tool.
 
 ## Next Steps
 
-- [Semantic Search Guide](/grepai/search-guide/) - Master natural language queries
-- [File Watching Guide](/grepai/watch-guide/) - Understand the indexing daemon
-- [Call Graph Analysis](/grepai/trace/) - Explore function relationships
-- [Configuration](/grepai/configuration/) - Customize chunking, embedders, and storage
-- [Commands Reference](/grepai/commands/grepai/) - Full CLI documentation
+- [Semantic Search Guide](/grepai/search-guide/): write better queries
+- [File Watching Guide](/grepai/watch-guide/): how the daemon keeps the index fresh
+- [Call Graph Analysis](/grepai/trace/): find callers and callees with `grepai trace`
+- [Configuration](/grepai/configuration/): change the embedder, storage, chunking and ignore rules
+- [Commands Reference](/grepai/commands/grepai/): every command and flag

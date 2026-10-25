@@ -1,71 +1,83 @@
 ---
 title: Workspace Management
-description: Manage multi-project workspaces for cross-project indexing and search
+description: Group several projects in a grepai workspace to index them into one shared PostgreSQL or Qdrant store and search or trace across all of them.
 ---
 
-Workspaces allow you to index and search across multiple projects using a shared vector store. This is useful when working on microservices architectures, monorepos, or related projects that you want to search together.
+A workspace groups several projects (microservices, a frontend and its API, shared libraries) so you can index them into one shared vector store and search or trace across all of them at once.
 
 ## Prerequisites
 
-Workspaces require a shared vector store backend. **GOB backend is not supported** because it's file-based and cannot be shared across projects.
+Workspaces need a vector store that several projects can share:
 
-Supported backends for workspaces:
+- **PostgreSQL** with pgvector
+- **Qdrant**
 
-- **PostgreSQL** with pgvector (recommended for production)
-- **Qdrant** (recommended for advanced vector search)
+The GOB backend is not supported: it is a local file per project, so it cannot be shared.
 
 ## Quick Start
 
+```bash
+# 1. Create the workspace (Qdrant + Ollama defaults)
+grepai workspace create my-fullstack --yes
+
+# 2. Add projects
+grepai workspace add my-fullstack ~/code/frontend
+grepai workspace add my-fullstack ~/code/backend
+
+# 3. Index and watch every project
+grepai watch --workspace my-fullstack
+
+# 4. Search across projects
+grepai search --workspace my-fullstack "authentication flow"
+```
+
 ### 1. Create a Workspace
 
-**Interactive mode:**
+Run without flags for interactive prompts (backend, then embedding provider), or add `--ui` for the full-screen wizard:
 
 ```bash
 grepai workspace create my-fullstack
 ```
 
-This will interactively prompt you to configure the storage backend and embedding provider.
-
-**Non-interactive mode (for automation/CI):**
+Pass any flag below to skip the prompts (useful in scripts and CI):
 
 ```bash
-# Qdrant + Ollama with defaults
-grepai workspace create my-fullstack --backend qdrant --provider ollama --yes
+# Qdrant + Ollama, all defaults
+grepai workspace create my-fullstack --yes
 
-# Qdrant + specific model
-grepai workspace create my-fullstack --backend qdrant --provider ollama --model bge-m3 --yes
+# Qdrant + Ollama with another model
+grepai workspace create my-fullstack --backend qdrant --provider ollama --model bge-m3
 
-# Qdrant + OpenAI
-grepai workspace create my-fullstack --backend qdrant --provider openai --model text-embedding-3-small --yes
+# Qdrant + OpenAI (the API key is read from OPENAI_API_KEY)
+grepai workspace create my-fullstack --backend qdrant --provider openai --model text-embedding-3-small
 
 # PostgreSQL + Ollama
-grepai workspace create my-fullstack --backend postgres --provider ollama --dsn "postgres://grepai:grepai@localhost:5432/grepai" --yes
+grepai workspace create my-fullstack --backend postgres --dsn "postgres://grepai:grepai@localhost:5432/grepai"
 
-# Custom Qdrant endpoint
-grepai workspace create my-fullstack --backend qdrant --qdrant-endpoint my-qdrant-host --qdrant-port 6334 --provider ollama --yes
+# Remote Qdrant
+grepai workspace create my-fullstack --backend qdrant --qdrant-endpoint http://my-qdrant-host --qdrant-port 6334
 
-# From a YAML config file
+# From a YAML or JSON file
 grepai workspace create my-fullstack --from workspace-config.yaml
 ```
 
-**Non-interactive flags:**
-
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--backend` | Storage backend (`qdrant` or `postgres`) | Required (or `--yes`) |
-| `--provider` | Embedding provider (`ollama`, `openai`, `lmstudio`) | `ollama` with `--yes` |
-| `--model` | Embedding model name | Provider default |
-| `--endpoint` | Embedder endpoint URL | Provider default |
-| `--dsn` | PostgreSQL connection string | Required for postgres |
-| `--qdrant-endpoint` | Qdrant hostname | `http://localhost` |
+| `--backend` | `qdrant` or `postgres` | Required, unless `--yes` (then `qdrant`) |
+| `--provider` | `ollama`, `openai` or `lmstudio` | `ollama` |
+| `--model` | Embedding model | `text-embedding-3-small` for `openai`, `nomic-embed-text` otherwise |
+| `--endpoint` | Embedder endpoint | `http://localhost:11434` (Ollama), `http://127.0.0.1:1234` (LM Studio), `https://api.openai.com/v1` (OpenAI) |
+| `--dsn` | PostgreSQL connection string | `postgres://localhost:5432/grepai` |
+| `--qdrant-endpoint` | Qdrant host | `http://localhost` |
 | `--qdrant-port` | Qdrant gRPC port | `6334` |
-| `--collection` | Qdrant collection name | `workspace_{name}` |
-| `--yes` | Accept all defaults | - |
-| `--from` | Load config from YAML/JSON file | - |
+| `--collection` | Qdrant collection name | `workspace_<name>` |
+| `--yes` | Use defaults for every value you did not set | |
+| `--from` | Read `store` and `embedder` from a YAML or JSON file (other flags are ignored) | |
+| `--ui` | Interactive full-screen wizard | |
 
-**`--yes` defaults:** Qdrant backend, Ollama provider, nomic-embed-text model (768 dims).
+With Ollama or LM Studio, the workspace records 768 dimensions. With OpenAI, it uses 4 parallel embedding workers.
 
-**`--from` file format (YAML):**
+Example `--from` file:
 
 ```yaml
 store:
@@ -85,33 +97,39 @@ embedder:
 
 ```bash
 grepai workspace add my-fullstack /path/to/frontend
-grepai workspace add my-fullstack /path/to/backend
-grepai workspace add my-fullstack /path/to/shared-lib
+grepai workspace add my-fullstack ./backend
 ```
+
+Relative paths are converted to absolute paths. The project name is the directory name (`frontend`, `backend`), and must be unique in the workspace. A project does not need its own `grepai init`: without a `.grepai/config.yaml`, it uses default settings.
 
 ### 3. Start Indexing
 
 ```bash
-# Foreground mode
+# Index, then keep watching (foreground)
 grepai watch --workspace my-fullstack
 
-# Background mode
+# Same, in the background
 grepai watch --workspace my-fullstack --background
+
+# Index once and exit
+grepai index --workspace my-fullstack
 ```
+
+Chunks go to the shared store. Each project's symbol index (and RPG graph, if enabled) is written to `<project>/.grepai/`.
 
 ### 4. Search Across Projects
 
 ```bash
-# Search all projects in workspace
+# All projects
 grepai search --workspace my-fullstack "authentication flow"
 
-# Search specific project only
+# One project
 grepai search --workspace my-fullstack --project frontend "React components"
 ```
 
 ## Configuration File
 
-Workspace configuration is stored in `~/.grepai/workspace.yaml`:
+Workspaces are stored in `~/.grepai/workspace.yaml` (file mode `0600`, since it may hold API keys):
 
 ```yaml
 version: 1
@@ -127,13 +145,13 @@ workspaces:
       model: nomic-embed-text
       endpoint: http://localhost:11434
       dimensions: 768
+    chunking:
+      custom_extensions: [".tpl"]   # optional, merged with each project's list
     projects:
       - name: frontend
         path: /path/to/frontend
       - name: backend
         path: /path/to/backend
-      - name: shared-lib
-        path: /path/to/shared-lib
 ```
 
 ## CLI Commands
@@ -141,75 +159,76 @@ workspaces:
 ### Workspace Management
 
 ```bash
-# List all workspaces
-grepai workspace list
-
-# Show workspace details
-grepai workspace show my-fullstack
-
-# Check workspace status
-grepai workspace status my-fullstack
-
-# Delete a workspace
-grepai workspace delete my-fullstack
+grepai workspace list                     # list workspaces
+grepai workspace show my-fullstack        # backend, embedder, projects
+grepai workspace status my-fullstack      # checks that each project path exists
+grepai workspace status                   # same, for every workspace
+grepai workspace delete my-fullstack      # remove from workspace.yaml
 ```
+
+`workspace delete` only removes the entry from `workspace.yaml`. Indexed data stays in PostgreSQL or Qdrant.
 
 ### Project Management
 
 ```bash
-# Add project to workspace
 grepai workspace add my-fullstack /path/to/project
-
-# Remove project from workspace
 grepai workspace remove my-fullstack project-name
 ```
+
+`remove` takes the project name (as shown by `workspace show`), not its path.
 
 ### Watch Commands
 
 ```bash
-# Start workspace watcher (foreground)
-grepai watch --workspace my-fullstack
-
-# Start workspace watcher (background)
-grepai watch --workspace my-fullstack --background
-
-# Check watcher status
-grepai watch --workspace my-fullstack --status
-
-# Stop background watcher
-grepai watch --workspace my-fullstack --stop
+grepai watch --workspace my-fullstack                # foreground
+grepai watch --workspace my-fullstack --background   # background
+grepai watch --workspace my-fullstack --status       # background watcher status
+grepai watch --workspace my-fullstack --stop         # stop the background watcher
 ```
 
 ### Search Commands
 
 ```bash
-# Search all projects in workspace
+# All projects
 grepai search --workspace my-fullstack "query"
 
-# Search specific projects
+# One or several projects (repeat --project)
 grepai search --workspace my-fullstack --project frontend "query"
 grepai search --workspace my-fullstack --project frontend --project backend "query"
 
-# Filter by path prefix (searches only files in matching paths)
-grepai search --workspace my-fullstack --path src/ "query"
+# Path prefix inside one project
 grepai search --workspace my-fullstack --project frontend --path components/ "React hooks"
+
+# Path prefix without --project: start with the project name
+grepai search --workspace my-fullstack --path frontend/src/ "query"
+
+# Absolute path: grepai finds the matching project
+grepai search --workspace my-fullstack --path /path/to/frontend/src "query"
 
 # JSON output for AI agents
 grepai search --workspace my-fullstack "query" --json
 grepai search --workspace my-fullstack "query" --json --compact
 ```
 
+A relative `--path` is matched against stored paths (`<workspace>/<project>/<file>`). With exactly one `--project`, it is relative to that project. Otherwise it is relative to the workspace, so it must start with a project name.
+
+Workspace search uses the default search boost and does not use hybrid search or RPG enrichment.
+
+`grepai trace` and `grepai refs` also accept `--workspace` and `--project`. See [Call Graph Analysis](/grepai/trace/#workspace-mode).
+
 ## MCP Integration
 
 ### Workspace-Aware MCP Server
 
-Start the MCP server with the `--workspace` flag to enable automatic cross-project search:
+Start the MCP server with `--workspace` so that every tool with a `workspace` parameter defaults to that workspace. No local `.grepai/` is needed in this mode.
 
 ```bash
-# Claude Code
 claude mcp add grepai -- grepai mcp-serve --workspace my-fullstack
+```
 
-# Or in .mcp.json
+Or in `.mcp.json`:
+
+```json
 {
   "mcpServers": {
     "grepai": {
@@ -220,11 +239,11 @@ claude mcp add grepai -- grepai mcp-serve --workspace my-fullstack
 }
 ```
 
-When `--workspace` is set, the MCP server **auto-injects** the workspace into every search request. AI agents can call `grepai_search` with just a query — no need to pass `workspace` or `projects` parameters. Cross-project search works by default.
+Agents can then call `grepai_search` with only a `query`: the workspace is filled in for them.
 
 ### Manual Workspace Parameters
 
-Without the `--workspace` flag, agents can still search workspaces by passing parameters explicitly:
+Without `--workspace`, agents pass the workspace explicitly. `grepai_list_workspaces` and `grepai_list_projects` help them discover valid names.
 
 ```json
 {
@@ -239,9 +258,9 @@ Without the `--workspace` flag, agents can still search workspaces by passing pa
 
 ### Trace Tools in Workspace Mode
 
-The trace tools (`grepai_trace_callers`, `grepai_trace_callees`, `grepai_trace_graph`) and `grepai_index_status` fully support workspace mode. When the MCP server is started with `--workspace`, trace tools automatically search across all projects in the workspace. You can also pass a `project` parameter to limit the trace to a specific project.
+The trace and refs tools (`grepai_trace_callers`, `grepai_trace_callees`, `grepai_trace_graph`, `grepai_refs_readers`, `grepai_refs_writers`, `grepai_refs_graph`) and `grepai_index_status` accept a `workspace` parameter, and default to the server's `--workspace`. Trace and refs tools search all projects unless you pass `project`.
 
-Each project in a workspace maintains its own symbol index in `.grepai/symbols.gob`, regardless of the vector store backend (Qdrant or PostgreSQL). Symbols are built automatically during `grepai watch --workspace`.
+Each project keeps its own symbol index in `<project>/.grepai/symbols.gob`, whatever the vector store. `grepai watch --workspace` builds it.
 
 ```json
 {
@@ -258,87 +277,78 @@ Each project in a workspace maintains its own symbol index in `.grepai/symbols.g
 
 ### File Path Prefixing
 
-When indexing workspace projects, file paths are stored with workspace and project prefixes:
+Workspace chunks are stored with the workspace and project name in front of the relative path:
 
 - Original: `/path/to/frontend/src/App.tsx`
-- Stored: `my-workspace/frontend/src/App.tsx`
+- Stored: `my-fullstack/frontend/src/App.tsx`
 
-This format (`workspaceName/projectName/relativePath`) allows:
+This `workspaceName/projectName/relativePath` format lets grepai filter by project, keeps two workspaces with a project of the same name apart, and shows where each result comes from.
 
-- Filtering search results by project name
-- Multiple workspaces with same project names (e.g., `workspace1/frontend` vs `workspace2/frontend`)
-- Clear identification of which workspace/project a result belongs to
+The workspace data is also scoped as a whole: PostgreSQL rows use the project ID `workspace:<name>`, and Qdrant uses the collection `workspace_<name>` unless you set `--collection`.
 
 ### Configuration Priority
 
-When indexing via workspace, settings come from different sources:
-
 | Setting | Source | Notes |
 |---------|--------|-------|
-| `store` (backend, DSN) | **Workspace** | Shared store required |
-| `embedder` (provider, model) | **Workspace** | Ensures compatible vectors |
-| `chunking` (size, overlap, strategy) | **Project** | Can vary per project/language |
-| `chunking.custom_extensions` | **Workspace** + **Project** | Both lists are merged when scanning a project |
-| `ignore` patterns | **Project** | Project-specific exclusions |
-| `external_gitignore` | **Project** | Project-specific gitignore |
+| `store` | Workspace | One shared store |
+| `embedder` | Workspace | Every project must produce compatible vectors |
+| `chunking` (size, overlap, strategy) | Project | Can differ per project |
+| `chunking.custom_extensions` | Workspace + project | Both lists are merged |
+| `ignore` | Project | |
+| `external_gitignore` | Project | |
+| `trace`, `rpg`, `framework` | Project | |
 
-**Why this design?**
-
-- **Store & Embedder from workspace**: All projects must use the same embedder to produce compatible vectors, and the same store for cross-project search.
-- **Chunking & Ignore from project**: These can safely differ between projects (e.g., larger chunks for documentation, smaller for code).
+A project without `.grepai/config.yaml` uses the defaults for the project-level settings.
 
 ## Migration from Single-Project
 
-Existing single-project setups continue to work unchanged. Workspaces are an additional feature that doesn't affect existing functionality.
+Existing single-project setups keep working. A workspace does not read or change their indexes.
 
 ### GOB Projects (Default)
 
-GOB projects store their index locally in `.grepai/index.gob`. These are completely separate from workspace indexes and will continue to work.
+GOB projects keep their local `.grepai/index.gob`. It is independent from the workspace index and keeps working with plain `grepai search`.
 
 ### PostgreSQL Projects
 
-If your projects already use PostgreSQL with individual indexes, be aware that:
+Single-project and workspace data can live in the same database without conflict:
 
-1. **Existing chunks** are stored without workspace/project prefix (e.g., `src/App.tsx`)
-2. **Workspace chunks** are stored with full prefix (e.g., `my-workspace/frontend/src/App.tsx`)
-3. **Both can coexist** in the same database but are treated as different files
+- Single-project chunks use the absolute project root as project ID, with paths like `src/App.tsx`.
+- Workspace chunks use `workspace:<name>`, with paths like `my-fullstack/frontend/src/App.tsx`.
 
-**Recommended migration steps:**
+Searches never mix the two, so there are no duplicate results.
 
 ```bash
-# 1. Create workspace pointing to the SAME PostgreSQL database
-grepai workspace create my-workspace
-# Use the same DSN as your existing projects
+# 1. Create a workspace on the same database
+grepai workspace create my-workspace --backend postgres --dsn "postgres://localhost:5432/grepai"
 
 # 2. Add projects
 grepai workspace add my-workspace /path/to/frontend
 grepai workspace add my-workspace /path/to/backend
 
-# 3. (Optional) Clean old non-prefixed chunks from database
-# Old chunks don't have the workspace prefix pattern
-psql -d your_db -c "DELETE FROM chunks WHERE file_path NOT LIKE '%/%/%';"
-
-# 4. Re-index via workspace
+# 3. Index through the workspace
 grepai watch --workspace my-workspace
+
+# 4. (Optional) Free space used by an old single-project index
+psql -d grepai -c "DELETE FROM chunks WHERE project_id = '/path/to/frontend';"
+psql -d grepai -c "DELETE FROM documents WHERE project_id = '/path/to/frontend';"
 ```
 
-**Note:** If you don't clean old chunks, searches may return duplicate results (one with prefix, one without). This only affects the transition period.
+> **Note:** only run step 4 if you no longer use plain `grepai search` in that project. The project ID is the absolute project root with symlinks resolved.
 
 ## Troubleshooting
 
 ### "GOB backend not supported"
 
-Workspaces require a shared backend. Configure PostgreSQL or Qdrant:
+The actual error reads `workspace "<name>" uses GOB backend which is not supported for multi-project workspaces; use 'postgres' or 'qdrant' instead`. Recreate the workspace with a shared backend:
 
 ```bash
-# Create workspace with PostgreSQL
-grepai workspace create my-workspace
-# Select PostgreSQL when prompted
+grepai workspace delete my-workspace
+grepai workspace create my-workspace --backend qdrant --yes
 ```
 
 ### "Workspace not found"
 
-Check workspace configuration:
+The error is `workspace "<name>" not found`. Check the exact name:
 
 ```bash
 grepai workspace list
@@ -347,18 +357,22 @@ grepai workspace show my-workspace
 
 ### "Project path does not exist"
 
-Ensure project paths are absolute and exist:
+`workspace add` fails with `path does not exist: <path>` when the directory is missing. For existing workspaces, `status` flags moved or deleted projects with `✗ (path not found)`:
 
 ```bash
 grepai workspace status my-workspace
 ```
 
+Remove the stale project with `grepai workspace remove` and add it again from its new location.
+
 ### Background watcher not starting
 
-Check logs:
+Check the workspace log (`grepai-workspace-<name>.log` in the log directory):
 
 ```bash
-# Default log location
-cat ~/Library/Logs/grepai/grepai-workspace-my-workspace.log  # macOS
-cat ~/.local/state/grepai/logs/grepai-workspace-my-workspace.log  # Linux
+cat ~/Library/Logs/grepai/grepai-workspace-my-workspace.log         # macOS
+cat ~/.local/state/grepai/logs/grepai-workspace-my-workspace.log    # Linux ($XDG_STATE_HOME/grepai/logs if set)
+type %LOCALAPPDATA%\grepai\logs\grepai-workspace-my-workspace.log   # Windows
 ```
+
+If you started the watcher with `--log-dir`, look there instead.

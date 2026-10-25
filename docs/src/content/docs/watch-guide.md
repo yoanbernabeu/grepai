@@ -1,97 +1,73 @@
 ---
 title: File Watching
-description: Real-time index updates with grepai watch
+description: Keep the grepai index up to date with grepai watch, run it in the background, or update it once with grepai index.
 ---
 
 ## File Watching
 
-`grepai watch` is the core daemon that maintains your codebase index. It performs an initial full scan and then monitors for file changes in real-time.
-
-### Features
-
-- **Initial indexing**: Full codebase scan on startup
-- **Real-time updates**: Monitors filesystem for changes
-- **Incremental sync**: Only re-indexes modified files
-- **Symbol extraction**: Builds call graph data for `grepai trace`
-- **Debounced processing**: Batches rapid changes efficiently
+`grepai watch` keeps your index in sync with your code. It runs an initial scan, then watches the filesystem and re-indexes files as they change. Use `grepai index` instead when you only need a one-time update.
 
 ### Quick Start
 
 ```bash
-# Initialize grepai in your project
+# Create .grepai/config.yaml (once per project)
 grepai init
 
-# Start the watcher daemon
+# Index, then keep watching for changes (Ctrl+C or q to stop)
 grepai watch
 ```
 
+In an interactive terminal, `grepai watch` opens a monitoring UI. Use `--no-ui`, or pipe the output, to get plain text logs instead.
+
+To keep it running without a terminal, see [Background Daemon Mode](#background-daemon-mode).
+
+### Features
+
+- **Initial scan**: brings the index in line with the files on disk at startup.
+- **Real-time updates**: re-indexes created and modified files, removes deleted ones.
+- **Incremental**: unchanged files are not re-embedded.
+- **Symbol extraction**: builds the call graph data used by [`grepai trace`](/grepai/trace/).
+- **Debouncing**: groups rapid changes before processing them.
+- **Linked worktrees**: also watches linked git worktrees by default. See [Git Worktrees](/grepai/git-worktrees/).
+
 ### One-Time Indexing
 
-Use `grepai index` when you want to update the index without starting a
-long-running watcher. It performs the same initial synchronization as
-`grepai watch`—including vector, symbol, and optional RPG indexes—and exits.
-Unchanged files are scanned but are not re-embedded.
+`grepai index` runs the same initial synchronization as `grepai watch` (vector, symbol and, if enabled, RPG indexes), then exits. It does not start a watcher or daemon. Unchanged files are scanned but not re-embedded.
 
 ```bash
-# Update only the current project, then exit
+# Update the current project, then exit
 grepai index
 
-# Update every project in a configured workspace, then exit
+# Update every project in a workspace, then exit
 grepai index --workspace myworkspace
 ```
 
-This is useful in Git hooks when a watcher would interfere with temporary
-files created by tests or build tools. For example, `.git/hooks/pre-commit`:
+`grepai index` and `grepai watch` both take the project's writer lock, so `grepai index` fails while a watcher is running on the same project.
+
+Use it in Git hooks when a long-running watcher would pick up temporary files created by tests or build tools. For example, `.git/hooks/pre-commit`:
 
 ```sh
 #!/bin/sh
 grepai index
 ```
 
-`grepai index` synchronizes the current working tree, including unstaged
-changes; it does not index only the files or snapshots staged for commit.
+`grepai index` indexes the current working tree, including unstaged changes. It does not index only the staged snapshot.
 
-To initialize and index a newly created linked worktree without leaving a
-watcher behind:
+To set up and index a new linked worktree without leaving a watcher behind:
 
 ```bash
 git worktree add ../my-feature feature/my-feature
 (cd ../my-feature && grepai index)
 ```
 
-Each linked worktree keeps its own index. A one-time project index does not
-discover or update other linked worktrees.
-
-In interactive terminals, `grepai watch` now opens a Bubble Tea monitoring UI by default (foreground mode).
-Use `--no-ui` to force plain text output:
-
-```bash
-grepai watch --no-ui
-```
-
-Output:
-
-```text
-Starting grepai watch in /path/to/project
-Provider: ollama (nomic-embed-text)
-Backend: gob
-RPG: disabled
-
-Performing initial scan...
-Indexing [================] 100% (245/245) src/auth/handler.go
-Initial scan complete: 245 files indexed, 1842 chunks created (took 45.2s)
-Building symbol index...
-Symbol index built: 3421 symbols extracted
-
-Watching for changes... (Press Ctrl+C to stop)
-```
+When the main worktree has a `.grepai/` directory, the linked worktree gets its own copy automatically. Each linked worktree keeps its own index, and a one-time index does not update other worktrees.
 
 ### How It Works
 
 ```text
 +------------------+     +------------------+     +------------------+
 |   Initial Scan   | --> |   File Watcher   | --> |  Index Update    |
-|   (full index)   |     |   (fsnotify)     |     |  (incremental)   |
+|  (sync with disk)|     |   (fsnotify)     |     |  (per file)      |
 +------------------+     +------------------+     +------------------+
                                 |
                                 v
@@ -101,138 +77,150 @@ Watching for changes... (Press Ctrl+C to stop)
                         +------------------+
 ```
 
-1. **Initial scan**: Compares disk state with existing index, removes obsolete entries, indexes new files
-2. **RPG bootstrap (optional)**: When `rpg.enabled: true`, builds the RPG graph after symbol extraction
-3. **File watching**: Monitors filesystem events (create, modify, delete, rename)
-4. **Debouncing**: Batches rapid changes to avoid redundant indexing
-5. **Atomic updates**: Prevents duplicate vectors during updates
+1. **Initial scan**: lists indexable files, removes index entries for files that no longer exist, and decides which files need (re)indexing (see below).
+2. **Embedding**: new and changed files are chunked and embedded. With the `openai` provider, chunks from many files are sent in batches, using `embedder.parallelism` workers (default 4). Other providers embed file by file.
+3. **Symbol index**: symbols are extracted for languages listed in `trace.enabled_languages`.
+4. **RPG (optional)**: when `rpg.enabled: true`, the RPG graph is built after symbol extraction.
+5. **File watching**: filesystem events (create, modify, delete, rename) are collected and debounced (`watch.debounce_ms`, default 500).
+6. **Per-file update**: each changed file is re-scanned. If its content hash is unchanged, it is skipped. Otherwise its chunks are replaced, so no duplicate vectors are left behind.
+
+#### Fast restarts with `last_index_time`
+
+The initial scan avoids reading every file on restart:
+
+- A file whose modification time is at or before `watch.last_index_time` and that already has chunks in the index is skipped without being read.
+- Other files are read and hashed. Files with an unchanged hash are not re-embedded.
+- Files with no chunks yet are always re-indexed, whatever their modification time.
+
+grepai stores `watch.last_index_time` in `.grepai/config.yaml`. It is set to the start time of the initial scan when the scan indexed something (or when no value was stored yet). While watching, it advances after each indexed file and is written to disk at most every 30 seconds and on clean shutdown. You do not need to edit it. Remove it to force every file to be re-hashed on the next start.
 
 ### What Gets Indexed
 
-The watcher indexes files with these extensions:
+A file is indexed when it is not ignored and has a supported extension. The built-in list covers common source, markup and config formats, including:
 
-| Language | Extensions |
-|----------|------------|
-| Go | `.go` |
-| JavaScript/TypeScript | `.js`, `.jsx`, `.ts`, `.tsx` |
-| Python | `.py` |
-| PHP | `.php` |
-| Lua | `.lua` |
-| Rust | `.rs` |
-| C/C++ | `.c`, `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx`, `.hxx` |
-| Zig | `.zig` |
-| Java | `.java` |
-| Ruby | `.rb` |
-| C# | `.cs` |
-| F# | `.fs`, `.fsx`, `.fsi` |
-| Pascal/Delphi | `.pas`, `.dpr` |
+| Group | Extensions |
+|-------|------------|
+| Source code | `.go`, `.js`, `.jsx`, `.ts`, `.tsx`, `.py`, `.rb`, `.java`, `.kt`, `.scala`, `.swift`, `.rs`, `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hxx`, `.cs`, `.fs`, `.php`, `.lua`, `.dart`, `.ex`, `.exs`, `.erl`, `.clj`, `.hs`, `.ml`, `.elm`, `.nim`, `.zig`, `.r`, `.pas`, `.dpr` |
+| Web | `.vue`, `.svelte`, `.html`, `.css`, `.scss`, `.less` |
+| Scripts and data | `.sh`, `.bash`, `.zsh`, `.sql`, `.proto`, `.json`, `.xml`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.env`, `.tf`, `.hcl` |
+| Docs | `.md`, `.txt` |
+
+To index more extensions, add them under `chunking.custom_extensions`:
+
+```yaml
+chunking:
+  custom_extensions: [".tengo", ".el"]
+```
 
 ### What Gets Skipped
 
-Files are skipped based on:
+Files are skipped when they match any of these:
 
-1. **`.gitignore` patterns**: Automatically respected
-2. **Config ignore patterns**: From `.grepai/config.yaml`
-3. **Binary files**: Non-text files are excluded
-4. **Large files**: Files exceeding size limits
+1. **`.gitignore` files**: at the root and in subdirectories.
+2. **`.grepaiignore` files**: same syntax as `.gitignore`, and can re-include paths with `!`.
+3. **`ignore` in `.grepai/config.yaml`**: each entry is compared to the file or directory **name** (not a glob or path).
+4. **`external_gitignore`**: an extra gitignore file, such as your global one.
+5. **Minified files**: names ending in `.min.js`, `.min.css`, `.bundle.js` or `.bundle.css`.
+6. **Large files**: over 1 MB.
+7. **Binary files**: content that is not valid UTF-8 or contains null bytes.
 
-Default ignore patterns:
+Default `ignore` list written by `grepai init`:
 
 ```yaml
-scanner:
-  ignore:
-    - "*.min.js"
-    - "*.min.css"
-    - "vendor/"
-    - "node_modules/"
-    - ".git/"
-    - "target/"
-    - ".zig-cache/"
-    - "zig-out/"
+ignore:
+  - .git
+  - .grepai
+  - node_modules
+  - vendor
+  - bin
+  - dist
+  - __pycache__
+  - .venv
+  - venv
+  - .idea
+  - .vscode
+  - target
+  - .zig-cache
+  - zig-out
+  - qdrant_storage
 ```
 
 ### Real-Time Updates
 
-When files change, the watcher logs updates:
+With `--no-ui`, each change is logged as it is processed:
 
 ```text
-[MODIFY] src/auth/handler.go
-Indexed src/auth/handler.go (4 chunks)
-Extracted 12 symbols from src/auth/handler.go
-
-[CREATE] src/api/routes.go
-Indexed src/api/routes.go (3 chunks)
-Extracted 8 symbols from src/api/routes.go
-
-[DELETE] src/old/deprecated.go
-Removed src/old/deprecated.go from index
+2026/10/25 14:02:11 Indexed src/auth/handler.go (4 chunks)
+2026/10/25 14:02:11 Extracted 12 symbols from src/auth/handler.go
+2026/10/25 14:02:30 Skipped unchanged src/api/routes.go
+2026/10/25 14:02:45 Removed src/old/deprecated.go from index
 ```
+
+Editors and coding agents often save by writing a temporary file and renaming it over the original. When a delete or rename event arrives but the file is still on disk, grepai treats it as a modification instead of removing the file from the index.
 
 ### Symbol Indexing
 
 The watcher also builds a symbol index for call graph analysis:
 
-- **Symbols extracted**: Functions, methods, classes, types
-- **References tracked**: Function calls and references
-- **Used by**: `grepai trace` for call graph analysis
+- **Symbols**: functions, methods, classes and types.
+- **References**: function calls between symbols.
+- **Languages**: those listed in `trace.enabled_languages`.
+- **Stored in**: `.grepai/symbols.gob`.
 
 See [Call Graph Analysis](/grepai/trace/) for more details.
 
 ### Configuration
 
-Configure watcher behavior in `.grepai/config.yaml`:
+Watcher settings in `.grepai/config.yaml`:
 
 ```yaml
-# Event debounce
 watch:
   debounce_ms: 500
+  # Auto-discover and watch linked git worktrees (default: true)
+  discover_worktrees: true
+  # Only used when rpg.enabled is true
   rpg_derived_debounce_ms: 300
   rpg_persist_interval_ms: 1000
   rpg_full_reconcile_interval_sec: 300
   rpg_max_dirty_files_per_batch: 128
-  # Auto-discover and watch linked git worktrees (default: true)
-  discover_worktrees: true
+  # Managed by grepai, see "Fast restarts with last_index_time"
+  # last_index_time: 2026-10-25T14:00:00+02:00
 ```
 
-To watch only the main worktree, set `discover_worktrees: false` in the **main worktree's** config — see [Git Worktrees](/grepai/git-worktrees/#disabling-worktree-discovery).
+| Key | Default | Notes |
+|-----|---------|-------|
+| `debounce_ms` | `500` | Wait time used to group file events |
+| `discover_worktrees` | `true` | Read from the main worktree's config only |
+| `rpg_derived_debounce_ms` | `300` | Minimum 100 |
+| `rpg_persist_interval_ms` | `1000` | Minimum 200 |
+| `rpg_full_reconcile_interval_sec` | `300` | Minimum 30 |
+| `rpg_max_dirty_files_per_batch` | `128` | Minimum 1 |
+
+To watch only the main worktree, set `discover_worktrees: false` in the **main worktree's** config. See [Git Worktrees](/grepai/git-worktrees/#disabling-worktree-discovery).
 
 ### Persistence
 
-The watcher periodically saves the index:
+- **Periodic save**: the vector and symbol indexes are saved every 30 seconds while watching.
+- **Shutdown save**: they are saved again on Ctrl+C, `q` in the UI, SIGTERM or `grepai watch --stop`.
+- **Location**: `.grepai/index.gob` and `.grepai/symbols.gob` with the GOB backend. PostgreSQL and Qdrant store vectors in the database; symbols stay in `.grepai/symbols.gob`.
 
-- **Auto-save**: Automatic persistence during operation
-- **Shutdown save**: Clean save on Ctrl+C or SIGTERM
-- **Location**: `.grepai/index.gob` (or PostgreSQL)
+Only one process may write a project's index at a time. `grepai watch` (foreground, background or workspace) and `grepai index` all take a lock on `.grepai/writer.lock`. A second writer exits immediately with an error like `cannot write project ...: another writer is active`. The lock is released when the process exits, including after a crash.
 
-Only one watcher may write a project at a time. Foreground, background, and
-workspace watchers all acquire the same nonblocking lifetime lock at
-`.grepai/writer.lock`; a second watcher exits immediately with an error naming
-the contended project. This prevents concurrent watchers from overwriting each
-other's index snapshots, even when they use different log directories. The lock
-is released automatically when the watcher exits or crashes.
+`grepai search`, `grepai trace` and the MCP server only read the index, so they run normally while a watcher is active.
 
-The lifetime writer lock is acquired before vector, symbol, or RPG stores are
-loaded. Their shorter per-load and per-persist locks are nested inside it, which
-keeps lock ordering consistent and avoids deadlocks.
+#### Fatal watcher errors
 
-Searches, MCP servers, and trace commands are read-only and do not acquire this
-lifetime lock, so they can continue to run concurrently with the watcher.
-Vector and symbol GOB readers also keep explicit mutation state: closing a
-clean reader does not rewrite an existing index or create a missing one.
-Vector GOB stores own mutable vectors and chunk ID lists, and symbol lookups
-return detached slices rather than live writable store state.
-Fatal filesystem coverage errors use a different shutdown path: new index
-mutations are rejected immediately, contexts for admitted event, persistence,
-and background RPG work are canceled, and readiness is withdrawn after that
-work finishes. Potentially untrustworthy derived state is not persisted. The
-CLI returns without waiting for the filesystem backend to close, so the
-operating system reclaims its watcher descriptors at process exit. Embedded
-library callers that keep the process alive may call `Close` after handling the
-returned fatal error to release the backend explicitly.
+If grepai cannot keep full coverage of the project, it stops instead of serving a stale index. This happens when a directory cannot be watched (at startup or when a new directory appears), when fsnotify stops or reports an error (for example an event overflow), or when the project root is removed or renamed. In that case:
+
+- New index updates are rejected, and in-flight work is canceled.
+- Derived indexes are not saved, because their state may be wrong.
+- The next `grepai watch` or `grepai index` re-runs the initial scan, which reconciles the index with the disk.
+
+In workspace and multi-worktree mode, one fatal error stops the whole watcher.
 
 ### Background Daemon Mode
 
-Run the watcher as a background daemon with built-in lifecycle management:
+Run the watcher as a background process:
 
 ```bash
 # Start the watcher in background
@@ -245,20 +233,23 @@ grepai watch --status
 grepai watch --stop
 ```
 
+`--background`, `--status` and `--stop` cannot be combined. The background process always logs plain text (no UI).
+
 #### Starting the Daemon
 
 ```bash
 $ grepai watch --background
 Background watcher started (PID 12345)
-Logs: /Users/you/Library/Logs/grepai/grepai-watch.log
+Logs: /Users/you/Library/Logs/grepai/grepai-worktree-0adda787cae4.log
+Worktree ID: 0adda787cae4
 
 Use 'grepai watch --status' to check status
 Use 'grepai watch --stop' to stop the watcher
 ```
 
-The daemon waits for full initialization (embedder connection, initial scan) before returning success. Ready markers include the child PID, so a marker left by an older process cannot make a failed restart appear healthy.
+The command returns only after the background process is ready: embedder reachable, initial scan done and every directory watched. If it is not ready within 30 seconds, or exits early, the command fails and points to the log file.
 
-It only reports ready after every required filesystem watch is registered. If registration fails at startup or while adding a newly created directory, fsnotify stops unexpectedly, or the internal event queue fills, the watcher exits instead of continuing with partial or stale coverage. Fatal observation immediately rejects new mutations, cancels in-flight mutation contexts, and stops watcher event ownership; readiness is withdrawn once admitted event, periodic persistence, and background RPG work quiesces. Fatal shutdown deliberately does **not** flush derived indexes because their state is no longer trustworthy. The next startup performs a full repair scan. Workspace and multi-worktree modes apply the same fence across their full readiness scope: one fatal watcher error prevents admission in every project and stops the watcher.
+Inside a git repository, the log, PID and ready files are named after the worktree ID (`grepai-worktree-<id>.*`), so each worktree can have its own daemon. Outside git, they are named `grepai-watch.*`.
 
 #### Checking Status
 
@@ -267,8 +258,11 @@ $ grepai watch --status
 Status: running
 PID: 12345
 Log directory: /Users/you/Library/Logs/grepai
-Log file: /Users/you/Library/Logs/grepai/grepai-watch.log
+Log file: /Users/you/Library/Logs/grepai/grepai-worktree-0adda787cae4.log
+Worktree ID: 0adda787cae4
 ```
+
+When no daemon is running, it prints `Status: not running` and the log directory.
 
 #### Stopping the Daemon
 
@@ -278,7 +272,7 @@ Stopping background watcher (PID 12345)...
 Background watcher stopped
 ```
 
-The daemon performs a graceful shutdown, persisting the index before exiting.
+The daemon saves the index before exiting. `--stop` waits up to 30 seconds and prints `Waiting for graceful shutdown...` every 5 seconds meanwhile. If nothing is running, it prints `No background watcher is running`.
 
 #### Log Locations
 
@@ -286,11 +280,13 @@ Logs are stored in OS-specific directories:
 
 | Platform | Log Directory |
 |----------|---------------|
-| Linux | `~/.local/state/grepai/logs/` (or `$XDG_STATE_HOME`) |
+| Linux | `$XDG_STATE_HOME/grepai/logs/`, or `~/.local/state/grepai/logs/` |
 | macOS | `~/Library/Logs/grepai/` |
 | Windows | `%LOCALAPPDATA%\grepai\logs\` |
 
-Use `--log-dir` to override:
+Background log lines start with `[grepai-watch]` and a timestamp with microseconds.
+
+Use `--log-dir` to override the directory:
 
 ```bash
 grepai watch --background --log-dir /custom/path
@@ -298,59 +294,83 @@ grepai watch --status --log-dir /custom/path
 grepai watch --stop --log-dir /custom/path
 ```
 
-### Foreground UI Controls
-
-When running foreground watch UI:
-
-| Key | Action |
-|-----|--------|
-| `q` | Graceful shutdown (persists index before exit) |
-| `p` | Pause/resume event ledger auto-scroll |
-| `?` | Toggle help |
+`--stop` also finds a custom log directory recorded when the daemon was started. `--status` only checks the directory you give it (or the default).
 
 #### Log Management
 
-Logs are not rotated automatically. To prevent disk usage growth:
+Logs are not rotated automatically. To limit disk usage, truncate the file from time to time or use your system's rotation tool:
 
 ```bash
-# Truncate log file (macOS example)
-echo "" > ~/Library/Logs/grepai/grepai-watch.log
+# Truncate the log file (macOS example)
+: > ~/Library/Logs/grepai/grepai-worktree-<id>.log
 
 # Or set up logrotate (Linux) / newsyslog (macOS)
 ```
 
 #### PID File Management
 
-The daemon uses PID files with file locking to:
+The daemon writes a PID file and locks it, which lets grepai:
 
-- Prevent multiple watchers from starting simultaneously
-- Automatically clean up stale PID files from crashed processes
-- Detect if a watcher is already running
+- Refuse to start a second background watcher for the same project
+- Make a foreground `grepai watch` refuse to start while a background watcher runs
+- Clean up stale PID files left by crashed processes
 
 #### Alternative: Terminal Multiplexers
 
-You can also use traditional tools if preferred:
+You can also use tmux or screen. Add `--no-ui` if you will read the output later:
 
 ```bash
 # Using tmux
-tmux new-session -d -s grepai 'grepai watch'
+tmux new-session -d -s grepai 'grepai watch --no-ui'
 
 # Using screen
-screen -dmS grepai grepai watch
+screen -dmS grepai grepai watch --no-ui
 ```
+
+### Foreground UI Controls
+
+In an interactive terminal (stdin and stdout are terminals and `TERM` is set and not `dumb`), `grepai watch` shows a UI with the scan and embedding progress, an event ledger and the watcher health. It is not used with `--no-ui`, `--background` or `--workspace`.
+
+| Key | Action |
+|-----|--------|
+| `q` or `Ctrl+C` | Graceful shutdown (saves the index before exit) |
+| `p` | Pause or resume event ledger auto-scroll |
+| `?` | Toggle help |
+| `Tab` | Switch the focused session when several worktrees are watched |
+
+With `--no-ui`, the same run prints plain text (abridged):
+
+```text
+Starting grepai watch in /path/to/project
+Provider: ollama (nomic-embed-text)
+Backend: gob
+RPG: disabled
+...
+Performing initial scan...
+Initial scan complete: 245 files indexed, 1842 chunks created, 0 files removed, 3 skipped (took 45.2s)
+Checking symbol index...
+Symbol index built: 3421 symbols extracted
+...
+Watching for changes... (Press Ctrl+C to stop)
+```
+
+On a restart with nothing to update, the scan line reads `Index up to date: 245 files checked, 0 reindexed (took 120ms)`. The omitted lines include session status lines such as `[RUNNING] /path/to/project - steady`.
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| High CPU usage | Check for too many file changes, review ignore patterns |
-| Missing files | Check ignore patterns and file extensions |
-| Index not updating | Check file permissions and watcher limits |
-| Ollama connection failed | Ensure Ollama is running with the model loaded |
+| `no grepai project found` | Run `grepai init` in the project first |
+| `watcher is already running in background` | Stop it with `grepai watch --stop`, or use it as is |
+| `another writer is active` | A watcher or `grepai index` already runs on this project. Stop it first |
+| `cannot connect to Ollama` | Start Ollama and pull the configured model |
+| High CPU usage | Look for directories with many changing files and add them to `ignore` or `.grepaiignore` |
+| Missing files | Check ignore rules, file size (1 MB max) and supported extensions |
+| Index not updating | Check `grepai watch --status` and the log file, then file permissions and watch limits |
 
 ### System Limits (Linux)
 
-On Linux, you may need to increase inotify watchers for large projects:
+On Linux, large projects may need a higher inotify watch limit:
 
 ```bash
 # Check current limit
@@ -363,34 +383,36 @@ sudo sysctl fs.inotify.max_user_watches=524288
 echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf
 ```
 
-If the watcher reports `no space left on device` (`ENOSPC`) while registering a directory, this refers to the per-user inotify watch quota, **not filesystem disk space**. The quota is shared by all processes owned by the user, so another editor, language server, or watcher can exhaust it after grepai starts. Increase `fs.inotify.max_user_watches` or stop unnecessary watcher processes, then restart `grepai watch`.
+If the watcher reports `inotify watch limit reached` (`no space left on device`, `ENOSPC`) while adding a directory, this is the per-user inotify quota, **not disk space**. The quota is shared by all your processes, so an editor, language server or another watcher can use it up after grepai starts. Raise `fs.inotify.max_user_watches` or stop other watchers, then restart `grepai watch`.
 
 ### Use Cases
 
 #### Development Workflow
 
-Keep the watcher running in a terminal while you code:
+Keep the watcher running while you code:
 
 ```bash
-# Terminal 1: Watch for changes
+# Terminal 1: watch for changes
 grepai watch
 
-# Terminal 2: Search as you need
+# Terminal 2: search as needed
 grepai search "current feature implementation"
 ```
 
 #### CI/CD Integration
 
-For CI environments, run a one-time index:
+In CI, update the index once and search:
 
 ```bash
 grepai index
 grepai search "security vulnerabilities" --json --compact
 ```
 
+The embedder configured in `.grepai/config.yaml` must be reachable from the CI runner.
+
 ### Workspace Mode
 
-For multi-project setups, the watcher can index all projects in a workspace using a shared vector store:
+For multi-project setups, the watcher can index every project of a workspace into a shared vector store:
 
 ```bash
 # Start workspace watcher (foreground)
@@ -406,34 +428,38 @@ grepai watch --workspace my-fullstack --status
 grepai watch --workspace my-fullstack --stop
 ```
 
+The workspace watcher always prints plain text (no UI).
+
 #### How Workspace Watching Differs
 
 | Aspect | Single Project | Workspace |
 |--------|---------------|-----------|
 | Config source | `.grepai/config.yaml` | `~/.grepai/workspace.yaml` |
-| Store/embedder | Per-project settings | Shared workspace settings |
+| Store/embedder | Per-project settings | Shared workspace settings (PostgreSQL or Qdrant) |
 | Chunking/ignore | Per-project | Per-project (each project keeps its own) |
-| File path format | `src/App.tsx` | `workspace/project/src/App.tsx` |
+| File path format | `src/App.tsx` | `<workspace>/<project>/src/App.tsx` |
 | Symbol storage | `.grepai/symbols.gob` | Per-project `.grepai/symbols.gob` |
-| Log file | `grepai-watch.log` | `grepai-workspace-{name}.log` |
+| Log file | `grepai-watch.log` or `grepai-worktree-<id>.log` | `grepai-workspace-<name>.log` |
 
 #### Coexistence
 
-Per-project and workspace watchers can run simultaneously. The per-project watcher indexes into the local store (e.g., `.grepai/index.gob`), while the workspace watcher indexes into the shared store (e.g., Qdrant or PostgreSQL). This is useful if you want both fast local search and cross-project search.
+A per-project watcher and a workspace watcher both write the project's symbol index in `.grepai/`, so they take the same writer lock (`.grepai/writer.lock`). The second one to start exits with an `another writer is active` error. Run one or the other for a given project, not both at once.
 
 #### Log Locations (Workspace)
 
-Workspace watcher logs follow the same OS-specific directories as single-project logs:
+Workspace logs use the same OS-specific directories as single-project logs:
 
 | Platform | Log File |
 |----------|----------|
-| Linux | `~/.local/state/grepai/logs/grepai-workspace-{name}.log` |
-| macOS | `~/Library/Logs/grepai/grepai-workspace-{name}.log` |
+| Linux | `~/.local/state/grepai/logs/grepai-workspace-<name>.log` |
+| macOS | `~/Library/Logs/grepai/grepai-workspace-<name>.log` |
+| Windows | `%LOCALAPPDATA%\grepai\logs\grepai-workspace-<name>.log` |
 
-See [Workspace Management](/grepai/workspace/) for full workspace setup and configuration.
+See [Workspace Management](/grepai/workspace/) for setup and configuration.
 
 ### Commands Reference
 
-- [`grepai watch`](/grepai/commands/grepai_watch/) - Full CLI reference
-- [`grepai status`](/grepai/commands/grepai_status/) - Check index status
-- [`grepai init`](/grepai/commands/grepai_init/) - Initialize configuration
+- [`grepai watch`](/grepai/commands/grepai_watch/): full CLI reference
+- [`grepai index`](/grepai/commands/grepai_index/): one-time indexing
+- [`grepai status`](/grepai/commands/grepai_status/): check index status
+- [`grepai init`](/grepai/commands/grepai_init/): initialize configuration

@@ -1,17 +1,47 @@
 ---
 title: Embedders
-description: Configure embedding providers for grepai
+description: Choose and configure the embedding provider grepai uses to turn code into vectors (Ollama, LM Studio, OpenAI, Synthetic, OpenRouter, Requesty).
 ---
 
-Embedders convert text (code chunks) into vector representations that enable semantic search.
+An embedder turns each code chunk (and each search query) into a vector. This page helps you pick a provider and shows the configuration for each one.
 
 ## Available Embedders
 
-| Provider | Type | Pros | Cons |
-|----------|------|------|------|
-| Ollama | Local | Privacy, free, no internet | Requires local resources |
-| LM Studio | Local | Privacy, OpenAI-compatible API, GUI | Requires local resources |
-| OpenAI | Cloud | High quality, fast | Costs money, sends code to cloud |
+| Provider | Runs | Default model | Default dimensions | API key |
+|----------|------|---------------|--------------------|---------|
+| `ollama` (default) | Local | `nomic-embed-text` | 768 | No |
+| `lmstudio` | Local | `text-embedding-nomic-embed-text-v1.5` | 768 | No |
+| `openai` | Cloud | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` |
+| `synthetic` | Cloud | `hf:nomic-ai/nomic-embed-text-v1.5` | 768 | `SYNTHETIC_API_KEY` |
+| `openrouter` | Cloud | `openai/text-embedding-3-small` | 1536 | `OPENROUTER_API_KEY` |
+| `requesty` | Cloud | `openai/text-embedding-3-small` | 1536 | `REQUESTY_API_KEY` |
+
+How to choose:
+
+- **Keep code on your machine:** use `ollama` or `lmstudio`.
+- **Large repository on a cloud API:** consider `openai`. It is the only provider that sends batches in parallel and retries on rate limits.
+- **One key for many models:** use `openrouter` or `requesty`.
+
+Pick the provider during `grepai init`, or pass it directly:
+
+```bash
+grepai init --provider openai
+```
+
+All providers share the same `embedder` keys in `.grepai/config.yaml`:
+
+| Key | Used by | Description |
+|-----|---------|-------------|
+| `provider` | all | `ollama`, `lmstudio`, `openai`, `synthetic`, `openrouter` or `requesty` |
+| `model` | all | Model name exactly as the provider expects it |
+| `endpoint` | all | Base URL of the API (each provider has a default) |
+| `api_key` | cloud providers | API key. If empty, grepai reads the provider's environment variable |
+| `dimensions` | all | Vector size. See [Changing Embedding Models](#changing-embedding-models) |
+| `request_timeout_seconds` | all except `requesty` | HTTP timeout per request. Default: 60 (90 for `synthetic`) |
+| `parallelism` | `openai` | Concurrent requests. Default: 4 |
+| `max_retries` | `openai` | Retries on HTTP 429 and 5xx. Default: 5 |
+
+> **Note:** grepai does not expand environment variables in `config.yaml`. A value like `api_key: ${OPENAI_API_KEY}` is sent as that literal text. To use an environment variable, leave `api_key` out and export the variable.
 
 ## Ollama (Local)
 
@@ -19,29 +49,29 @@ Embedders convert text (code chunks) into vector representations that enable sem
 
 1. Install Ollama:
 
-```bash
-# macOS
-brew install ollama
+   ```bash
+   # macOS
+   brew install ollama
 
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
-```
+   # Linux
+   curl -fsSL https://ollama.com/install.sh | sh
+   ```
 
-1. Start the server:
+2. Start the server:
 
-```bash
-ollama serve
-```
+   ```bash
+   ollama serve
+   ```
 
-1. Pull an embedding model:
+3. Pull an embedding model:
 
-```bash
-ollama pull nomic-embed-text
-```
+   ```bash
+   ollama pull nomic-embed-text
+   ```
 
 ### Configuration
 
-During `grepai init`, you will be prompted for the endpoint URL (default: `http://localhost:11434`). This allows connecting to a remote Ollama server, a Docker container, or an instance running on a custom port.
+`grepai init` asks for the Ollama endpoint (default `http://localhost:11434`), so you can point it at a remote server, a Docker container or a custom port. It uses `nomic-embed-text` as the model. Edit `model` and `dimensions` to use another one.
 
 ```yaml
 embedder:
@@ -51,23 +81,27 @@ embedder:
   dimensions: 768
 ```
 
-During indexing, grepai sends multiple code chunks per request through Ollama's `/api/embed` endpoint. Servers that do not provide that endpoint automatically fall back to the legacy `/api/embeddings` API.
+grepai sends up to 64 chunks per request to Ollama's `/api/embed` endpoint. If the server does not have that endpoint (older Ollama versions), grepai switches to the legacy `/api/embeddings` endpoint and sends one chunk per request.
+
+If a chunk is longer than the model's context window, grepai splits that chunk into smaller pieces and tries again.
 
 ### Available Models
 
-| Model | Dimensions | Speed | Quality | Languages |
-|-------|------------|-------|---------|-----------|
-| `nomic-embed-text` | 768 | Fast | Good | English |
-| `nomic-embed-text-v2-moe` | 768 | Fast | Better | ~100 languages |
-| `bge-m3` | 1024 | Medium | Excellent | ~100 languages |
-| `mxbai-embed-large` | 1024 | Medium | Better | English |
-| `all-minilm` | 384 | Very Fast | Basic | English |
+Any Ollama embedding model works. Common choices:
+
+| Model | Dimensions | Languages |
+|-------|------------|-----------|
+| `nomic-embed-text` | 768 | English |
+| `nomic-embed-text-v2-moe` | 768 | Multilingual |
+| `bge-m3` | 1024 | Multilingual |
+| `mxbai-embed-large` | 1024 | English |
+| `all-minilm` | 384 | English |
+
+Set `dimensions` to match the model you choose.
 
 ### Multilingual Support
 
-The default model `nomic-embed-text` is optimized for English. For non-English codebases or mixed-language projects (Korean, Chinese, French, etc.), use a multilingual model.
-
-**Recommended:** `nomic-embed-text-v2-moe` — same dimensions (768) as the default, making it a drop-in replacement.
+`nomic-embed-text` is trained mostly on English. For comments and identifiers in other languages (Korean, Chinese, French, and so on), use a multilingual model such as `nomic-embed-text-v2-moe`. It has the same dimensions (768) as the default, so you only change `model`:
 
 ```bash
 ollama pull nomic-embed-text-v2-moe
@@ -80,13 +114,15 @@ embedder:
   dimensions: 768
 ```
 
+You still need to [re-index](#re-indexing-after-model-change) after switching.
+
 ### Troubleshooting
 
 ```bash
-# Check if Ollama is running
+# Check that Ollama is running
 curl http://localhost:11434/api/tags
 
-# Test embedding
+# Test an embedding
 curl http://localhost:11434/api/embed -d '{
   "model": "nomic-embed-text",
   "input": "Hello world",
@@ -94,63 +130,71 @@ curl http://localhost:11434/api/embed -d '{
 }'
 ```
 
+If large batches time out on slow hardware, raise `request_timeout_seconds`:
+
+```yaml
+embedder:
+  provider: ollama
+  request_timeout_seconds: 300
+```
+
 ## LM Studio (Local)
 
-LM Studio provides an OpenAI-compatible API for running embedding models locally with a user-friendly GUI.
+LM Studio runs embedding models locally behind an OpenAI-compatible API.
 
 ### Setup
 
-1. Download and install [LM Studio](https://lmstudio.ai/)
-
-2. Start LM Studio and load an embedding model (e.g., `nomic-embed-text`)
-
-3. Enable the local server (default: <http://127.0.0.1:1234>)
+1. Download and install [LM Studio](https://lmstudio.ai/).
+2. Load an embedding model (for example, a Nomic embed model).
+3. Start the local server (default: `http://127.0.0.1:1234`).
 
 ### Configuration
 
-During `grepai init`, you will be prompted for the endpoint URL (default: `http://127.0.0.1:1234`). This allows connecting to a remote LM Studio instance or a custom port.
+`grepai init` asks for the LM Studio endpoint (default `http://127.0.0.1:1234`).
 
 ```yaml
 embedder:
   provider: lmstudio
   model: text-embedding-nomic-embed-text-v1.5
   endpoint: http://127.0.0.1:1234
+  dimensions: 768
 ```
+
+grepai calls `/v1/embeddings` and sends all chunks of a file in one request. Chunks that exceed the model's context window are split and retried.
 
 ### Available Models
 
-Any embedding model supported by LM Studio, including:
+Any embedding model loaded in LM Studio works. Use the model identifier that LM Studio reports, and set `dimensions` to match it:
 
-| Model | Dimensions | Notes |
-|-------|------------|-------|
-| `nomic-embed-text-v1.5` | 768 | Good general purpose |
-| `bge-small-en-v1.5` | 384 | Fast, smaller |
-| `bge-large-en-v1.5` | 1024 | Higher quality |
+```bash
+curl http://127.0.0.1:1234/v1/models
+```
 
 ### Troubleshooting
 
 ```bash
-# Check if LM Studio server is running
+# Check that the LM Studio server is running
 curl http://127.0.0.1:1234/v1/models
 
-# Test embedding
-curl http://127.0.0.1:1234/v1/embeddings -d '{
-  "model": "text-embedding-nomic-embed-text-v1.5",
-  "input": ["Hello world"]
-}'
+# Test an embedding
+curl http://127.0.0.1:1234/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "text-embedding-nomic-embed-text-v1.5",
+    "input": ["Hello world"]
+  }'
 ```
 
 ## OpenAI (Cloud)
 
 ### Setup
 
-1. Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys)
+1. Get an API key from the [OpenAI Platform](https://platform.openai.com/api-keys).
+2. Export it:
 
-2. Set the environment variable:
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
+   ```bash
+   export OPENAI_API_KEY=sk-...
+   ```
 
 ### Configuration
 
@@ -158,65 +202,64 @@ export OPENAI_API_KEY=sk-...
 embedder:
   provider: openai
   model: text-embedding-3-small
-  api_key: ${OPENAI_API_KEY}
-  dimensions: 1536
+  endpoint: https://api.openai.com/v1
+  parallelism: 4
 ```
+
+`grepai init` leaves `dimensions` unset, so the model returns its native size. If you set `dimensions`, grepai sends it to the API as the `dimensions` parameter, which asks the model for shorter vectors.
 
 ### Azure OpenAI / Microsoft Foundry
 
-For Azure OpenAI or other OpenAI-compatible providers, use a custom endpoint:
+Any OpenAI-compatible API works with `provider: openai` and a custom `endpoint`. grepai sends `POST {endpoint}/embeddings` with an `Authorization: Bearer` header.
 
 ```yaml
 embedder:
   provider: openai
-  model: text-embedding-ada-002
-  endpoint: https://YOUR-RESOURCE.openai.azure.com/v1
-  api_key: ${AZURE_OPENAI_API_KEY}
-  dimensions: 1536
+  model: text-embedding-3-small   # on Azure, use your deployment name
+  endpoint: https://YOUR-RESOURCE.openai.azure.com/openai/v1
+  api_key: your-azure-key
 ```
+
+Leave `dimensions` unset for models that do not accept the parameter, such as `text-embedding-ada-002`.
 
 ### Available Models
 
-| Model | Dimensions | Price (per 1M tokens) |
-|-------|------------|----------------------|
-| `text-embedding-3-small` | 1536 | $0.02 |
-| `text-embedding-3-large` | 3072 | $0.13 |
+| Model | Dimensions |
+|-------|------------|
+| `text-embedding-3-small` (default) | 1536 |
+| `text-embedding-3-large` | 3072 |
+
+```bash
+grepai init --provider openai --model text-embedding-3-large
+```
+
+For current prices, see [OpenAI pricing](https://openai.com/api/pricing/).
 
 ### Parallelism & Rate Limiting
 
-OpenAI embeddings support parallel batch processing with adaptive rate limiting:
+During indexing, grepai groups chunks from many files into batches (up to 2,000 inputs and about 280,000 estimated tokens each) and sends up to `parallelism` batches at the same time.
 
 ```yaml
 embedder:
   provider: openai
-  model: text-embedding-3-small
-  api_key: ${OPENAI_API_KEY}
-  parallelism: 4  # Concurrent API requests (default: 4)
+  parallelism: 4     # concurrent requests (default: 4)
+  max_retries: 5     # retries per batch on 429 or 5xx (default: 5)
 ```
 
-**How it works:**
+How errors are handled:
 
-- Batches are processed concurrently up to `parallelism` limit
-- On rate limit (429), parallelism auto-reduces and retries with backoff
-- After successful requests, parallelism gradually restores
+- **429 and 5xx:** the batch is retried with exponential backoff (1s, doubling, capped at 32s, plus random jitter). If the response has a `Retry-After` header, grepai waits that long instead (at most 60s).
+- **Repeated 429s:** after 3 consecutive 429 responses, grepai halves the number of workers (minimum 1). After 10 consecutive successes, it adds one worker back, up to `parallelism`.
+- **Batch too large:** if OpenAI rejects a batch for exceeding the maximum request size, grepai splits it in half and retries.
+- **Other 4xx errors:** not retried.
 
 #### Recommended Parallelism by Tier
 
-Higher OpenAI tiers allow more concurrent requests. Use the table below as a starting point:
+Your rate limits depend on your OpenAI account tier. Start with the default (4). If indexing runs without 429 errors, raise it; if you see many retries, lower it.
 
-| OpenAI Tier | RPM Limit | Recommended `parallelism` |
-|-------------|-----------|--------------------------|
-| Free | 500 | 2 |
-| Tier 1 | 500 | 2–4 |
-| Tier 2 | 5,000 | 8–12 |
-| Tier 3 | 5,000 | 8–16 |
-| Tier 4 | 10,000 | 16–20 |
-| Tier 5 | 10,000 | 16–24 |
-
-**Checking your tier and rate limits:**
+To see your limits, inspect the rate limit headers of a test request:
 
 ```bash
-# Make a test embedding request and inspect rate limit headers
 curl -s -D - https://api.openai.com/v1/embeddings \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
@@ -224,70 +267,138 @@ curl -s -D - https://api.openai.com/v1/embeddings \
   -o /dev/null 2>&1 | grep -i x-ratelimit
 ```
 
-Look for `x-ratelimit-limit-requests` (your RPM cap) and `x-ratelimit-limit-tokens` (your tokens/min cap) to determine your effective tier.
-
-**Tip:** Start with a conservative value and increase if you see no 429 errors. The adaptive rate limiter will automatically back off if you exceed your limit, but starting lower avoids unnecessary retries during initial indexing.
+`x-ratelimit-limit-requests` is your requests-per-minute cap and `x-ratelimit-limit-tokens` is your tokens-per-minute cap.
 
 ### Cost Estimation
 
-For a typical codebase:
+You pay for the tokens you embed. As a rough guide, grepai estimates about 4 characters per token, so a 1 MB codebase is about 250,000 tokens for the first full index. After that, only changed files are embedded again, and chunks whose content is already in the index reuse their stored vector.
 
-- 10,000 lines of code ≈ 50,000 tokens
-- Initial index: ~$0.001 with `text-embedding-3-small`
-- Ongoing updates: negligible
+## Synthetic (Cloud)
+
+[Synthetic](https://synthetic.new) serves open embedding models through an OpenAI-compatible API.
+
+```bash
+export SYNTHETIC_API_KEY=your-key
+```
+
+```yaml
+embedder:
+  provider: synthetic
+  model: hf:nomic-ai/nomic-embed-text-v1.5
+  endpoint: https://api.synthetic.new/openai/v1
+  dimensions: 768
+```
+
+- If `api_key` and `SYNTHETIC_API_KEY` are both empty, grepai falls back to `OPENAI_API_KEY`.
+- grepai always sends `dimensions` in the request (768 by default).
+- The default request timeout is 90 seconds.
+
+## OpenRouter (Cloud)
+
+[OpenRouter](https://openrouter.ai) is a gateway to embedding models from several vendors.
+
+```bash
+export OPENROUTER_API_KEY=your-key
+```
+
+```yaml
+embedder:
+  provider: openrouter
+  model: openai/text-embedding-3-small
+  endpoint: https://openrouter.ai/api/v1
+```
+
+`grepai init` offers three models. grepai infers the dimensions for them when `dimensions` is unset:
+
+| Model | Dimensions | `--model` shortcut |
+|-------|------------|--------------------|
+| `openai/text-embedding-3-small` (default) | 1536 | `text-embedding-3-small` |
+| `openai/text-embedding-3-large` | 3072 | `text-embedding-3-large` |
+| `qwen/qwen3-embedding-8b` | 4096 | `qwen3-embedding-8b` |
+
+```bash
+grepai init --provider openrouter --model qwen3-embedding-8b
+```
+
+For any other model, set `dimensions` yourself. If `api_key` and `OPENROUTER_API_KEY` are both empty, grepai falls back to `OPENAI_API_KEY`.
+
+## Requesty (Cloud)
+
+[Requesty](https://requesty.ai) is another multi-vendor gateway.
+
+```bash
+export REQUESTY_API_KEY=your-key
+```
+
+```yaml
+embedder:
+  provider: requesty
+  model: openai/text-embedding-3-small
+  endpoint: https://router.requesty.ai/v1
+```
+
+- grepai infers 3072 dimensions for `openai/text-embedding-3-large` and 1536 for other models. Set `dimensions` for models with another size.
+- If `api_key` and `REQUESTY_API_KEY` are both empty, grepai falls back to `OPENAI_API_KEY`.
+- The request timeout is fixed at 60 seconds (`request_timeout_seconds` is ignored).
 
 ## Changing Embedding Models
 
-You can use any embedding model available on your provider. Two parameters matter:
+You can use any embedding model your provider offers. Two keys matter:
 
-| Parameter    | Description                                       |
-|--------------|---------------------------------------------------|
-| `model`      | The exact model name as expected by the provider  |
-| `dimensions` | The vector size produced by the model             |
+| Key | Description |
+|-----|-------------|
+| `model` | The exact model name the provider expects |
+| `dimensions` | The size of the vectors the model produces |
+
+When `dimensions` is unset, grepai assumes 768 for `ollama`, `lmstudio` and `synthetic`, and 1536 for `openai`, `openrouter` and `requesty` (3072 or 4096 for the models listed above). PostgreSQL and Qdrant use this value to size the vector column or collection, so it must match the model.
 
 ### Finding Model Dimensions
 
-Each embedding model produces vectors of a fixed size. Using incorrect dimensions causes errors or poor results.
-
-**For Ollama:**
+**Ollama:**
 
 ```bash
 curl -s http://localhost:11434/api/embed \
   -d '{"model": "MODEL_NAME", "input": "test"}' | jq '.embeddings[0] | length'
 ```
 
-**For LM Studio:**
+**LM Studio:**
 
 ```bash
 curl -s http://127.0.0.1:1234/v1/embeddings \
+  -H "Content-Type: application/json" \
   -d '{"model": "MODEL_NAME", "input": ["test"]}' | jq '.data[0].embedding | length'
 ```
 
 ### Re-indexing After Model Change
 
-**Important:** Embeddings from different models are incompatible. After changing models, you must re-index:
+Vectors from different models are not compatible, and grepai does not detect a model change on its own. After changing `provider`, `model` or `dimensions`, clear the index and build it again.
+
+With the default GOB store:
 
 ```bash
-rm -rf .grepai/index.gob .grepai/symbols.gob
-grepai watch
+grepai watch --stop          # if a background watcher is running
+rm .grepai/index.gob
+grepai index                 # or: grepai watch
 ```
+
+For PostgreSQL and Qdrant, see [Vector Stores](/grepai/backends/stores/).
 
 ## Adding a New Embedder
 
-To add a new embedding provider:
+To add a provider:
 
-1. Implement the `Embedder` interface in `embedder/`:
+1. Implement the `Embedder` interface from `embedder/embedder.go`:
 
-```go
-type Embedder interface {
-    Embed(ctx context.Context, text string) ([]float32, error)
-    EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
-    Dimensions() int
-}
-```
+   ```go
+   type Embedder interface {
+       Embed(ctx context.Context, text string) ([]float32, error)
+       EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+       Dimensions() int
+       Close() error
+   }
+   ```
 
-1. Add configuration in `config/config.go`
-
-1. Wire it up in the CLI commands
+2. Add the provider defaults in `config/config.go`.
+3. Add a case to `NewFromConfig` in `embedder/factory.go`, and to the prompts in `cli/init.go`.
 
 See [Contributing](/grepai/contributing/) for more details.
