@@ -337,6 +337,16 @@ psql -d grepai -c "DELETE FROM documents WHERE project_id = '/path/to/frontend';
 
 ## Troubleshooting
 
+### Windows workspace restart re-embeds everything
+
+On Windows, the filesystem scanner used to return backslash paths while the
+workspace store used forward slashes. A `watch` restart then treated every file
+as deleted and rebuilt the index. The scanner now always emits forward-slash
+paths. Legacy single-project indexes that still store backslash paths are cleaned
+up on the next index pass (those old keys no longer match a scanned path, so they
+are removed as orphans). If you still see a mass re-embed after upgrading, stop
+the watcher and run a fresh workspace index once.
+
 ### "GOB backend not supported"
 
 The actual error reads `workspace "<name>" uses GOB backend which is not supported for multi-project workspaces; use 'postgres' or 'qdrant' instead`. Recreate the workspace with a shared backend:
