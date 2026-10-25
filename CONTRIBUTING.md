@@ -1,172 +1,57 @@
 # Contributing to grepai
 
-Thank you for your interest in contributing to grepai! This document provides guidelines and instructions for contributing.
+Thank you for wanting to help. grepai works **issue first**: every contribution starts as an issue, and the project does not accept pull requests.
 
-## Getting Started
+## Why issue first
 
-### Prerequisites
+With AI coding tools, writing a fix is rarely the hard part. The hard part is knowing exactly what is wrong, on which setup, and what the right behavior is. A precise issue carries all of that. Reviewing an outside pull request, checking it does not break other setups, and reworking it to fit the rest of the code usually takes longer than implementing the fix from a good issue.
 
-- Go 1.22 or later
-- Ollama (for local testing with embeddings)
-- Git
+So the most useful thing you can send is a detailed issue. The maintainer implements it, tests it against the current release on real projects, and credits you in the changelog.
 
-### Setup
+Pull requests opened anyway are closed with a link to open an issue instead. Nothing is lost: the description and the diff you wrote help write the fix.
 
-1. Fork the repository
-2. Clone your fork:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/grepai.git
-   cd grepai
-   ```
-3. Add the upstream remote:
-   ```bash
-   git remote add upstream https://github.com/yoanbernabeu/grepai.git
-   ```
-4. Install dependencies:
-   ```bash
-   go mod download
-   ```
+## Open an issue
 
-## Development Workflow
+- **Bug**: use the [bug report form](https://github.com/yoanbernabeu/grepai/issues/new?template=bug_report.yml). Include the grepai version (`grepai version`), your OS, the embedder and store from `.grepai/config.yaml` (without keys), the exact commands, what you expected, what happened, and the logs.
+- **Feature**: use the [feature request form](https://github.com/yoanbernabeu/grepai/issues/new?template=feature_request.yml). Start with the problem you hit and your real use case before the solution you have in mind.
+- **Question**: use [Discussions](https://github.com/yoanbernabeu/grepai/discussions).
+- **Security issue**: do not open a public issue; follow [SECURITY.md](SECURITY.md).
 
-### Building
+Search the [existing issues](https://github.com/yoanbernabeu/grepai/issues?q=is%3Aissue) first. If yours is there, add your setup and logs to it: a second reproduction is often what unblocks a fix.
+
+## Other ways to help
+
+- **Test a fix.** When a fix lands on a branch, building it and confirming it works on your project is very valuable. See [Building from source](#building-from-source).
+- **Improve the docs.** If a page is wrong, unclear or out of date, open an issue that quotes the passage and says what is wrong.
+- **List your tool.** Built something around grepai? Open an issue to add it to [Community Tools](https://yoanbernabeu.github.io/grepai/community-tools/).
+- **Talk about it.** A star, a post or a talk helps other people find grepai.
+
+## Building from source
+
+You need Go (the version in the `go` directive of `go.mod`), Git, and Docker for `make lint`.
 
 ```bash
+git clone https://github.com/yoanbernabeu/grepai.git
+cd grepai
+make build        # builds bin/grepai
+make test         # tests with the race detector
+```
+
+To try a branch that contains a fix:
+
+```bash
+git fetch origin <branch>
+git checkout <branch>
 make build
-# or
-go build ./cmd/grepai
+./bin/grepai version
 ```
 
-### Running Tests
+The default build has no AST chunking or tree-sitter extraction. To include them, build with the `treesitter` tag (needs CGO and a C compiler):
 
 ```bash
-make test
-# or
-go test -v -race ./...
+go build -tags treesitter -o bin/grepai ./cmd/grepai
 ```
 
-### Linting
+## Code of conduct
 
-We use golangci-lint for code quality:
-
-```bash
-# Install golangci-lint
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
-# Run linter
-make lint
-```
-
-### Before Committing
-
-Always run the pre-commit checks before pushing your changes:
-
-```bash
-make pre-commit
-```
-
-This single command will:
-1. **Format** all Go files with `gofmt`
-2. **Vet** - detect common errors with `go vet`
-3. **Lint** - run comprehensive checks with `golangci-lint`
-4. **Test** - run all tests with race detection
-
-If all checks pass, you're ready to commit!
-
-### Code Style
-
-- Follow standard Go conventions and idioms
-- Use `gofmt` or `goimports` to format your code
-- Write meaningful commit messages
-- Add tests for new functionality
-- Update documentation as needed
-
-## Making Changes
-
-### Branch Naming
-
-- `feat/description` - New features
-- `fix/description` - Bug fixes
-- `docs/description` - Documentation changes
-- `refactor/description` - Code refactoring
-- `test/description` - Test additions or modifications
-
-### Commit Messages
-
-We follow conventional commits:
-
-```
-type(scope): description
-
-[optional body]
-
-[optional footer]
-```
-
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-Examples:
-- `feat(search): add fuzzy matching option`
-- `fix(watcher): handle file rename events correctly`
-- `docs(readme): update installation instructions`
-
-### Pull Request Process
-
-1. Create a feature branch from `main`
-2. Make your changes
-3. Ensure all tests pass
-4. Run the linter and fix any issues
-5. Update CHANGELOG.md if applicable
-6. Submit a pull request
-
-### Pull Request Checklist
-
-- [ ] Tests added/updated
-- [ ] Documentation updated
-- [ ] CHANGELOG.md updated (for user-facing changes)
-- [ ] Code follows project style guidelines
-- [ ] All CI checks pass
-
-## Project Structure
-
-```
-grepai/
-├── cmd/grepai/      # CLI entry point
-├── cli/             # Cobra commands
-├── config/          # Configuration management
-├── embedder/        # Embedding providers (Ollama, OpenAI)
-├── store/           # Vector storage backends (GOB, Postgres)
-├── indexer/         # File scanning and chunking
-├── watcher/         # File system watcher
-└── search/          # Search functionality
-```
-
-## Adding New Features
-
-### New Embedding Provider
-
-1. Create a new file in `embedder/` (e.g., `embedder/newprovider.go`)
-2. Implement the `Embedder` interface
-3. Add configuration options in `config/config.go`
-4. Update CLI initialization in `cli/watch.go` and `cli/search.go`
-5. Add tests in `embedder/newprovider_test.go`
-6. Update documentation
-
-### New Storage Backend
-
-1. Create a new file in `store/` (e.g., `store/newbackend.go`)
-2. Implement the `VectorStore` interface
-3. Add configuration options in `config/config.go`
-4. Update CLI initialization
-5. Add tests
-6. Update documentation
-
-## Getting Help
-
-- Open an issue for bugs or feature requests
-- Start a discussion for questions
-- Check existing issues and discussions first
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Everyone taking part in issues and discussions follows the [Code of Conduct](CODE_OF_CONDUCT.md).

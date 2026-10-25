@@ -67,10 +67,11 @@ Built something useful around grepai? Add it to this page.
 
 **How to add your tool:**
 
-1. Fork the [grepai repository](https://github.com/yoanbernabeu/grepai).
-2. Add your tool to `docs/src/content/docs/community-tools.md`.
-3. Include a description, installation steps, use cases and a repository link.
-4. Open a pull request that explains what the tool does.
+grepai works [issue first](/grepai/contributing/) and does not accept pull requests, so tools are added from an issue:
+
+1. Open a [feature request](https://github.com/yoanbernabeu/grepai/issues/new?template=feature_request.yml) titled `Community tool: <name>`.
+2. Include a description, installation steps, use cases and a repository link.
+3. The tool is added to this page and the issue is closed with a link to it.
 
 **Guidelines:**
 

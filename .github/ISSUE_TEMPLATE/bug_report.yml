@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug! Please fill out the form below.
+        Thanks for taking the time to report a bug! grepai works issue first: the maintainer writes the fix from this report and credits you in the changelog, so the more precise it is (version, config, commands, logs), the faster it gets fixed.
 
   - type: textarea
     id: description

@@ -385,22 +385,8 @@ grepai index                 # or: grepai watch
 
 An index built by a version older than this check has no metadata file: it is adopted as is the first time it is indexed again.
 
-## Adding a New Embedder
+## Requesting a New Embedder
 
-To add a provider:
+grepai works [issue first](/grepai/contributing/) and does not accept pull requests. To ask for another provider, open a [feature request](https://github.com/yoanbernabeu/grepai/issues/new?template=feature_request.yml) with the provider, the model you want to use and your use case.
 
-1. Implement the `Embedder` interface from `embedder/embedder.go`:
-
-   ```go
-   type Embedder interface {
-       Embed(ctx context.Context, text string) ([]float32, error)
-       EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
-       Dimensions() int
-       Close() error
-   }
-   ```
-
-2. Add the provider defaults in `config/config.go`.
-3. Add a case to `NewFromConfig` in `embedder/factory.go`, and to the prompts in `cli/init.go`.
-
-See [Contributing](/grepai/contributing/) for more details.
+Many services expose an OpenAI-compatible API: they usually work today with the `openai` provider and a custom `endpoint`.

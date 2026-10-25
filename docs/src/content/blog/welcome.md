@@ -29,6 +29,6 @@ If you haven't tried grepai yet, check out our [Getting Started guide](/grepai/g
 
 - Star us on [GitHub](https://github.com/yoanbernabeu/grepai)
 - Follow the [documentation](/grepai/getting-started/) for detailed guides
-- Contribute to the project - we welcome PRs!
+- Contribute by [opening an issue](https://github.com/yoanbernabeu/grepai/issues) (see [Contributing](/grepai/contributing/))
 
 We're excited to have you here. Stay tuned for more content!

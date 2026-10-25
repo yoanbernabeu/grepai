@@ -131,7 +131,7 @@ Full docs, guides, and blog:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+grepai works **issue first**: contributions start as an issue, and pull requests are not accepted. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a bug, request a feature or test a fix.
 
 ## License
 

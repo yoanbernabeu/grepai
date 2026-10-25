@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for suggesting a feature! Please describe your idea below.
+        Thanks for suggesting a feature! grepai works issue first: the maintainer implements accepted requests and credits you in the changelog, so start with the problem and your real use case.
 
   - type: textarea
     id: problem
@@ -53,11 +53,3 @@ body:
     attributes:
       label: Additional Context
       description: Add any other context, mockups, or screenshots about the feature request.
-
-  - type: checkboxes
-    id: contribution
-    attributes:
-      label: Contribution
-      options:
-        - label: I would be willing to contribute this feature
-          required: false

@@ -196,13 +196,6 @@ When the collection does not exist, grepai creates it with cosine distance and t
 - Multi-project [workspaces](/grepai/workspace/)
 - Setups that already run Docker or Qdrant
 
-## Adding a New Store
+## Requesting a New Store
 
-To add a storage backend:
-
-1. Implement the `VectorStore` interface from `store/store.go`. It covers saving and deleting chunks and documents, similarity search (with an optional path prefix filter), loading and persisting, and index statistics.
-2. Optionally implement `EmbeddingCache` (same file) to let the indexer reuse vectors for identical content.
-3. Add the backend's options to `StoreConfig` in `config/config.go`.
-4. Wire it into the commands that open a store (`cli/`, `mcp/`) and into the prompts in `cli/init.go`.
-
-See [Contributing](/grepai/contributing/) for more details.
+grepai works [issue first](/grepai/contributing/) and does not accept pull requests. To ask for another storage backend, open a [feature request](https://github.com/yoanbernabeu/grepai/issues/new?template=feature_request.yml) with the database, how you run it, and why the existing stores do not fit.
