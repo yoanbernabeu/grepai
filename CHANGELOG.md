@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Large GOB Index Warning**: after indexing, grepai warns when a `gob` index holds 50,000 chunks or more and recommends the `qdrant` backend. Every search loads and scans the whole `gob` index: on the Go source tree (about 55,000 chunks), that is about 0.5 s and 1.2 GB of RAM per search. The vector stores documentation now gives size guidance.
 - **Configurable Embedding Batch Limits**: `embedder.max_batch_size` and `embedder.max_batch_tokens` cap the inputs and estimated tokens sent in one request by the `openai` provider, for OpenAI-compatible endpoints that time out or fail on the default OpenAI-sized batches (2000 inputs, 280000 tokens). The limits apply to initial indexing and to the watcher. Configs without these keys behave as before. (#92)
 
 ### Fixed

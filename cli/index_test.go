@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -398,4 +401,45 @@ func requireFileInfo(t *testing.T, path string) os.FileInfo {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 	return info
+}
+
+func TestWarnIfLargeGOBIndex(t *testing.T) {
+	ctx := context.Background()
+	newGOB := func(t *testing.T, chunks int) *store.GOBStore {
+		t.Helper()
+		st := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+		batch := make([]store.Chunk, chunks)
+		for i := range batch {
+			batch[i] = store.Chunk{ID: fmt.Sprintf("f.go_%d", i), FilePath: "f.go"}
+		}
+		if err := st.SaveChunks(ctx, batch); err != nil {
+			t.Fatalf("SaveChunks failed: %v", err)
+		}
+		return st
+	}
+
+	tests := []struct {
+		name string
+		st   store.VectorStore
+		want bool
+	}{
+		{name: "small gob index", st: newGOB(t, largeGOBIndexChunks-1), want: false},
+		{name: "large gob index", st: newGOB(t, largeGOBIndexChunks), want: true},
+		{name: "other backend", st: &mockVectorStore{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			defer log.SetOutput(os.Stderr)
+
+			warnIfLargeGOBIndex(ctx, tt.st)
+
+			got := strings.Contains(buf.String(), "use the qdrant backend")
+			if got != tt.want {
+				t.Fatalf("warning printed = %v, want %v (output %q)", got, tt.want, buf.String())
+			}
+		})
+	}
 }

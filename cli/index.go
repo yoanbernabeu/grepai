@@ -219,8 +219,29 @@ func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackg
 		}
 	}
 
+	warnIfLargeGOBIndex(ctx, runtime.vectorStore)
 	emitInitialStatsSnapshot(ctx, runtime.vectorStore, runtime.symbolStore, runtime.projectRoot, onStats)
 	return nil
+}
+
+// largeGOBIndexChunks is the chunk count above which the gob backend is no
+// longer a good fit: every search loads the whole index and scans every chunk.
+const largeGOBIndexChunks = 50000
+
+// warnIfLargeGOBIndex points large gob indexes to qdrant, which keeps a vector
+// index server-side instead of reloading and scanning everything per search.
+func warnIfLargeGOBIndex(ctx context.Context, st store.VectorStore) {
+	gobStore, ok := st.(*store.GOBStore)
+	if !ok {
+		return
+	}
+	stats, err := gobStore.GetStats(ctx)
+	if err != nil || stats.TotalChunks < largeGOBIndexChunks {
+		return
+	}
+	log.Printf("Warning: this index has %d chunks. The gob backend loads the whole index and scans every chunk on each search, "+
+		"which gets slow at this size. For large projects, use the qdrant backend: "+
+		"https://yoanbernabeu.github.io/grepai/backends/stores/#qdrant", stats.TotalChunks)
 }
 
 func (runtime *projectIndexRuntime) removeDeletedSymbols(ctx context.Context, existingDocuments []string, scannedFiles []indexer.FileMeta) error {

@@ -16,6 +16,7 @@ A vector store keeps the embeddings of your code and finds the chunks closest to
 How to choose:
 
 - **One developer, one project:** keep `gob`. There is nothing to install.
+- **Large project (more than about 50,000 chunks):** use `qdrant`. A `gob` index is loaded and scanned in full on every search, so searches slow down as the index grows; Qdrant keeps a vector index on its server. grepai prints a warning after indexing when a `gob` index passes this size.
 - **Index shared by several machines, worktrees or projects, or [workspaces](/grepai/workspace/):** use `postgres` or `qdrant`. Workspaces reject the GOB backend.
 - **You already run PostgreSQL:** use `postgres`. **You prefer a dedicated vector database:** use `qdrant`.
 
@@ -49,9 +50,21 @@ There are no other options. The file path is always `.grepai/index.gob` in the p
 - **Self-healing:** if `index.gob` cannot be read, grepai moves it to `index.gob.corrupt`, starts from an empty index and rebuilds it on the next scan.
 - **Local only:** the file cannot be shared across machines, and each git worktree has its own index.
 
+### Size Limits
+
+Each `grepai search` and each MCP tool call loads the whole `index.gob`, then compares the query with every chunk. Measured with 768-dimension vectors on a recent laptop:
+
+| Chunks | `index.gob` size | Load + search |
+|--------|------------------|---------------|
+| 10,000 | ~60 MB | ~0.1 s |
+| 50,000 | ~310 MB | ~0.5 s |
+| 100,000 | ~625 MB | ~0.8 s |
+
+Memory follows the same curve: on the Go source tree (about 55,000 chunks, a 494 MB `index.gob`), each search peaks at about 1.2 GB of RAM. Models with 1536 or 3072 dimensions multiply the size by 2 or 4. Above about 50,000 chunks, grepai prints a warning after indexing and recommends [Qdrant](#qdrant). Run `grepai status` to see the chunk count of your index.
+
 ### Best For
 
-- Personal projects and single repositories
+- Personal projects and single repositories (up to about 50,000 chunks)
 - Quick experiments
 - CI jobs that build a throwaway index
 
