@@ -78,8 +78,8 @@ github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3
 github.com/pgvector/pgvector-go v0.4.1 h1:Oaj0mC0Ky8KaTweNHHpLwyFlN6a0nUFoo1vgSFTEhPI=
 github.com/pgvector/pgvector-go v0.4.1/go.mod h1:4fSXyjl1TYAIdByAql6JazKWRr2s7J0g4hcRY5cBFCk=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/qdrant/go-client v1.19.2 h1:R4w8PG8cdtTzaviU/76JuCc0pI/tzbUE27B8UVqSf74=
-github.com/qdrant/go-client v1.19.2/go.mod h1:etxS7W+x+NFEPDk+FUhUPKEq95hckHxeXQqWiljJIYw=
+github.com/qdrant/go-client v1.20.0 h1:cKJvhWnPHemvy06+jpPNGoX5qKp63VHeIn+/bQKqIYE=
+github.com/qdrant/go-client v1.20.0/go.mod h1:ZorGclWceflis4Ddp3EIPhYJTgyAqlNmcl1hoW5iCUE=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=

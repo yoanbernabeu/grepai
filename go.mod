@@ -12,13 +12,14 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mark3labs/mcp-go v1.0.0
 	github.com/pgvector/pgvector-go v0.4.1
-	github.com/qdrant/go-client v1.19.2
+	github.com/qdrant/go-client v1.20.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.84.0
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -58,7 +59,6 @@ require (
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 // Exclude the separate javascript submodule to use the one from the main module
