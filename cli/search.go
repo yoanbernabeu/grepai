@@ -493,49 +493,6 @@ func outputSearchErrorTOON(err error) error {
 	return nil
 }
 
-// SearchJSON returns results in JSON format for AI agents
-func SearchJSON(projectRoot string, query string, limit int) ([]store.SearchResult, error) {
-	ctx := context.Background()
-
-	cfg, err := config.Load(projectRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	emb, err := embedder.NewFromConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	defer emb.Close()
-
-	var st store.VectorStore
-	switch cfg.Store.Backend {
-	case "gob":
-		gobStore := store.NewGOBStore(config.GetIndexPath(projectRoot))
-		if err := gobStore.Load(ctx); err != nil {
-			return nil, err
-		}
-		st = gobStore
-	case "postgres":
-		var err error
-		st, err = store.NewPostgresStore(ctx, cfg.Store.Postgres.DSN, projectRoot, cfg.Embedder.GetDimensions(), cfg.Embedder.CacheNamespace())
-		if err != nil {
-			return nil, err
-		}
-	}
-	defer st.Close()
-
-	// Create searcher with boost config
-	searcher := search.NewSearcher(st, emb, cfg.Search)
-
-	return searcher.Search(ctx, query, limit, "")
-}
-
-func init() {
-	// Ensure the search command is registered
-	_ = os.Getenv("GREPAI_DEBUG")
-}
-
 // runWorkspaceSearch handles workspace-level search operations
 func runWorkspaceSearch(ctx context.Context, query string, projects []string, pathOpt string) error {
 	// Load workspace config
