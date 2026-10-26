@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-26
+
 ### Added
 
 - **Large GOB Index Warning**: after indexing, grepai warns when a `gob` index holds 50,000 chunks or more and recommends the `qdrant` backend. Every search loads and scans the whole `gob` index: on the Go source tree (about 55,000 chunks), that is about 0.5 s and 1.2 GB of RAM per search. The vector stores documentation now gives size guidance.
@@ -17,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Watcher Ignored Custom Extensions**: files indexed through `chunking.custom_extensions` (or the workspace equivalent) were never updated by `grepai watch`, because the watcher only knew the built-in extensions. It now uses the same extension list as indexing.
 - **Watcher Ignored Dotfiles**: `grepai watch` dropped every change to a file or directory whose name starts with a dot, although indexing includes them. Edits to files such as `.goreleaser.yml` or `.eslintrc.yml` stayed stale until the next restart, and a dot directory created during the watch (e.g. `.devcontainer/`) was never watched. The watcher now applies the same rules as indexing: `.gitignore`, `.grepaiignore` and the `ignore` config list. (#367)
 - **Workspace Lost Re-Chunked Chunks**: In workspace mode, chunks split again after a context-length error (IDs such as `file.go_3_1`) were renamed to `file.go_1` and overwrote the file's regular chunks, so parts of the file disappeared from search. Sub-chunk IDs now keep their full suffix. Existing workspace indexes need no migration, but a file already affected stays incomplete until it changes and is re-indexed. (#358)
+- **MCP Trace With `root` Used the Wrong RPG Graph**: `grepai_trace_callers`, `grepai_trace_callees` and `grepai_trace_graph` called with `root` loaded symbols from that project but feature paths from the server's startup project, so `feature_path` was missing or wrong. Feature paths now come from the `root` project's RPG graph. (#376)
+- **Postgres `--path` Filter Used Wildcards**: `_`, `%` and `\` in a path prefix acted as SQL `LIKE` wildcards, so `--path store/postgres_` also matched `store/postgres.go`. The prefix is now matched literally, as with GOB and Qdrant. (#363)
+
+### Dependencies
+
+- Bump `github.com/mark3labs/mcp-go` from 1.0.0 to 1.3.0 (#390)
+- Bump `github.com/qdrant/go-client` from 1.19.2 to 1.20.0 (#391)
 
 ## [1.0.0] - 2026-10-25
 
@@ -824,7 +833,8 @@ First stable release. Existing configs and indexes keep working. On first start,
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/yoanbernabeu/grepai/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yoanbernabeu/grepai/compare/v0.39.0...v1.0.0
 [0.39.0]: https://github.com/yoanbernabeu/grepai/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/yoanbernabeu/grepai/compare/v0.37.0...v0.38.0
