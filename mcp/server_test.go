@@ -867,7 +867,7 @@ func TestHandleTraceCallersFromStores_should_aggregate_across_stores(t *testing.
 	s := &Server{}
 	stores := []trace.SymbolStore{store1, store2}
 
-	result, err := s.handleTraceCallersFromStores(ctx, "Login", false, "json", stores)
+	result, err := s.handleTraceCallersFromStores(ctx, "", "Login", false, "json", stores)
 	if err != nil {
 		t.Fatalf("handleTraceCallersFromStores returned error: %v", err)
 	}
@@ -922,7 +922,7 @@ func TestHandleTraceCalleesFromStores_should_aggregate_across_stores(t *testing.
 	s := &Server{}
 	stores := []trace.SymbolStore{store1, store2}
 
-	result, err := s.handleTraceCalleesFromStores(ctx, "HandleRequest", false, "json", stores)
+	result, err := s.handleTraceCalleesFromStores(ctx, "", "HandleRequest", false, "json", stores)
 	if err != nil {
 		t.Fatalf("handleTraceCalleesFromStores returned error: %v", err)
 	}

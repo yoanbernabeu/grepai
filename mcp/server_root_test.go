@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/rpg"
 	"github.com/yoanbernabeu/grepai/trace"
 )
 
@@ -344,5 +346,96 @@ func TestCreateStoreForRoot_gobBackend(t *testing.T) {
 
 	if st == nil {
 		t.Fatal("expected non-nil store")
+	}
+}
+
+// setupTraceProjectWithRPG creates a project with RPG enabled, a symbol index
+// containing Login (called by HandleAuth) and an RPG graph placing
+// internal/auth/login.go under the given feature path.
+func setupTraceProjectWithRPG(t *testing.T, featurePath string) string {
+	t.Helper()
+	ctx := context.Background()
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, config.ConfigDir), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.RPG.Enabled = true
+	if err := cfg.Save(projectRoot); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))
+	if err := symbolStore.SaveFile(ctx, "internal/auth/login.go", []trace.Symbol{
+		{Name: "Login", Kind: "function", File: "internal/auth/login.go", Line: 10, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "Login", File: "internal/auth/handler.go", Line: 20, CallerName: "HandleAuth", CallerFile: "internal/auth/handler.go", CallerLine: 15},
+	}); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+	if err := symbolStore.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
+	g := rpgStore.GetGraph()
+	area := &rpg.Node{ID: "area:" + featurePath, Kind: rpg.KindArea, Feature: featurePath}
+	file := &rpg.Node{ID: "file:internal/auth/login.go", Kind: rpg.KindFile, Path: "internal/auth/login.go"}
+	sym := &rpg.Node{ID: "sym:internal/auth/login.go:Login", Kind: rpg.KindSymbol, Path: "internal/auth/login.go", SymbolName: "Login"}
+	g.AddNode(area)
+	g.AddNode(file)
+	g.AddNode(sym)
+	g.AddEdge(&rpg.Edge{From: area.ID, To: file.ID, Type: rpg.EdgeFeatureParent})
+	g.AddEdge(&rpg.Edge{From: file.ID, To: sym.ID, Type: rpg.EdgeContains})
+	if err := rpgStore.Persist(ctx); err != nil {
+		t.Fatalf("persist RPG graph: %v", err)
+	}
+
+	return projectRoot
+}
+
+// TestTraceTools_rootOverride_enrich_from_root_RPG verifies that RPG
+// enrichment reads the graph of the root override, not the startup project.
+func TestTraceTools_rootOverride_enrich_from_root_RPG(t *testing.T) {
+	ctx := context.Background()
+	startupRoot := setupTraceProjectWithRPG(t, "startup-feature")
+	overrideRoot := setupTraceProjectWithRPG(t, "override-feature")
+
+	s := &Server{projectRoot: startupRoot}
+
+	tools := []struct {
+		name    string
+		handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	}{
+		{name: "callers", handler: s.handleTraceCallers},
+		{name: "callees", handler: s.handleTraceCallees},
+		{name: "graph", handler: s.handleTraceGraph},
+	}
+
+	for _, tool := range tools {
+		t.Run(tool.name, func(t *testing.T) {
+			for _, tt := range []struct {
+				root string
+				want string
+				not  string
+			}{
+				{root: overrideRoot, want: "override-feature", not: "startup-feature"},
+				{root: "", want: "startup-feature", not: "override-feature"},
+			} {
+				args := map[string]any{"symbol": "Login", "format": "json"}
+				if tt.root != "" {
+					args["root"] = tt.root
+				}
+				result, err := tool.handler(ctx, refsTestRequest(args))
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				payload := textResultPayload(t, result)
+				if !strings.Contains(payload, tt.want) || strings.Contains(payload, tt.not) {
+					t.Fatalf("root=%q: expected feature path %q (not %q), got %s", tt.root, tt.want, tt.not, payload)
+				}
+			}
+		})
 	}
 }

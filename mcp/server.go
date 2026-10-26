@@ -1083,15 +1083,15 @@ func (s *Server) resolveWorkspace(workspace string) string {
 
 // enrichTraceSymbols enriches trace symbols with RPG feature paths.
 // It loads the RPG store once and enriches all provided symbols in one pass.
-func (s *Server) enrichTraceSymbols(ctx context.Context, symbols ...*trace.Symbol) {
-	if s.projectRoot == "" {
+func (s *Server) enrichTraceSymbols(ctx context.Context, projectRoot string, symbols ...*trace.Symbol) {
+	if projectRoot == "" {
 		return
 	}
-	cfg, err := config.Load(s.projectRoot)
+	cfg, err := config.Load(projectRoot)
 	if err != nil || !cfg.RPG.Enabled {
 		return
 	}
-	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(s.projectRoot))
+	rpgStore := rpg.NewGOBRPGStore(config.GetRPGIndexPath(projectRoot))
 	if err := rpgStore.Load(ctx); err != nil {
 		log.Printf("Warning: RPG enrichment unavailable for trace: %v", err)
 		return
@@ -1147,7 +1147,7 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		return s.handleTraceCallersFromStores(ctx, symbolName, compact, format, stores)
+		return s.handleTraceCallersFromStores(ctx, s.projectRoot, symbolName, compact, format, stores)
 	}
 
 	// Single-project mode (allow explicit root override)
@@ -1167,11 +1167,11 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
 	}
 
-	return s.handleTraceCallersFromStores(ctx, symbolName, compact, format, []trace.SymbolStore{symbolStore})
+	return s.handleTraceCallersFromStores(ctx, projectRootToUse, symbolName, compact, format, []trace.SymbolStore{symbolStore})
 }
 
 // handleTraceCallersFromStores handles callers lookup across one or more symbol stores.
-func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
+func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot string, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	// Aggregate results across stores
 	var firstSymbol *trace.Symbol
 	var allRefs []trace.Reference
@@ -1244,7 +1244,7 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 		for i := range resultCompact.Callers {
 			symPtrs = append(symPtrs, &resultCompact.Callers[i].Symbol)
 		}
-		s.enrichTraceSymbols(ctx, symPtrs...)
+		s.enrichTraceSymbols(ctx, projectRoot, symPtrs...)
 
 		data = resultCompact
 	} else {
@@ -1283,7 +1283,7 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 		for i := range result.Callers {
 			symPtrs = append(symPtrs, &result.Callers[i].Symbol)
 		}
-		s.enrichTraceSymbols(ctx, symPtrs...)
+		s.enrichTraceSymbols(ctx, projectRoot, symPtrs...)
 
 		data = result
 	}
@@ -1330,7 +1330,7 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		return s.handleTraceCalleesFromStores(ctx, symbolName, compact, format, stores)
+		return s.handleTraceCalleesFromStores(ctx, s.projectRoot, symbolName, compact, format, stores)
 	}
 
 	// Single-project mode (allow explicit root override)
@@ -1350,11 +1350,11 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
 	}
 
-	return s.handleTraceCalleesFromStores(ctx, symbolName, compact, format, []trace.SymbolStore{symbolStore})
+	return s.handleTraceCalleesFromStores(ctx, projectRootToUse, symbolName, compact, format, []trace.SymbolStore{symbolStore})
 }
 
 // handleTraceCalleesFromStores handles callees lookup across one or more symbol stores.
-func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
+func (s *Server) handleTraceCalleesFromStores(ctx context.Context, projectRoot string, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	var firstSymbol *trace.Symbol
 	var allRefs []trace.Reference
 
@@ -1428,7 +1428,7 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 		for i := range resultCompact.Callees {
 			symPtrs = append(symPtrs, &resultCompact.Callees[i].Symbol)
 		}
-		s.enrichTraceSymbols(ctx, symPtrs...)
+		s.enrichTraceSymbols(ctx, projectRoot, symPtrs...)
 
 		data = resultCompact
 	} else {
@@ -1467,7 +1467,7 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 		for i := range result.Callees {
 			symPtrs = append(symPtrs, &result.Callees[i].Symbol)
 		}
-		s.enrichTraceSymbols(ctx, symPtrs...)
+		s.enrichTraceSymbols(ctx, projectRoot, symPtrs...)
 
 		data = result
 	}
@@ -1599,7 +1599,7 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 			entries = append(entries, symEntry{name: name, sym: sym})
 			symPtrs = append(symPtrs, &entries[len(entries)-1].sym)
 		}
-		s.enrichTraceSymbols(ctx, symPtrs...)
+		s.enrichTraceSymbols(ctx, projectRootToUse, symPtrs...)
 		for _, e := range entries {
 			result.Graph.Nodes[e.name] = e.sym
 		}
