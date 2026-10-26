@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/yoanbernabeu/grepai/indexer"
 )
 
 func (w *Watcher) processEvents(ctx context.Context) {
@@ -112,7 +111,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 	}
 
 	ext := strings.ToLower(filepath.Ext(event.Name))
-	if !indexer.SupportedExtensions[ext] {
+	if !w.isSupported(ext) {
 		return nil
 	}
 

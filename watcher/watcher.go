@@ -39,6 +39,7 @@ type Watcher struct {
 	backendEvents <-chan fsnotify.Event
 	backendErrors <-chan error
 	ignore        *indexer.IgnoreMatcher
+	isSupported   func(ext string) bool
 	debounceMs    int
 	events        chan FileEvent
 	errors        chan error
@@ -85,12 +86,21 @@ func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Wa
 		pending:     make(map[string]FileEvent),
 		watchedDirs: make(map[string]bool),
 	}
+	w.isSupported = func(ext string) bool { return indexer.SupportedExtensions[ext] }
 	w.addWatch = fsw.Add
 	w.statPath = os.Stat
 	w.relPath = filepath.Rel
 	w.backendEvents = fsw.Events
 	w.backendErrors = fsw.Errors
 	return w, nil
+}
+
+// WithSupportedExtensions sets which lowercase file extensions produce events,
+// so the watcher follows the scanner's custom extensions. It must be called
+// before Start.
+func (w *Watcher) WithSupportedExtensions(isSupported func(ext string) bool) *Watcher {
+	w.isSupported = isSupported
+	return w
 }
 
 func (w *Watcher) Start(ctx context.Context) error {
@@ -215,7 +225,7 @@ func (w *Watcher) addRecursive(root string, rootRequired bool, onFile func(relPa
 		if w.ignore.ShouldIgnore(relPath) {
 			return nil
 		}
-		if onFile != nil && indexer.SupportedExtensions[strings.ToLower(filepath.Ext(relPath))] {
+		if onFile != nil && w.isSupported(strings.ToLower(filepath.Ext(relPath))) {
 			onFile(relPath)
 		}
 		return nil

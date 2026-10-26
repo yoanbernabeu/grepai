@@ -1233,6 +1233,7 @@ func watchProjectWithEventObserverAndFence(ctx context.Context, projectRoot stri
 		abortStores = isFatalWatcherError(err)
 		return fmt.Errorf("failed to initialize watcher for %s: %w", projectRoot, err)
 	}
+	w.WithSupportedExtensions(runtime.scanner.IsSupported)
 	abortWatcherClose := false
 	defer func() {
 		if !abortWatcherClose {
@@ -3146,6 +3147,7 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		}
 		return nil, nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
+	w.WithSupportedExtensions(indexRuntime.scanner.IsSupported)
 	if err := w.Start(ctx); err != nil {
 		if isFatalWatcherError(err) {
 			w.Abort()

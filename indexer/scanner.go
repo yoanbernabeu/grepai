@@ -147,7 +147,9 @@ func (s *Scanner) WithCustomExtensions(exts []string) *Scanner {
 	return s
 }
 
-func (s *Scanner) isSupported(ext string) bool {
+// IsSupported reports whether files with the given lowercase extension are
+// indexed: built-in SupportedExtensions plus custom extensions.
+func (s *Scanner) IsSupported(ext string) bool {
 	if SupportedExtensions[ext] {
 		return true
 	}
@@ -188,7 +190,7 @@ func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
 
 		// Check extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if !s.isSupported(ext) {
+		if !s.IsSupported(ext) {
 			return nil
 		}
 
@@ -251,7 +253,7 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 
 		// Check extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if !s.isSupported(ext) {
+		if !s.IsSupported(ext) {
 			return nil
 		}
 

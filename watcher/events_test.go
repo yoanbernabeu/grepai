@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/yoanbernabeu/grepai/indexer"
 )
 
 func TestCreateDirectoryNamedLikeSourceRegistersDescendants(t *testing.T) {
@@ -446,5 +447,38 @@ func TestCreatedDotDirectoryIsWatchedAndIndexed(t *testing.T) {
 	defer w.pendingMu.Unlock()
 	if _, ok := w.pending[".github/workflows/ci.yml"]; !ok {
 		t.Fatalf("pending = %#v, want .github/workflows/ci.yml queued", w.pending)
+	}
+}
+
+// Custom extensions indexed by the scanner must also produce watch events.
+func TestCustomExtensionEventsFollowScanner(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"script.tengo", "main.go", "notes.unknown"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ignore, err := indexer.NewIgnoreMatcher(root, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := indexer.NewScanner(root, ignore).WithCustomExtensions([]string{".tengo"})
+
+	w := newTestWatcher(t, root).WithSupportedExtensions(scanner.IsSupported)
+	defer w.Close()
+	w.debounceMs = int(time.Hour / time.Millisecond)
+
+	for _, name := range []string{"script.tengo", "main.go", "notes.unknown"} {
+		if err := w.handleEvent(fsnotify.Event{Name: filepath.Join(root, name), Op: fsnotify.Write}); err != nil {
+			t.Fatalf("handleEvent(%s) error = %v", name, err)
+		}
+	}
+
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	for name, want := range map[string]bool{"script.tengo": true, "main.go": true, "notes.unknown": false} {
+		if _, got := w.pending[name]; got != want {
+			t.Errorf("%s queued = %v, want %v", name, got, want)
+		}
 	}
 }
