@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -161,8 +162,8 @@ func (s *PostgresStore) Search(ctx context.Context, queryVector []float32, limit
 
 	// Add path prefix filter if provided
 	if opts.PathPrefix != "" {
-		query += ` AND file_path LIKE $` + fmt.Sprintf("%d", nextParam)
-		args = append(args, opts.PathPrefix+"%")
+		query += ` AND file_path LIKE $` + fmt.Sprintf("%d", nextParam) + ` ESCAPE '\'`
+		args = append(args, escapeLikePattern(opts.PathPrefix)+"%")
 		nextParam++
 	}
 
@@ -427,4 +428,12 @@ BEGIN
 	END IF;
 END$$;
 `, dim, dim, dim, dim)
+}
+
+var likePatternEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLikePattern escapes LIKE wildcards so the value matches literally.
+// It must be used with `ESCAPE '\'`.
+func escapeLikePattern(s string) string {
+	return likePatternEscaper.Replace(s)
 }

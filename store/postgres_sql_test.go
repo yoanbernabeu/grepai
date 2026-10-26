@@ -102,3 +102,22 @@ func strconvItoa(n int) string {
 		return string(buf[i:])
 	}
 }
+
+func TestEscapeLikePattern(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "src/foo", want: "src/foo"},
+		{in: "src/foo_bar", want: `src/foo\_bar`},
+		{in: "100%/x", want: `100\%/x`},
+		{in: `a\b`, want: `a\\b`},
+		{in: `_%\`, want: `\_\%\\`},
+	}
+
+	for _, tt := range tests {
+		if got := escapeLikePattern(tt.in); got != tt.want {
+			t.Errorf("escapeLikePattern(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

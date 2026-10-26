@@ -80,3 +80,61 @@ func TestPostgresStoreLookupByContentHashScopesCacheIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresStoreSearchPathPrefixIsLiteral(t *testing.T) {
+	dsn := os.Getenv("GREPAI_POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("GREPAI_POSTGRES_TEST_DSN is not set")
+	}
+
+	ctx := context.Background()
+	st, err := NewPostgresStore(ctx, dsn, "proj_like_escape", 3, "model=test")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := st.pool.Exec(ctx, `TRUNCATE TABLE chunks, documents`); err != nil {
+		t.Fatalf("failed to clean tables: %v", err)
+	}
+
+	paths := []string{"src/foo_bar.go", "src/fooXbar.go", "src/100%/a.go", "src/100x/a.go", `src/a\b.go`}
+	chunks := make([]Chunk, 0, len(paths))
+	for i, p := range paths {
+		chunks = append(chunks, Chunk{
+			ID:        p + "_0",
+			FilePath:  p,
+			StartLine: 1,
+			EndLine:   1,
+			Content:   p,
+			Vector:    []float32{1, float32(i), 0},
+			Hash:      p,
+			UpdatedAt: time.Now().UTC(),
+		})
+	}
+	if err := st.SaveChunks(ctx, chunks); err != nil {
+		t.Fatalf("failed to save chunks: %v", err)
+	}
+
+	tests := []struct {
+		prefix string
+		want   string
+	}{
+		{prefix: "src/foo_bar", want: "src/foo_bar.go"},
+		{prefix: "src/100%", want: "src/100%/a.go"},
+		{prefix: `src/a\b`, want: `src/a\b.go`},
+	}
+	for _, tt := range tests {
+		results, err := st.Search(ctx, []float32{1, 0, 0}, 10, SearchOptions{PathPrefix: tt.prefix})
+		if err != nil {
+			t.Fatalf("search with prefix %q failed: %v", tt.prefix, err)
+		}
+		if len(results) != 1 || results[0].Chunk.FilePath != tt.want {
+			got := make([]string, 0, len(results))
+			for _, r := range results {
+				got = append(got, r.Chunk.FilePath)
+			}
+			t.Errorf("prefix %q: got %v, want [%s]", tt.prefix, got, tt.want)
+		}
+	}
+}
