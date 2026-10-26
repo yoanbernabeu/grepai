@@ -57,7 +57,7 @@ Follow your approved plan step by step:
 
 1. Use TodoWrite to track implementation progress
 2. Make focused, incremental changes
-3. Follow project coding conventions (see CLAUDE.md)
+3. Follow project coding conventions and the V1 Stability Rules (see AGENTS.md)
 4. Add/update tests as needed
 5. Mark todos as completed as you progress
 
@@ -104,6 +104,13 @@ This creates the binary at `./bin/grepai`.
 - Test the new/modified functionality against this actual codebase
 - Verify the output is correct and the feature works as expected
 - Test edge cases mentioned in your plan
+
+### 5.4 Backward Compatibility and Representative Project (V1)
+
+Apply the **V1 Stability Rules** from AGENTS.md:
+
+- Check that an existing config and an index built by the previous release still work unchanged
+- Test on a real project whose language fits the feature (not only this Go repository when the feature targets another language or backend)
 
 **If any step fails:**
 
