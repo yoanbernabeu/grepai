@@ -838,3 +838,62 @@ func TestOpenAIEmbedder_SplitsOnMaxRequestSize(t *testing.T) {
 	}
 	t.Logf("batch split path: %v", callSizes)
 }
+
+func TestOpenAIEmbedder_EmbedBatch_respectsBatchLimits(t *testing.T) {
+	var requestSizes []int
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openAIEmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		requestSizes = append(requestSizes, len(req.Input))
+		mu.Unlock()
+
+		// Encode each input's text length in its vector to check ordering.
+		resp := mockEmbeddingResponse(len(req.Input))
+		for i, text := range req.Input {
+			resp.Data[i].Embedding[0] = float32(len(text))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	e, err := NewOpenAIEmbedder(
+		WithOpenAIEndpoint(server.URL),
+		WithOpenAIKey("test-key"),
+		WithOpenAIBatchLimits(BatchLimits{MaxSize: 2}),
+	)
+	if err != nil {
+		t.Fatalf("failed to create embedder: %v", err)
+	}
+	if got := e.BatchLimits(); got.MaxSize != 2 || got.MaxTokens != MaxBatchTokens {
+		t.Fatalf("BatchLimits() = %+v, want MaxSize 2 and default MaxTokens", got)
+	}
+
+	texts := []string{"a", "bb", "ccc", "dddd", "eeeee"}
+	vectors, err := e.EmbedBatch(context.Background(), texts)
+	if err != nil {
+		t.Fatalf("EmbedBatch failed: %v", err)
+	}
+
+	if len(requestSizes) != 3 {
+		t.Fatalf("got %d requests (%v), want 3", len(requestSizes), requestSizes)
+	}
+	for _, n := range requestSizes {
+		if n > 2 {
+			t.Errorf("request with %d inputs exceeds max_batch_size 2", n)
+		}
+	}
+	if len(vectors) != len(texts) {
+		t.Fatalf("got %d vectors, want %d", len(vectors), len(texts))
+	}
+	for i, text := range texts {
+		if vectors[i][0] != float32(len(text)) {
+			t.Errorf("vector %d belongs to input of length %v, want %d", i, vectors[i][0], len(text))
+		}
+	}
+}

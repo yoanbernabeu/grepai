@@ -40,6 +40,8 @@ All providers share the same `embedder` keys in `.grepai/config.yaml`:
 | `request_timeout_seconds` | all except `requesty` | HTTP timeout per request. Default: 60 (90 for `synthetic`) |
 | `parallelism` | `openai` | Concurrent requests. Default: 4 |
 | `max_retries` | `openai` | Retries on HTTP 429 and 5xx. Default: 5 |
+| `max_batch_size` | `openai` | Maximum inputs per request. Default: 2000 |
+| `max_batch_tokens` | `openai` | Maximum estimated tokens per request. Default: 280000 |
 
 > **Note:** grepai does not expand environment variables in `config.yaml`. A value like `api_key: ${OPENAI_API_KEY}` is sent as that literal text. To use an environment variable, leave `api_key` out and export the variable.
 
@@ -245,6 +247,18 @@ embedder:
   parallelism: 4     # concurrent requests (default: 4)
   max_retries: 5     # retries per batch on 429 or 5xx (default: 5)
 ```
+
+OpenAI-compatible endpoints (self-hosted vLLM, TEI, proxies…) often accept much smaller requests and time out or fail on the defaults. Lower the batch limits for them; they also apply to the watcher, which embeds one file per request:
+
+```yaml
+embedder:
+  provider: openai
+  endpoint: https://embeddings.example.com/v1
+  max_batch_size: 100       # inputs per request (default: 2000)
+  max_batch_tokens: 50000   # estimated tokens per request (default: 280000)
+```
+
+Tokens are estimated at about 4 characters per token. A single chunk larger than `max_batch_tokens` is still sent alone.
 
 How errors are handled:
 

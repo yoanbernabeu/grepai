@@ -33,6 +33,7 @@ type OpenAIEmbedder struct {
 	rateLimiter *AdaptiveRateLimiter
 	tokenBucket *TokenBucket
 	tpmLimit    int64 // Tokens per minute limit (0 = disabled)
+	batchLimits BatchLimits
 }
 
 type openAIEmbedRequest struct {
@@ -129,6 +130,15 @@ func WithOpenAITPMLimit(tpm int64) OpenAIOption {
 	}
 }
 
+// WithOpenAIBatchLimits caps the number of inputs and estimated tokens sent in
+// one embedding request, for OpenAI-compatible endpoints with lower limits.
+// Zero values keep the defaults (MaxBatchSize / MaxBatchTokens).
+func WithOpenAIBatchLimits(limits BatchLimits) OpenAIOption {
+	return func(e *OpenAIEmbedder) {
+		e.batchLimits = limits.withDefaults()
+	}
+}
+
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
 		endpoint:    defaultOpenAIEndpoint,
@@ -136,6 +146,7 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 		dimensions:  nil, // nil = let the model use its native dimensions
 		parallelism: defaultParallelism,
 		retryPolicy: DefaultRetryPolicy(),
+		batchLimits: DefaultBatchLimits(),
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -178,6 +189,29 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return nil, nil
 	}
 
+	batches := FormBatchesWithLimits([]FileChunks{{Chunks: texts}}, e.batchLimits)
+	if len(batches) <= 1 {
+		return e.embedRequest(ctx, texts)
+	}
+
+	embeddings := make([][]float32, 0, len(texts))
+	for _, batch := range batches {
+		vectors, err := e.embedRequest(ctx, batch.Contents())
+		if err != nil {
+			return nil, err
+		}
+		embeddings = append(embeddings, vectors...)
+	}
+	return embeddings, nil
+}
+
+// BatchLimits returns the request size limits used to form batches.
+func (e *OpenAIEmbedder) BatchLimits() BatchLimits {
+	return e.batchLimits
+}
+
+// embedRequest embeds texts in a single API request.
+func (e *OpenAIEmbedder) embedRequest(ctx context.Context, texts []string) ([][]float32, error) {
 	reqBody := openAIEmbedRequest{
 		Model:      e.model,
 		Input:      texts,

@@ -1,6 +1,7 @@
 package embedder
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -474,4 +475,59 @@ func TestFormBatches_SmallChunksIgnoreTokenLimit(t *testing.T) {
 	if len(batches[0].Entries) != MaxBatchSize {
 		t.Errorf("first batch should have %d entries, got %d", MaxBatchSize, len(batches[0].Entries))
 	}
+}
+
+func TestFormBatchesWithLimits_DefaultsMatchFormBatches(t *testing.T) {
+	files := []FileChunks{{FileIndex: 0, Chunks: make([]string, MaxBatchSize+10)}}
+	for i := range files[0].Chunks {
+		files[0].Chunks[i] = "chunk"
+	}
+
+	for _, limits := range []BatchLimits{{}, {MaxSize: -1, MaxTokens: -1}, DefaultBatchLimits()} {
+		got := FormBatchesWithLimits(files, limits)
+		want := FormBatches(files)
+		if len(got) != len(want) || got[0].Size() != want[0].Size() {
+			t.Errorf("limits %+v: got %d batches (first %d), want %d (first %d)",
+				limits, len(got), got[0].Size(), len(want), want[0].Size())
+		}
+	}
+}
+
+func TestFormBatchesWithLimits_CustomLimits(t *testing.T) {
+	chunk := strings.Repeat("a", 400) // 100 estimated tokens
+	files := []FileChunks{
+		{FileIndex: 0, Chunks: []string{chunk, chunk, chunk, chunk, chunk}},
+		{FileIndex: 1, Chunks: []string{chunk, chunk, chunk, chunk, chunk}},
+	}
+
+	t.Run("max size", func(t *testing.T) {
+		batches := FormBatchesWithLimits(files, BatchLimits{MaxSize: 3})
+		if len(batches) != 4 {
+			t.Fatalf("got %d batches, want 4", len(batches))
+		}
+		for _, b := range batches {
+			if b.Size() > 3 {
+				t.Errorf("batch %d has %d entries, want <= 3", b.Index, b.Size())
+			}
+		}
+	})
+
+	t.Run("max tokens", func(t *testing.T) {
+		batches := FormBatchesWithLimits(files, BatchLimits{MaxTokens: 250})
+		if len(batches) != 5 {
+			t.Fatalf("got %d batches, want 5", len(batches))
+		}
+		for _, b := range batches {
+			if b.Size() != 2 {
+				t.Errorf("batch %d has %d entries, want 2", b.Index, b.Size())
+			}
+		}
+	})
+
+	t.Run("oversized chunk is sent alone", func(t *testing.T) {
+		batches := FormBatchesWithLimits([]FileChunks{{Chunks: []string{chunk, strings.Repeat("b", 4000), chunk}}}, BatchLimits{MaxTokens: 250})
+		if len(batches) != 3 || batches[1].Size() != 1 {
+			t.Fatalf("got %d batches, want 3 with the oversized chunk alone", len(batches))
+		}
+	})
 }

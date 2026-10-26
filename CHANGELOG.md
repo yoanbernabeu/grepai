@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable Embedding Batch Limits**: `embedder.max_batch_size` and `embedder.max_batch_tokens` cap the inputs and estimated tokens sent in one request by the `openai` provider, for OpenAI-compatible endpoints that time out or fail on the default OpenAI-sized batches (2000 inputs, 280000 tokens). The limits apply to initial indexing and to the watcher. Configs without these keys behave as before. (#92)
+
 ### Fixed
 
 - **Workspace Lost Re-Chunked Chunks**: In workspace mode, chunks split again after a context-length error (IDs such as `file.go_3_1`) were renamed to `file.go_1` and overwrote the file's regular chunks, so parts of the file disappeared from search. Sub-chunk IDs now keep their full suffix. Existing workspace indexes need no migration, but a file already affected stays incomplete until it changes and is re-indexed. (#358)

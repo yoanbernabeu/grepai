@@ -53,6 +53,10 @@ func NewFromConfig(cfg *config.Config) (Embedder, error) {
 		if cfg.Embedder.MaxRetries > 0 {
 			opts = append(opts, WithOpenAIMaxRetries(cfg.Embedder.MaxRetries))
 		}
+		opts = append(opts, WithOpenAIBatchLimits(BatchLimits{
+			MaxSize:   cfg.Embedder.MaxBatchSize,
+			MaxTokens: cfg.Embedder.MaxBatchTokens,
+		}))
 		return NewOpenAIEmbedder(opts...)
 
 	case "lmstudio":

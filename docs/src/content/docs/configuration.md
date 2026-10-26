@@ -43,6 +43,8 @@ embedder:
   # parallelism: 4              # concurrent requests (openai only), default 4
   # request_timeout_seconds: 60 # HTTP timeout per request; default 60 (90 for synthetic), ignored by requesty
   # max_retries: 5              # retries on HTTP 429/5xx (openai only)
+  # max_batch_size: 2000        # inputs per request (openai only)
+  # max_batch_tokens: 280000    # estimated tokens per request (openai only)
 
 store:
   backend: gob                  # gob | postgres | qdrant

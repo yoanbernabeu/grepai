@@ -832,3 +832,49 @@ func TestValidateWatchConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigLoad_EmbedderBatchLimits(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ConfigDir), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfgPath := GetConfigPath(tmpDir)
+
+	tests := []struct {
+		name       string
+		yaml       string
+		wantSize   int
+		wantTokens int
+	}{
+		{"absent keeps zero (provider defaults)", "embedder:\n  provider: openai\n", 0, 0},
+		{"custom values", "embedder:\n  provider: openai\n  max_batch_size: 100\n  max_batch_tokens: 50000\n", 100, 50000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := Load(tmpDir)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+			if cfg.Embedder.MaxBatchSize != tt.wantSize || cfg.Embedder.MaxBatchTokens != tt.wantTokens {
+				t.Fatalf("batch limits = (%d, %d), want (%d, %d)",
+					cfg.Embedder.MaxBatchSize, cfg.Embedder.MaxBatchTokens, tt.wantSize, tt.wantTokens)
+			}
+		})
+	}
+
+	// A config saved without batch limits must not gain the new keys.
+	if err := DefaultConfig().Save(tmpDir); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "max_batch") {
+		t.Fatalf("default config should not write batch limit keys, got:\n%s", data)
+	}
+}

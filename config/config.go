@@ -121,6 +121,15 @@ type EmbedderConfig struct {
 	// value of 5. Only consumed by providers that implement retry today
 	// (openai); other providers ignore it.
 	MaxRetries int `yaml:"max_retries,omitempty"`
+	// MaxBatchSize caps the number of inputs sent in one embedding request.
+	// 0 (the default) keeps the OpenAI limit of 2000. Lower it for
+	// OpenAI-compatible endpoints that time out or reject large batches.
+	// Only consumed by the openai provider.
+	MaxBatchSize int `yaml:"max_batch_size,omitempty"`
+	// MaxBatchTokens caps the estimated tokens sent in one embedding request.
+	// 0 (the default) keeps the OpenAI limit of 280000. Only consumed by the
+	// openai provider.
+	MaxBatchTokens int `yaml:"max_batch_tokens,omitempty"`
 }
 
 // GetDimensions returns the configured dimensions or a default value.
