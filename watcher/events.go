@@ -72,7 +72,9 @@ func (w *Watcher) handleEvent(event fsnotify.Event) error {
 		return &FatalError{Operation: "watch root", Path: w.root, Cause: errWatchRootLost}
 	}
 
-	if strings.HasPrefix(filepath.Base(relPath), ".") || w.ignore.ShouldIgnore(relPath) {
+	// Same rules as the scanner: only ignore patterns decide, so dotfiles the
+	// scanner indexes (.env, .eslintrc.yml, files in a new .github/) stay fresh.
+	if w.ignore.ShouldIgnore(relPath) {
 		return nil
 	}
 

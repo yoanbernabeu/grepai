@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Watcher Ignored Dotfiles**: `grepai watch` dropped every change to a file or directory whose name starts with a dot, although indexing includes them. Edits to files such as `.goreleaser.yml` or `.eslintrc.yml` stayed stale until the next restart, and a dot directory created during the watch (e.g. `.devcontainer/`) was never watched. The watcher now applies the same rules as indexing: `.gitignore`, `.grepaiignore` and the `ignore` config list. (#367)
 - **Workspace Lost Re-Chunked Chunks**: In workspace mode, chunks split again after a context-length error (IDs such as `file.go_3_1`) were renamed to `file.go_1` and overwrote the file's regular chunks, so parts of the file disappeared from search. Sub-chunk IDs now keep their full suffix. Existing workspace indexes need no migration, but a file already affected stays incomplete until it changes and is re-indexed. (#358)
 
 ## [1.0.0] - 2026-10-25

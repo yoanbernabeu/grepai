@@ -381,3 +381,70 @@ func TestNewDirectoryEmitsCreateForExistingFiles(t *testing.T) {
 		t.Fatalf("missing create events: %v", got)
 	}
 }
+
+// Dotfiles follow the same rules as the scanner: only ignore patterns
+// exclude them, so live edits keep their index entries fresh (#367).
+func TestDotfileEventsFollowIgnoreRules(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		".gitignore":    ".env.local\n",
+		".env":          "APP_ENV=dev\n",
+		".env.local":    "SECRET=x\n",
+		".eslintrc.yml": "root: true\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := newTestWatcher(t, root)
+	defer w.Close()
+	w.debounceMs = int(time.Hour / time.Millisecond)
+
+	for _, name := range []string{".env", ".env.local", ".eslintrc.yml"} {
+		if err := w.handleEvent(fsnotify.Event{Name: filepath.Join(root, name), Op: fsnotify.Write}); err != nil {
+			t.Fatalf("handleEvent(%s) error = %v", name, err)
+		}
+	}
+
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	for _, name := range []string{".env", ".eslintrc.yml"} {
+		if _, ok := w.pending[name]; !ok {
+			t.Errorf("%s modification was dropped, want it queued", name)
+		}
+	}
+	if _, ok := w.pending[".env.local"]; ok {
+		t.Error(".env.local is gitignored and must not be queued")
+	}
+}
+
+func TestCreatedDotDirectoryIsWatchedAndIndexed(t *testing.T) {
+	root := t.TempDir()
+	w := newTestWatcher(t, root)
+	defer w.Close()
+	w.debounceMs = int(time.Hour / time.Millisecond)
+
+	dotDir := filepath.Join(root, ".github")
+	workflows := filepath.Join(dotDir, "workflows")
+	if err := os.MkdirAll(workflows, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflows, "ci.yml"), []byte("on: push\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	added := make(map[string]bool)
+	w.addWatch = func(path string) error { added[path] = true; return nil }
+
+	if err := w.handleEvent(fsnotify.Event{Name: dotDir, Op: fsnotify.Create}); err != nil {
+		t.Fatalf("handleEvent() error = %v", err)
+	}
+	if !added[dotDir] || !added[workflows] {
+		t.Fatalf("registered paths = %#v, want .github and .github/workflows", added)
+	}
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	if _, ok := w.pending[".github/workflows/ci.yml"]; !ok {
+		t.Fatalf("pending = %#v, want .github/workflows/ci.yml queued", w.pending)
+	}
+}

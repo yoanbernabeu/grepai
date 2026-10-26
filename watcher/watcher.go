@@ -212,7 +212,7 @@ func (w *Watcher) addRecursive(root string, rootRequired bool, onFile func(relPa
 		}
 
 		// Skip ignored files
-		if w.ignore.ShouldIgnore(relPath) || strings.HasPrefix(filepath.Base(relPath), ".") {
+		if w.ignore.ShouldIgnore(relPath) {
 			return nil
 		}
 		if onFile != nil && indexer.SupportedExtensions[strings.ToLower(filepath.Ext(relPath))] {
