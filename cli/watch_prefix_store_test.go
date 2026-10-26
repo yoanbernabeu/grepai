@@ -218,6 +218,36 @@ func TestProjectPrefixStore_SaveChunks(t *testing.T) {
 	}
 }
 
+func TestProjectPrefixStore_SaveChunks_keepsReChunkedIDsUnique(t *testing.T) {
+	ctx := context.Background()
+	mock := &mockVectorStore{}
+	wrapped := &projectPrefixStore{
+		store:         mock,
+		workspaceName: "ws",
+		projectName:   "proj",
+		projectPath:   t.TempDir(),
+	}
+
+	relPath := "dir/my_file.go"
+	chunks := []store.Chunk{
+		{ID: relPath + "_0_0", FilePath: relPath},
+		{ID: relPath + "_0_1", FilePath: relPath},
+		{ID: relPath + "_1", FilePath: relPath},
+	}
+
+	if err := wrapped.SaveChunks(ctx, chunks); err != nil {
+		t.Fatalf("SaveChunks failed: %v", err)
+	}
+
+	prefixed := wrapped.getPrefix() + "/" + relPath
+	want := []string{prefixed + "_0_0", prefixed + "_0_1", prefixed + "_1"}
+	for i, w := range want {
+		if mock.savedChunks[i].ID != w {
+			t.Errorf("chunk%d id = %q, want %q", i, mock.savedChunks[i].ID, w)
+		}
+	}
+}
+
 func TestProjectPrefixStore_PathMappedMethods(t *testing.T) {
 	ctx := context.Background()
 	projectRoot := t.TempDir()

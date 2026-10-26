@@ -3217,8 +3217,11 @@ func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chun
 		prefixedPath := p.getPrefix() + "/" + relPath
 		prefixedChunks[i].FilePath = prefixedPath
 		// Also update the chunk ID to include project prefix
-		// Original ID format is "filePath_index", we need to replace the filePath part
-		if idx := strings.LastIndex(c.ID, "_"); idx >= 0 {
+		// Original ID format is "filePath_index" (or "filePath_parent_sub" for
+		// re-chunked chunks): replace the whole filePath part to keep IDs unique
+		if c.FilePath != "" && strings.HasPrefix(c.ID, c.FilePath+"_") {
+			prefixedChunks[i].ID = prefixedPath + c.ID[len(c.FilePath):]
+		} else if idx := strings.LastIndex(c.ID, "_"); idx >= 0 {
 			prefixedChunks[i].ID = prefixedPath + c.ID[idx:]
 		}
 	}
