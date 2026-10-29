@@ -338,11 +338,9 @@ type preparedFileChunks struct {
 // that no longer produce any chunk have their chunks deleted here.
 // Returns the file data for storage and the file chunks for embedding.
 //
-// Each file is independent (its own chunk generation), so this
-// runs concurrently across a bounded worker pool. On large repositories this
-// overlaps per-file store round trips (relevant for remote backends like
-// Postgres/Qdrant) with the CPU cost of chunking instead of paying both costs
-// strictly one file at a time.
+// Each file is independent (its own chunk generation), so this runs
+// concurrently across a bounded worker pool instead of chunking strictly one
+// file at a time.
 func (idx *Indexer) prepareFileChunks(
 	ctx context.Context,
 	files []FileInfo,
@@ -449,22 +447,27 @@ func (idx *Indexer) saveFileData(ctx context.Context, fd fileChunkData, chunks [
 	return nil
 }
 
-// replaceFileData swaps a file's previous chunks for the new ones. If the swap
-// fails, the file's chunks and document are dropped so the next scan sees the
-// file as not indexed and retries it, as IndexFile does (#311).
-func (idx *Indexer) replaceFileData(ctx context.Context, fd fileChunkData, chunks []store.Chunk, chunkIDs []string) (err error) {
-	defer func() {
-		if err != nil {
-			if delErr := idx.RemoveFile(context.WithoutCancel(ctx), fd.file.Path); delErr != nil {
-				log.Printf("Warning: failed to drop document for %s after indexing error: %v", fd.file.Path, delErr)
-			}
-		}
-	}()
-
+// replaceFileData swaps a file's previous chunks for the new ones. If the
+// previous chunks could not be deleted, they are left as they are. If saving
+// fails once they are gone, the file is dropped so the next scan sees it as
+// not indexed and retries it, as IndexFile does (#311).
+func (idx *Indexer) replaceFileData(ctx context.Context, fd fileChunkData, chunks []store.Chunk, chunkIDs []string) error {
 	if err := idx.store.DeleteByFile(ctx, fd.file.Path); err != nil {
 		return fmt.Errorf("failed to delete existing chunks for %s: %w", fd.file.Path, err)
 	}
-	return idx.saveFileData(ctx, fd, chunks, chunkIDs)
+	if err := idx.saveFileData(ctx, fd, chunks, chunkIDs); err != nil {
+		idx.dropFile(ctx, fd.file.Path)
+		return err
+	}
+	return nil
+}
+
+// dropFile removes a file whose re-index failed from the index, so the next
+// scan sees it as not indexed and retries it (#311).
+func (idx *Indexer) dropFile(ctx context.Context, path string) {
+	if err := idx.RemoveFile(context.WithoutCancel(ctx), path); err != nil {
+		log.Printf("Warning: failed to drop document for %s after indexing error: %v", path, err)
+	}
 }
 
 // wrapBatchProgress creates an embedder.BatchProgress callback from BatchProgressCallback.
@@ -509,11 +512,14 @@ func (idx *Indexer) indexFilesBatched(
 	vectors := make([][][]float32, len(fileData))
 	uncached := make([][]int, len(fileData))
 	var remainingFileChunks []embedder.FileChunks
-	var totalCacheHits, fullyCachedFiles int
+	var totalCacheHits, filesWithCacheHits int
 
 	for i, fd := range fileData {
 		cachedVectors, cacheHits := idx.lookupCachedEmbeddings(ctx, fd.chunkInfos)
 		totalCacheHits += cacheHits
+		if cacheHits > 0 {
+			filesWithCacheHits++
+		}
 
 		vectors[i] = make([][]float32, len(fd.chunkInfos))
 		var contents []string
@@ -527,7 +533,6 @@ func (idx *Indexer) indexFilesBatched(
 		}
 
 		if len(contents) == 0 {
-			fullyCachedFiles++
 			continue
 		}
 		remainingFileChunks = append(remainingFileChunks, embedder.FileChunks{
@@ -537,7 +542,7 @@ func (idx *Indexer) indexFilesBatched(
 	}
 
 	if totalCacheHits > 0 {
-		log.Printf("Reused %d cached embeddings across %d files (%d fully cached)", totalCacheHits, len(fileData), fullyCachedFiles)
+		log.Printf("Reused %d cached embeddings across %d files", totalCacheHits, filesWithCacheHits)
 	}
 
 	now := time.Now()

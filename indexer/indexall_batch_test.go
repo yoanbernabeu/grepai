@@ -116,3 +116,78 @@ func TestIndexAllBatched_EmbedFailureKeepsPreviousChunks(t *testing.T) {
 		t.Fatalf("file has %d chunks after a failed re-index, want the previous %d", len(after), len(before))
 	}
 }
+
+// failingReplaceStore fails the delete or the save step of a file's chunk swap.
+type failingReplaceStore struct {
+	*store.GOBStore
+	failDelete, failSave bool
+}
+
+func (s *failingReplaceStore) DeleteByFile(ctx context.Context, path string) error {
+	if s.failDelete {
+		return context.Canceled
+	}
+	return s.GOBStore.DeleteByFile(ctx, path)
+}
+
+func (s *failingReplaceStore) SaveChunks(ctx context.Context, chunks []store.Chunk) error {
+	if s.failSave {
+		return errors.New("store unavailable")
+	}
+	return s.GOBStore.SaveChunks(ctx, chunks)
+}
+
+func TestIndexAllBatched_ReplaceFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		failDelete   bool
+		failSave     bool
+		wantPrevious bool
+		wantDocument bool
+	}{
+		// Nothing was deleted: the previous index stays usable.
+		{name: "delete fails", failDelete: true, wantPrevious: true, wantDocument: true},
+		// Previous chunks are gone: drop the file so the next scan retries it.
+		{name: "save fails", failSave: true, wantPrevious: false, wantDocument: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			gobStore := store.NewGOBStore(filepath.Join(root, "index.gob"))
+			emb := &countingBatchEmbedder{}
+
+			writeManyFuncs(t, root, "func last() {}\n")
+			if _, err := newBatchTestIndexer(t, root, gobStore, emb).IndexAll(ctx); err != nil {
+				t.Fatal(err)
+			}
+			before, err := gobStore.GetChunksForFile(ctx, "main.go")
+			if err != nil || len(before) == 0 {
+				t.Fatalf("GetChunksForFile: %d chunks, err %v", len(before), err)
+			}
+
+			writeManyFuncs(t, root, "func last() { println(\"changed\") }\n")
+			failing := &failingReplaceStore{GOBStore: gobStore, failDelete: tc.failDelete, failSave: tc.failSave}
+			if _, err := newBatchTestIndexer(t, root, failing, emb).IndexAll(ctx); err == nil {
+				t.Fatal("expected a store error")
+			}
+
+			after, err := gobStore.GetChunksForFile(ctx, "main.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantPrevious && len(after) != len(before) {
+				t.Fatalf("file has %d chunks, want the previous %d", len(after), len(before))
+			}
+			if !tc.wantPrevious && len(after) != 0 {
+				t.Fatalf("file has %d chunks, want none", len(after))
+			}
+			doc, err := gobStore.GetDocument(ctx, "main.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (doc != nil) != tc.wantDocument {
+				t.Fatalf("document present = %v, want %v", doc != nil, tc.wantDocument)
+			}
+		})
+	}
+}
