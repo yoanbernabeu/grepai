@@ -7,6 +7,8 @@ description: "Process grepai GitHub issues and pull requests one at a time under
 
 grepai is 1.x and under a **feature freeze**. This skill is the only workflow for handling issues and external pull requests. Talk to the user in French; everything written on GitHub (comments, commits, PR titles and bodies) is in English.
 
+Whenever you show the user a draft of any text to be posted on GitHub (comment, review, closing message, PR body), show the English version followed by a French translation, labeled as being for the user only. Only the English version is ever posted.
+
 Work on **one issue or PR at a time**. Never start the next one before the current one is closed, merged or explicitly parked by the user.
 
 ## Scope rule (feature freeze)
