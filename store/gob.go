@@ -63,16 +63,18 @@ func (s *GOBStore) DeleteByFile(ctx context.Context, filePath string) error {
 		return nil
 	}
 
-	removed := false
+	if len(doc.ChunkIDs) == 0 {
+		return nil
+	}
 	for _, chunkID := range doc.ChunkIDs {
-		if _, ok := s.chunks[chunkID]; ok {
-			delete(s.chunks, chunkID)
-			removed = true
-		}
+		delete(s.chunks, chunkID)
 	}
-	if removed {
-		s.mutationGeneration++
-	}
+	// Clear the document's chunk IDs under the same lock, so a persist taken
+	// before the new chunks are saved never records a document pointing at
+	// deleted chunks, which the next scan would trust and skip (#356).
+	doc.ChunkIDs = nil
+	s.documents[filePath] = doc
+	s.mutationGeneration++
 
 	return nil
 }

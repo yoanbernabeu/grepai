@@ -139,8 +139,15 @@ func (s *PostgresStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 }
 
 func (s *PostgresStore) DeleteByFile(ctx context.Context, filePath string) error {
+	// Clear the document's chunk IDs in the same statement, so a crash before
+	// the new chunks are saved never leaves a document pointing at deleted
+	// chunks, which the next scan would trust and skip (#356).
 	_, err := s.pool.Exec(ctx,
-		`DELETE FROM chunks WHERE project_id = $1 AND file_path = $2`,
+		`WITH deleted AS (
+			DELETE FROM chunks WHERE project_id = $1 AND file_path = $2
+		)
+		UPDATE documents SET chunk_ids = '{}'
+		WHERE project_id = $1 AND path = $2`,
 		s.projectID, filePath,
 	)
 	if err != nil {

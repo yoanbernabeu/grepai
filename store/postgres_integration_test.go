@@ -138,3 +138,60 @@ func TestPostgresStoreSearchPathPrefixIsLiteral(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresStoreDeleteByFileClearsDocumentChunkIDs(t *testing.T) {
+	dsn := os.Getenv("GREPAI_POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("GREPAI_POSTGRES_TEST_DSN is not set")
+	}
+
+	ctx := context.Background()
+	st, err := NewPostgresStore(ctx, dsn, "proj_delete_by_file", 3, "model=test")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := st.pool.Exec(ctx, `TRUNCATE TABLE chunks, documents`); err != nil {
+		t.Fatalf("failed to clean tables: %v", err)
+	}
+
+	chunk := Chunk{ID: "a.go_0", FilePath: "a.go", StartLine: 1, EndLine: 1, Content: "a", Vector: []float32{1, 0, 0}, Hash: "h", UpdatedAt: time.Now().UTC()}
+	if err := st.SaveChunks(ctx, []Chunk{chunk}); err != nil {
+		t.Fatalf("failed to save chunks: %v", err)
+	}
+	if err := st.SaveDocument(ctx, Document{Path: "a.go", Hash: "filehash", ModTime: time.Now().UTC(), ChunkIDs: []string{chunk.ID}}); err != nil {
+		t.Fatalf("failed to save document: %v", err)
+	}
+
+	if err := st.DeleteByFile(ctx, "a.go"); err != nil {
+		t.Fatalf("DeleteByFile failed: %v", err)
+	}
+
+	// A crash right after the delete must not leave a document pointing at
+	// deleted chunks, which the next scan would trust and skip (#356).
+	doc, err := st.GetDocument(ctx, "a.go")
+	if err != nil {
+		t.Fatalf("GetDocument failed: %v", err)
+	}
+	if doc == nil || doc.Hash != "filehash" {
+		t.Fatalf("document = %+v, want it kept with its hash", doc)
+	}
+	if len(doc.ChunkIDs) != 0 {
+		t.Fatalf("document still lists %v after DeleteByFile", doc.ChunkIDs)
+	}
+	chunks, err := st.GetChunksForFile(ctx, "a.go")
+	if err != nil {
+		t.Fatalf("GetChunksForFile failed: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("%d chunks left after DeleteByFile", len(chunks))
+	}
+	files, err := st.ListFilesWithStats(ctx)
+	if err != nil {
+		t.Fatalf("ListFilesWithStats failed: %v", err)
+	}
+	if len(files) != 1 || files[0].ChunkCount != 0 {
+		t.Fatalf("ListFilesWithStats = %+v, want one file with 0 chunks", files)
+	}
+}

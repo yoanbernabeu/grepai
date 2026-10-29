@@ -168,6 +168,20 @@ func TestGOBStore_DeleteByFile(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results after delete, got %d", len(results))
 	}
+
+	// The document must not keep pointing at the deleted chunks: a persist
+	// taken before the new chunks are saved would make the next scan skip
+	// the file (#356).
+	got, err := store.GetDocument(ctx, "test.go")
+	if err != nil {
+		t.Fatalf("failed to get document: %v", err)
+	}
+	if got == nil || got.Hash != "abc123" {
+		t.Fatalf("document = %+v, want it kept with its hash", got)
+	}
+	if len(got.ChunkIDs) != 0 {
+		t.Errorf("document still lists %v after DeleteByFile", got.ChunkIDs)
+	}
 }
 
 func TestGOBStore_PersistAndLoad(t *testing.T) {
