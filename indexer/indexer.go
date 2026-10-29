@@ -523,13 +523,13 @@ func (idx *Indexer) indexFilesBatched(
 
 		vectors[i] = make([][]float32, len(fd.chunkInfos))
 		var contents []string
-		for j := range fd.chunkInfos {
+		for j, chunk := range fd.chunkInfos {
 			if vec, ok := cachedVectors[j]; ok {
 				vectors[i][j] = vec
 				continue
 			}
 			uncached[i] = append(uncached[i], j)
-			contents = append(contents, fileChunks[i].Chunks[j])
+			contents = append(contents, chunk.EmbedContent)
 		}
 
 		if len(contents) == 0 {
