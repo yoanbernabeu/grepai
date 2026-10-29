@@ -905,9 +905,9 @@ func TestPrepareFileChunks(t *testing.T) {
 			}
 		}
 
-		// Verify DeleteByFile was called
-		if !mockStore.delByFileCalled {
-			t.Error("expected DeleteByFile to be called")
+		// Existing chunks stay until the new ones are embedded (#353)
+		if mockStore.delByFileCalled {
+			t.Error("expected DeleteByFile not to be called before embedding")
 		}
 	})
 
@@ -928,6 +928,11 @@ func TestPrepareFileChunks(t *testing.T) {
 		}
 		if len(fileChunks) != 1 {
 			t.Errorf("expected 1 fileChunks entry, got %d", len(fileChunks))
+		}
+
+		// A file that no longer produces chunks has its chunks deleted
+		if !mockStore.delByFileCalled {
+			t.Error("expected DeleteByFile to be called for the empty file")
 		}
 	})
 
