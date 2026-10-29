@@ -152,8 +152,10 @@ func TestPostgresStoreDeleteByFileClearsDocumentChunkIDs(t *testing.T) {
 	}
 	defer st.Close()
 
-	if _, err := st.pool.Exec(ctx, `TRUNCATE TABLE chunks, documents`); err != nil {
-		t.Fatalf("failed to clean tables: %v", err)
+	for _, table := range []string{"chunks", "documents"} {
+		if _, err := st.pool.Exec(ctx, `DELETE FROM `+table+` WHERE project_id = $1`, "proj_delete_by_file"); err != nil {
+			t.Fatalf("failed to clean %s: %v", table, err)
+		}
 	}
 
 	chunk := Chunk{ID: "a.go_0", FilePath: "a.go", StartLine: 1, EndLine: 1, Content: "a", Vector: []float32{1, 0, 0}, Hash: "h", UpdatedAt: time.Now().UTC()}
