@@ -363,22 +363,59 @@ func TestLookupCallees_should_keep_self_call_when_line_may_hold_a_real_call(t *t
 	}
 }
 
-func TestCountIdentifier(t *testing.T) {
+func TestHasLaterCall(t *testing.T) {
 	cases := []struct {
 		line, name string
-		want       int
+		want       bool
 	}{
-		{"func (m *MockStore) Close() error {", "Close", 1},
-		{"func (w *W) Save() error { return w.inner.Save() }", "Save", 2},
-		{"public function execute() { return $this->inner->execute (); }", "execute", 2},
-		{"execute<T>(x: T) { return this.inner.execute(x); }", "execute", 2},
-		{"func Saver() { doSave(); SaveAll() }", "Save", 0},
-		{"", "Save", 0},
-		{"Save()", "", 0},
+		{"func (m *MockStore) Close() error {", "Close", false},
+		{"func (e *OpenAIEmbedder) BatchLimits() BatchLimits {", "BatchLimits", false},
+		{"func (f *fence) cleanup(parent context.Context, cleanup func()) {", "cleanup", false},
+		{"set value(value) {", "value", false},
+		{"func (w *W) Save() error { return w.inner.Save() }", "Save", true},
+		{"public function execute() { return $this->inner->execute (); }", "execute", true},
+		{"execute<T>(x: T) { return this.inner.execute(x); }", "execute", true},
+		{"func Saver() { doSave(); SaveAll() }", "Save", false},
+		{"", "Save", false},
+		{"Save() Save()", "", false},
 	}
 	for _, c := range cases {
-		if got := countIdentifier(c.line, c.name); got != c.want {
-			t.Errorf("countIdentifier(%q, %q) = %d, want %d", c.line, c.name, got, c.want)
+		if got := hasLaterCall(c.line, c.name); got != c.want {
+			t.Errorf("hasLaterCall(%q, %q) = %v, want %v", c.line, c.name, got, c.want)
 		}
+	}
+}
+
+// A declaration whose return type or parameter repeats the name is still a
+// declaration, not a callee.
+func TestLookupCallees_should_drop_declaration_repeating_the_name(t *testing.T) {
+	s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	extractAndSaveForTest(t, s, "limits.go", "package e\n\ntype BatchLimits struct{}\n\ntype E struct{}\n\nfunc (e *E) BatchLimits() BatchLimits {\n\treturn BatchLimits{}\n}\n")
+	callees, err := s.LookupCallees(context.Background(), "BatchLimits", "limits.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range callees {
+		if c.Line == 7 {
+			t.Fatalf("declaration line reported as a callee: %+v", callees)
+		}
+	}
+}
+
+// getLineContext trims the indentation after cutting a long line, so an
+// indented truncated line is shorter than the cut length.
+func TestLookupCallees_should_keep_self_call_on_indented_truncated_line(t *testing.T) {
+	line := "    public function execute($a) { " + strings.Repeat("$this->log($a); ", 14) + "return $this->inner->execute($a); }"
+	ctxLine := getLineContext([]string{line}, 0, 0)
+	s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	ctx := context.Background()
+	if err := s.SaveFile(ctx, "a.php", []Symbol{{Name: "execute", File: "a.php", Line: 1}}, []Reference{
+		{SymbolName: "execute", Kind: RefKindCall, File: "a.php", Line: 1, CallerName: "execute", CallerFile: "a.php", CallerLine: 1, Context: ctxLine},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	callees, _ := s.LookupCallees(ctx, "execute", "a.php")
+	if len(callees) != 1 {
+		t.Fatalf("expected the delegation on a truncated line to be kept (context %d chars), got %+v", len(ctxLine), callees)
 	}
 }

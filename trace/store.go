@@ -406,16 +406,17 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 	return callees, nil
 }
 
-// countIdentifier counts the whole-identifier occurrences of name in line.
-func countIdentifier(line, name string) int {
+// hasLaterCall reports whether name, after its first whole-identifier
+// occurrence in line (the declaration), appears again followed by "(".
+func hasLaterCall(line, name string) bool {
 	if name == "" {
-		return 0
+		return false
 	}
-	count := 0
+	seenFirst := false
 	for i := 0; ; {
 		j := strings.Index(line[i:], name)
 		if j < 0 {
-			return count
+			return false
 		}
 		start := i + j
 		end := start + len(name)
@@ -426,13 +427,20 @@ func countIdentifier(line, name string) int {
 		if end < len(line) && isIdentByte(line[end]) {
 			continue
 		}
-		count++
+		if !seenFirst {
+			seenFirst = true
+			continue
+		}
+		if strings.HasPrefix(strings.TrimLeft(line[end:], " \t"), "(") {
+			return true
+		}
 	}
 }
 
-// isTruncatedContext reports whether getLineContext cut the line.
+// isTruncatedContext reports whether getLineContext may have cut the line
+// (it appends "..." and then trims spaces, so the length varies).
 func isTruncatedContext(lineContext string) bool {
-	return len(lineContext) > 200 && strings.HasSuffix(lineContext, "...")
+	return strings.HasSuffix(lineContext, "...")
 }
 
 func isIdentByte(b byte) bool {
@@ -497,15 +505,15 @@ func (x *callRefIndex) lookup(edge CallEdge) (Reference, bool) {
 
 // isDeclarationSelfEdgeUnlocked reports whether an edge is a function's own
 // declaration line picked up as a call to itself. lineContext is the source
-// line of the reference: when it names the function more than once (one-line
-// delegation to a same-name method, one-line recursion) or was truncated, the
-// edge may be a real call and is kept. An empty lineContext always treats a
+// line of the reference: when the name is called again after the declaration
+// (one-line delegation to a same-name method, one-line recursion) or the line
+// was truncated, the edge may be a real call and is kept. An empty lineContext always treats a
 // self edge on a declaration line as the declaration. Caller must hold s.mu.
 func (s *GOBSymbolStore) isDeclarationSelfEdgeUnlocked(edge CallEdge, lineContext string) bool {
 	if edge.Caller != edge.Callee {
 		return false
 	}
-	if lineContext != "" && (countIdentifier(lineContext, edge.Callee) > 1 || isTruncatedContext(lineContext)) {
+	if lineContext != "" && (hasLaterCall(lineContext, edge.Callee) || isTruncatedContext(lineContext)) {
 		return false
 	}
 	for _, sym := range s.index.Symbols[edge.Caller] {
