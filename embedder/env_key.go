@@ -32,7 +32,7 @@ func apiKeyFromEnv(endpoint, defaultEndpoint string, names ...string) (string, e
 	if !isOfficialEndpoint(endpoint, defaultEndpoint) {
 		return "", fmt.Errorf(
 			"API keys from the environment (%s) are only sent to the official endpoint %s, not to the custom endpoint %s: set embedder.api_key in the grepai config to use a key with this endpoint",
-			strings.Join(set, ", "), defaultEndpoint, redactEndpoint(endpoint))
+			strings.Join(set, ", "), defaultEndpoint, RedactEndpoint(endpoint))
 	}
 	return key, nil
 }
@@ -92,9 +92,9 @@ func normalizeHost(host string) string {
 	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
-// redactEndpoint keeps only the scheme, host and path of an endpoint, so
+// RedactEndpoint keeps only the scheme, host and path of an endpoint, so
 // that credentials in the userinfo or the query never reach error messages.
-func redactEndpoint(endpoint string) string {
+func RedactEndpoint(endpoint string) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
 		return "(invalid URL)"
