@@ -173,6 +173,7 @@ func NewQdrantStoreWithNamespace(ctx context.Context, endpoint string, port int,
 	if namespace != "" {
 		empty, err := store.namespaceEmpty(ctx)
 		if err != nil {
+			_ = client.Close()
 			return nil, fmt.Errorf("failed to check project namespace: %w", err)
 		}
 		store.readLegacy = legacyReadFallback && empty
@@ -331,12 +332,17 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
 	})
 	if s.namespace != "" {
-		if _, done := qdrantNamespaceIndexed.LoadOrStore(s.address+"/"+s.collectionName, true); !done {
-			_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+		key := s.address + "/" + s.collectionName
+		if _, done := qdrantNamespaceIndexed.Load(key); !done {
+			// An error (the index may already exist) is retried by the next
+			// store; success is remembered for the life of the process.
+			if _, err := s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
 				CollectionName: s.collectionName,
 				FieldName:      qdrantNamespaceField,
 				FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
-			})
+			}); err == nil {
+				qdrantNamespaceIndexed.Store(key, true)
+			}
 		}
 	}
 
