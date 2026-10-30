@@ -248,6 +248,8 @@ trace:
     - .py
     - .php
     - .lua
+    - .gd
+    - .rb
     - .c
     - .h
     - .cpp
