@@ -106,5 +106,10 @@ type VectorStore interface {
 type EmbeddingCache interface {
 	// LookupByContentHash returns the embedding vector for the given content hash.
 	// Returns (vector, true, nil) if found, (nil, false, nil) if not found.
-	LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error)
+	//
+	// The content hash covers the chunk body only, while the embedded text
+	// starts with a "File: <path>" header. When contentPrefix is not empty,
+	// only a chunk whose stored content starts with it matches, so that a
+	// vector embedded under another path is not reused.
+	LookupByContentHash(ctx context.Context, contentHash, contentPrefix string) ([]float32, bool, error)
 }

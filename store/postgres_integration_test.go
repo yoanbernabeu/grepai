@@ -52,19 +52,25 @@ func TestPostgresStoreLookupByContentHashScopesCacheIdentity(t *testing.T) {
 		t.Fatalf("failed to save victim chunk: %v", err)
 	}
 
-	if _, found, err := attackerProject.LookupByContentHash(ctx, contentHash); err != nil {
+	if _, found, err := attackerProject.LookupByContentHash(ctx, contentHash, ""); err != nil {
 		t.Fatalf("cross-project lookup failed: %v", err)
 	} else if found {
 		t.Fatal("different project should not reuse victim project's cached vector")
 	}
 
-	if _, found, err := attackerModel.LookupByContentHash(ctx, contentHash); err != nil {
+	if _, found, err := attackerModel.LookupByContentHash(ctx, contentHash, ""); err != nil {
 		t.Fatalf("cross-model lookup failed: %v", err)
 	} else if found {
 		t.Fatal("different embedding cache namespace should not reuse victim model's cached vector")
 	}
 
-	got, found, err := victim.LookupByContentHash(ctx, contentHash)
+	if _, found, err := victim.LookupByContentHash(ctx, contentHash, "File: renamed.md\n\n"); err != nil {
+		t.Fatalf("other-path lookup failed: %v", err)
+	} else if found {
+		t.Fatal("a vector embedded under another file path should not be reused")
+	}
+
+	got, found, err := victim.LookupByContentHash(ctx, contentHash, "File: README.md\n\n")
 	if err != nil {
 		t.Fatalf("victim lookup failed: %v", err)
 	}

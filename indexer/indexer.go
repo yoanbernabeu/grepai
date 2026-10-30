@@ -852,7 +852,13 @@ func (idx *Indexer) lookupCachedEmbeddings(ctx context.Context, chunks []ChunkIn
 		if chunk.ContentHash == "" {
 			continue
 		}
-		vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash)
+		// ContentHash covers the body only, but the embedded text starts with
+		// the file path: only reuse a vector embedded under the same header.
+		contentPrefix := fmt.Sprintf("File: %s\n\n", chunk.FilePath)
+		if !strings.HasPrefix(chunk.EmbedContent, contentPrefix) {
+			contentPrefix = ""
+		}
+		vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash, contentPrefix)
 		if err != nil {
 			log.Printf("Warning: cache lookup failed for content hash %.8s: %v", chunk.ContentHash, err)
 			continue

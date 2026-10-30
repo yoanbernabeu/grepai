@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -366,7 +367,7 @@ func TestGOBStoreOwnsMutableInputsAndReturnsCopies(t *testing.T) {
 	all[0].Vector[1] = 77
 	results, _ := store.Search(ctx, []float32{1, 2}, 1, SearchOptions{})
 	results[0].Chunk.Vector[0] = 66
-	vector, ok, _ := store.LookupByContentHash(ctx, "")
+	vector, ok, _ := store.LookupByContentHash(ctx, "", "")
 	if ok && len(vector) > 0 {
 		vector[0] = 55
 	}
@@ -836,6 +837,36 @@ func TestGOBStore_GetChunksForFile(t *testing.T) {
 	}
 }
 
+// The content hash ignores the "File:" header that is embedded with the body:
+// a vector embedded under another path must not be reused (issue #366).
+func TestGOBStore_LookupByContentHashMatchesContentPrefix(t *testing.T) {
+	store := NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	ctx := context.Background()
+	if err := store.SaveChunks(ctx, []Chunk{
+		{ID: "a.go_0", FilePath: "a.go", Content: "File: a.go\n\nfunc f() {}", Vector: []float32{1, 0, 0}, ContentHash: "same-body"},
+		{ID: "b.go_0", FilePath: "b.go", Content: "File: b.go\n\nfunc f() {}", Vector: []float32{0, 1, 0}, ContentHash: "same-body"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		prefix string
+		want   []float32
+	}{
+		{"File: a.go\n\n", []float32{1, 0, 0}},
+		{"File: b.go\n\n", []float32{0, 1, 0}},
+		{"File: renamed.go\n\n", nil},
+	} {
+		vec, found, err := store.LookupByContentHash(ctx, "same-body", tc.prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if found != (tc.want != nil) || !reflect.DeepEqual(vec, tc.want) {
+			t.Fatalf("prefix %q: got %v, %v; want %v", tc.prefix, vec, found, tc.want)
+		}
+	}
+}
+
 func TestGOBStore_LookupByContentHash(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), "index.gob")
 	store := NewGOBStore(indexPath)
@@ -853,7 +884,7 @@ func TestGOBStore_LookupByContentHash(t *testing.T) {
 	})
 
 	// Lookup existing hash
-	vec, found, err := store.LookupByContentHash(ctx, "abc123")
+	vec, found, err := store.LookupByContentHash(ctx, "abc123", "")
 	if err != nil {
 		t.Fatalf("LookupByContentHash failed: %v", err)
 	}
@@ -865,7 +896,7 @@ func TestGOBStore_LookupByContentHash(t *testing.T) {
 	}
 
 	// Lookup non-existent hash
-	_, found, err = store.LookupByContentHash(ctx, "nonexistent")
+	_, found, err = store.LookupByContentHash(ctx, "nonexistent", "")
 	if err != nil {
 		t.Fatalf("LookupByContentHash failed: %v", err)
 	}

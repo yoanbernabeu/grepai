@@ -18,7 +18,7 @@ type PostgresStore struct {
 	embeddingCacheNamespace string
 }
 
-const lookupByContentHashSQL = `SELECT vector FROM chunks WHERE project_id = $1 AND content_hash = $2 AND embedding_cache_namespace = $3 AND vector IS NOT NULL LIMIT 1`
+const lookupByContentHashSQL = `SELECT vector FROM chunks WHERE project_id = $1 AND content_hash = $2 AND embedding_cache_namespace = $3 AND starts_with(content, $4) AND vector IS NOT NULL LIMIT 1`
 
 func NewPostgresStore(ctx context.Context, dsn string, projectID string, vectorDimensions int, embeddingCacheNamespace ...string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -392,7 +392,7 @@ func (s *PostgresStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 }
 
 // LookupByContentHash queries the chunks table for a matching content hash and returns the vector.
-func (s *PostgresStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+func (s *PostgresStore) LookupByContentHash(ctx context.Context, contentHash, contentPrefix string) ([]float32, bool, error) {
 	if contentHash == "" {
 		return nil, false, nil
 	}
@@ -400,7 +400,7 @@ func (s *PostgresStore) LookupByContentHash(ctx context.Context, contentHash str
 	var vec pgvector.Vector
 	err := s.pool.QueryRow(ctx,
 		lookupByContentHashSQL,
-		s.projectID, contentHash, s.embeddingCacheNamespace,
+		s.projectID, contentHash, s.embeddingCacheNamespace, contentPrefix,
 	).Scan(&vec)
 
 	if err == pgx.ErrNoRows {

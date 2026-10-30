@@ -403,12 +403,12 @@ func (s *GOBStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 }
 
 // LookupByContentHash searches in-memory chunks for a matching content hash.
-func (s *GOBStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+func (s *GOBStore) LookupByContentHash(ctx context.Context, contentHash, contentPrefix string) ([]float32, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, chunk := range s.chunks {
-		if chunk.ContentHash == contentHash && len(chunk.Vector) > 0 {
+		if chunk.ContentHash == contentHash && len(chunk.Vector) > 0 && strings.HasPrefix(chunk.Content, contentPrefix) {
 			vec := make([]float32, len(chunk.Vector))
 			copy(vec, chunk.Vector)
 			return vec, true, nil

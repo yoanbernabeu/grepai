@@ -300,7 +300,7 @@ func TestFileHash_UnchangedFiles(t *testing.T) {
 
 type fileHashCacheStore struct{ *mockStore }
 
-func (s *fileHashCacheStore) LookupByContentHash(context.Context, string) ([]float32, bool, error) {
+func (s *fileHashCacheStore) LookupByContentHash(context.Context, string, string) ([]float32, bool, error) {
 	return []float32{0.1, 0.2, 0.3}, true, nil
 }
 

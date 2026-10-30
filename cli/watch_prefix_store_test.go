@@ -99,11 +99,11 @@ var _ store.EmbeddingCache = (*projectPrefixStore)(nil)
 
 type mockPrefixEmbeddingCache struct {
 	mockVectorStore
-	lookup func(context.Context, string) ([]float32, bool, error)
+	lookup func(context.Context, string, string) ([]float32, bool, error)
 }
 
-func (m *mockPrefixEmbeddingCache) LookupByContentHash(ctx context.Context, hash string) ([]float32, bool, error) {
-	return m.lookup(ctx, hash)
+func (m *mockPrefixEmbeddingCache) LookupByContentHash(ctx context.Context, hash, contentPrefix string) ([]float32, bool, error) {
+	return m.lookup(ctx, hash, contentPrefix)
 }
 
 func TestProjectPrefixStore_EmbeddingCache(t *testing.T) {
@@ -122,16 +122,18 @@ func TestProjectPrefixStore_EmbeddingCache(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			called := false
-			backing := &mockPrefixEmbeddingCache{lookup: func(gotCtx context.Context, hash string) ([]float32, bool, error) {
+			backing := &mockPrefixEmbeddingCache{lookup: func(gotCtx context.Context, hash, contentPrefix string) ([]float32, bool, error) {
 				called = true
-				if gotCtx != ctx || hash != "content-hash" {
-					t.Errorf("lookup did not preserve context/hash: %q", hash)
+				// Stored content keeps the project-relative header: the
+				// prefix must reach the backend unchanged.
+				if gotCtx != ctx || hash != "content-hash" || contentPrefix != "File: a.go\n\n" {
+					t.Errorf("lookup did not preserve context/hash/prefix: %q %q", hash, contentPrefix)
 				}
 				return tc.vector, tc.found, tc.err
 			}}
 			p := &projectPrefixStore{store: backing, workspaceName: "workspace", projectName: "project"}
 			var cache store.EmbeddingCache = p
-			vector, found, err := cache.LookupByContentHash(ctx, "content-hash")
+			vector, found, err := cache.LookupByContentHash(ctx, "content-hash", "File: a.go\n\n")
 			if !called || !reflect.DeepEqual(vector, tc.vector) || found != tc.found || !errors.Is(err, tc.err) {
 				t.Fatalf("lookup = %v, %v, %v; called=%v", vector, found, err, called)
 			}
@@ -139,7 +141,7 @@ func TestProjectPrefixStore_EmbeddingCache(t *testing.T) {
 	}
 	t.Run("backend without cache", func(t *testing.T) {
 		p := &projectPrefixStore{store: &mockVectorStore{}}
-		vector, found, err := p.LookupByContentHash(context.Background(), "content-hash")
+		vector, found, err := p.LookupByContentHash(context.Background(), "content-hash", "")
 		if vector != nil || found || err != nil {
 			t.Fatalf("lookup = %v, %v, %v; want cache miss", vector, found, err)
 		}

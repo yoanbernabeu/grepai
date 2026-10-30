@@ -344,6 +344,9 @@ func (s *QdrantStore) parseChunkPayload(payload map[string]*qdrant.Value) *Chunk
 // qdrantScrollPageSize is the number of points read per scroll request.
 const qdrantScrollPageSize = 1000
 
+// qdrantLookupPageSize bounds the vectors fetched per page by LookupByContentHash.
+const qdrantLookupPageSize = 16
+
 // scrollEach reads every point matching req, page by page. A single Scroll
 // call returns at most one page, so reading only the first page silently
 // truncated results on collections with more points than the page size.
@@ -543,7 +546,7 @@ func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 }
 
 // LookupByContentHash searches Qdrant for a point matching the content hash.
-func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash, contentPrefix string) ([]float32, bool, error) {
 	if contentHash == "" {
 		return nil, false, nil
 	}
@@ -554,26 +557,32 @@ func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash strin
 		},
 	}
 
-	scrollResult, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+	// Qdrant cannot match a payload prefix without a full-text index: page
+	// through the points sharing this content hash (usually one or a few)
+	// until one has the expected content prefix.
+	req := &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Filter:         filter,
-		Limit:          qdrant.PtrOf(uint32(1)),
+		Limit:          qdrant.PtrOf(uint32(qdrantLookupPageSize)),
+		WithPayload:    qdrant.NewWithPayloadInclude("content"),
 		WithVectors:    qdrant.NewWithVectors(true),
-	})
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to lookup by content hash: %w", err)
 	}
-
-	if len(scrollResult) == 0 {
-		return nil, false, nil
-	}
-
-	point := scrollResult[0]
-	if point.Vectors != nil && point.Vectors.GetVector() != nil {
-		if dense := point.Vectors.GetVector().GetDense(); dense != nil {
-			return dense.GetData(), true, nil
+	for {
+		points, next, err := s.client.ScrollAndOffset(ctx, req)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to lookup by content hash: %w", err)
 		}
+		for _, point := range points {
+			if !strings.HasPrefix(point.GetPayload()["content"].GetStringValue(), contentPrefix) {
+				continue
+			}
+			if vec := pointVector(point); vec != nil {
+				return vec, true, nil
+			}
+		}
+		if next == nil || len(points) == 0 {
+			return nil, false, nil
+		}
+		req.Offset = next
 	}
-
-	return nil, false, nil
 }
