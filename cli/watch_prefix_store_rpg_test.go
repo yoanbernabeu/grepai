@@ -19,7 +19,7 @@ import (
 func TestProjectPrefixStore_RPGLinksChunksInWorkspace(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	shared := store.NewGOBStore(filepath.Join(dir, "index.gob"))
+	shared := &pathKeyedStore{}
 	wrapped := &projectPrefixStore{
 		store:         shared,
 		workspaceName: "ws",
@@ -30,18 +30,20 @@ func TestProjectPrefixStore_RPGLinksChunksInWorkspace(t *testing.T) {
 	// Another project of the same workspace owns a file with the same
 	// relative path: it must never be returned for this project.
 	other := &projectPrefixStore{store: shared, workspaceName: "ws", projectName: "other", projectPath: filepath.Join(dir, "other")}
-	if err := other.SaveChunks(ctx, []store.Chunk{{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 20, Vector: []float32{1, 0}}}); err != nil {
+	if err := other.SaveChunks(ctx, []store.Chunk{{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 20}}); err != nil {
 		t.Fatalf("SaveChunks(other) failed: %v", err)
 	}
 
+	// Saved like the indexer does: relative paths and IDs, the wrapper adds
+	// the prefix.
 	chunks := []store.Chunk{
-		{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 10, Vector: []float32{1, 0}},
-		{ID: "main.go_1", FilePath: "main.go", StartLine: 11, EndLine: 20, Vector: []float32{0, 1}},
+		{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 10},
+		{ID: "main.go_1", FilePath: "main.go", StartLine: 11, EndLine: 20},
 	}
 	if err := wrapped.SaveChunks(ctx, chunks); err != nil {
 		t.Fatalf("SaveChunks failed: %v", err)
 	}
-	if err := wrapped.SaveDocument(ctx, store.Document{Path: "main.go", Hash: "h", ModTime: time.Now(), ChunkIDs: []string{"ws/proj/main.go_0", "ws/proj/main.go_1"}}); err != nil {
+	if err := wrapped.SaveDocument(ctx, store.Document{Path: "main.go", Hash: "h", ModTime: time.Now(), ChunkIDs: []string{"main.go_0", "main.go_1"}}); err != nil {
 		t.Fatalf("SaveDocument failed: %v", err)
 	}
 
@@ -100,4 +102,36 @@ func assertChunkLinks(t *testing.T, step string, g *rpg.Graph, want int) {
 			t.Errorf("%s: chunk node %s = %+v, want path %q", step, id, n, "main.go")
 		}
 	}
+}
+
+// pathKeyedStore stands for the shared workspace backends (Postgres, Qdrant):
+// it returns a file's chunks by matching the stored file path.
+type pathKeyedStore struct {
+	mockVectorStore
+	chunks []store.Chunk
+	docs   []string
+}
+
+func (s *pathKeyedStore) SaveChunks(_ context.Context, chunks []store.Chunk) error {
+	s.chunks = append(s.chunks, chunks...)
+	return nil
+}
+
+func (s *pathKeyedStore) SaveDocument(_ context.Context, doc store.Document) error {
+	s.docs = append(s.docs, doc.Path)
+	return nil
+}
+
+func (s *pathKeyedStore) ListDocuments(context.Context) ([]string, error) {
+	return s.docs, nil
+}
+
+func (s *pathKeyedStore) GetChunksForFile(_ context.Context, filePath string) ([]store.Chunk, error) {
+	var out []store.Chunk
+	for _, c := range s.chunks {
+		if c.FilePath == filePath {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
