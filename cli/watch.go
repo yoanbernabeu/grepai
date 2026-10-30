@@ -3227,9 +3227,10 @@ func (p *projectPrefixStore) SaveChunks(ctx context.Context, chunks []store.Chun
 	return p.store.SaveChunks(ctx, prefixedChunks)
 }
 
-// LookupByContentHash is global: identical content can reuse embeddings across projects.
-// The content prefix is not rewritten: stored chunk content keeps the
-// project-relative "File:" header.
+// LookupByContentHash is global: identical content at the same project-relative
+// path can reuse embeddings across projects (e.g. git worktrees). The content
+// prefix is not rewritten: stored chunk content keeps the project-relative
+// "File:" header.
 func (p *projectPrefixStore) LookupByContentHash(ctx context.Context, contentHash, contentPrefix string) ([]float32, bool, error) {
 	if cache, ok := p.store.(store.EmbeddingCache); ok {
 		return cache.LookupByContentHash(ctx, contentHash, contentPrefix)

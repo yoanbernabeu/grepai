@@ -39,3 +39,28 @@ func TestIndexAll_DoesNotReuseVectorsEmbeddedUnderAnotherPath(t *testing.T) {
 		t.Fatalf("embedded %d of %d chunks after a rename, want all of them (vectors of the old path must not be reused)", emb.embedded, stats.ChunksCreated)
 	}
 }
+
+func TestLookupCachedEmbeddings_RequiresFileHeader(t *testing.T) {
+	ctx := context.Background()
+	vectorStore := store.NewGOBStore(filepath.Join(t.TempDir(), "index.gob"))
+	if err := vectorStore.SaveChunks(ctx, []store.Chunk{
+		{ID: "a.go_0", FilePath: "a.go", Content: "File: a.go\n\nbody", Vector: []float32{1, 0, 0}, ContentHash: "body-hash"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	idx := &Indexer{store: vectorStore}
+
+	for _, tc := range []struct {
+		name  string
+		chunk ChunkInfo
+		hits  int
+	}{
+		{"same header", ChunkInfo{FilePath: "a.go", EmbedContent: "File: a.go\n\nbody", ContentHash: "body-hash"}, 1},
+		{"other path", ChunkInfo{FilePath: "b.go", EmbedContent: "File: b.go\n\nbody", ContentHash: "body-hash"}, 0},
+		{"no header", ChunkInfo{FilePath: "a.go", EmbedContent: "body", ContentHash: "body-hash"}, 0},
+	} {
+		if _, hits := idx.lookupCachedEmbeddings(ctx, []ChunkInfo{tc.chunk}); hits != tc.hits {
+			t.Errorf("%s: %d cache hits, want %d", tc.name, hits, tc.hits)
+		}
+	}
+}

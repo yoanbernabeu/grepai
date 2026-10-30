@@ -18,7 +18,7 @@ type PostgresStore struct {
 	embeddingCacheNamespace string
 }
 
-const lookupByContentHashSQL = `SELECT vector FROM chunks WHERE project_id = $1 AND content_hash = $2 AND embedding_cache_namespace = $3 AND starts_with(content, $4) AND vector IS NOT NULL LIMIT 1`
+const lookupByContentHashSQL = `SELECT vector FROM chunks WHERE project_id = $1 AND content_hash = $2 AND embedding_cache_namespace = $3 AND left(content, length($4::text)) = $4::text AND vector IS NOT NULL LIMIT 1`
 
 func NewPostgresStore(ctx context.Context, dsn string, projectID string, vectorDimensions int, embeddingCacheNamespace ...string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)

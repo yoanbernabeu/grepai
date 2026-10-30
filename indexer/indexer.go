@@ -853,10 +853,11 @@ func (idx *Indexer) lookupCachedEmbeddings(ctx context.Context, chunks []ChunkIn
 			continue
 		}
 		// ContentHash covers the body only, but the embedded text starts with
-		// the file path: only reuse a vector embedded under the same header.
+		// the file path: only reuse a vector embedded under the same header,
+		// and embed afresh a chunk without that header.
 		contentPrefix := fmt.Sprintf("File: %s\n\n", chunk.FilePath)
 		if !strings.HasPrefix(chunk.EmbedContent, contentPrefix) {
-			contentPrefix = ""
+			continue
 		}
 		vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash, contentPrefix)
 		if err != nil {

@@ -54,7 +54,7 @@ func TestLookupByContentHashSQLScopesCacheIdentity(t *testing.T) {
 		"project_id = $1",
 		"content_hash = $2",
 		"embedding_cache_namespace = $3",
-		"starts_with(content, $4)",
+		"left(content, length($4::text)) = $4::text",
 		"vector IS NOT NULL",
 	}
 

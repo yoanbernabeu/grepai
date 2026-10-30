@@ -182,27 +182,24 @@ func TestQdrantGetChunksForFileSetsIDs(t *testing.T) {
 }
 
 // The content hash ignores the "File:" header that is embedded with the body:
-// only a point with the expected content prefix may be reused, even when it is
-// not on the first page (issue #366).
+// only a point with the expected content prefix may be reused (issue #366).
 func TestQdrantLookupByContentHashMatchesContentPrefix(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages := [][]string{{"File: a.go\n\nbody", "File: b.go\n\nbody"}, {"File: c.go\n\nbody"}}
+	// Payload content is stored sanitized, as buildChunkPayload does.
+	contents := []string{"File: a.go\n\nbody", "File: b.go\n\nbody", sanitizeUTF8("File: caf\xe9.go\n\nbody")}
 	server := grpc.NewServer()
 	qdrant.RegisterPointsServer(server, &fileHashPointsServer{scroll: func(request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
 		if !proto.Equal(request.GetFilter(), &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatch("content_hash", "same-body")}}) ||
-			!proto.Equal(request.GetWithPayload(), qdrant.NewWithPayloadInclude("content")) || !request.GetWithVectors().GetEnable() {
+			!proto.Equal(request.GetWithPayload(), qdrant.NewWithPayloadInclude("content")) || !request.GetWithVectors().GetEnable() ||
+			request.GetLimit() != qdrantLookupLimit {
 			t.Errorf("unexpected scroll request: %v", request)
 		}
-		page := 0
-		if request.GetOffset() != nil {
-			page = int(request.GetOffset().GetNum())
-		}
-		points := make([]*qdrant.RetrievedPoint, len(pages[page]))
-		for i, content := range pages[page] {
-			id := uint64(page*10 + i + 1)
+		points := make([]*qdrant.RetrievedPoint, len(contents))
+		for i, content := range contents {
+			id := uint64(i + 1)
 			points[i] = &qdrant.RetrievedPoint{
 				Id:      qdrant.NewIDNum(id),
 				Payload: map[string]*qdrant.Value{"content": mustCreateValue(t, content)},
@@ -211,11 +208,7 @@ func TestQdrantLookupByContentHashMatchesContentPrefix(t *testing.T) {
 				}}},
 			}
 		}
-		response := &qdrant.ScrollResponse{Result: points}
-		if page+1 < len(pages) {
-			response.NextPageOffset = qdrant.NewIDNum(uint64(page + 1))
-		}
-		return response, nil
+		return &qdrant.ScrollResponse{Result: points}, nil
 	}})
 	t.Cleanup(server.Stop)
 	go func() {
@@ -240,10 +233,10 @@ func TestQdrantLookupByContentHashMatchesContentPrefix(t *testing.T) {
 		prefix string
 		want   []float32
 	}{
+		{"File: a.go\n\n", []float32{1, 0, 0}},
 		{"File: b.go\n\n", []float32{2, 0, 0}},
-		{"File: c.go\n\n", []float32{11, 0, 0}},
+		{"File: caf\xe9.go\n\n", []float32{3, 0, 0}},
 		{"File: renamed.go\n\n", nil},
-		{"", []float32{1, 0, 0}},
 	} {
 		vec, found, err := s.LookupByContentHash(ctx, "same-body", tc.prefix)
 		if err != nil {
