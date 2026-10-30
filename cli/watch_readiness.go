@@ -15,14 +15,38 @@ func removeProjectReadyMarker(logDir, worktreeID string) error {
 	return daemon.RemoveReadyFile(logDir)
 }
 
-func removeProjectDaemonMarkers(logDir, worktreeID string) error {
+// removeProjectDaemonMarkers removes the PID and ready markers left by the
+// daemon ownerPID. Markers written by another daemon are kept: when two starts
+// race, the losing child exits on the PID lock while the winner keeps running,
+// and deleting the winner's markers would hide it from --status and --stop.
+func removeProjectDaemonMarkers(logDir, worktreeID string, ownerPID int) error {
 	if worktreeID != "" {
-		return errors.Join(
-			daemon.RemoveWorktreeReadyFile(logDir, worktreeID),
-			daemon.RemoveWorktreePIDFile(logDir, worktreeID),
+		return removeDaemonMarkersOwnedBy(ownerPID,
+			func() (int, error) { return daemon.ReadWorktreePIDFile(logDir, worktreeID) },
+			func() error { return daemon.RemoveWorktreePIDFile(logDir, worktreeID) },
+			daemon.IsWorktreeStartedForPID(logDir, worktreeID, ownerPID),
+			func() error { return daemon.RemoveWorktreeReadyFile(logDir, worktreeID) },
 		)
 	}
-	return errors.Join(daemon.RemoveReadyFile(logDir), daemon.RemovePIDFile(logDir))
+	return removeDaemonMarkersOwnedBy(ownerPID,
+		func() (int, error) { return daemon.ReadPIDFile(logDir) },
+		func() error { return daemon.RemovePIDFile(logDir) },
+		daemon.IsStartedForPID(logDir, ownerPID),
+		func() error { return daemon.RemoveReadyFile(logDir) },
+	)
+}
+
+func removeDaemonMarkersOwnedBy(ownerPID int, readPID func() (int, error), removePID func() error, readyOwned bool, removeReady func() error) error {
+	// A PID file naming ownerPID, or an unreadable one, is removed with the
+	// ready marker as before. Otherwise another daemon may own the slot, so
+	// only a ready marker written by ownerPID is removed.
+	if pid, err := readPID(); err != nil || pid == ownerPID {
+		return errors.Join(removeReady(), removePID())
+	}
+	if readyOwned {
+		return removeReady()
+	}
+	return nil
 }
 
 var errNotReady = errors.New("not ready")

@@ -55,6 +55,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -340,26 +341,51 @@ func WriteWorktreePIDFile(logDir, worktreeID string) error {
 		return fmt.Errorf("another grepai worktree watch process is starting (lock held)")
 	}
 
-	// BUG FIX: Close lock file after PID write completes to prevent handle leak.
-	// The lock is only needed to serialize PID file writes; the PID file itself
-	// provides the liveness signal.
-	defer lockFh.Close()
-
 	// Write PID atomically using temp file + rename
 	pid := os.Getpid()
 	content := fmt.Sprintf("%d\n", pid)
 	tmpPath := pidPath + ".tmp"
 
 	if err := os.WriteFile(tmpPath, []byte(content), 0600); err != nil {
+		lockFh.Close()
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, pidPath); err != nil {
 		os.Remove(tmpPath)
+		lockFh.Close()
 		return fmt.Errorf("failed to rename PID file: %w", err)
 	}
 
+	// Keep the lock held while this daemon runs, like WritePIDFile, so a second
+	// daemon for the same worktree cannot start. This is intentional, not a
+	// handle leak: the lock is released by RemoveWorktreePIDFile on shutdown,
+	// or by the OS when the process exits.
+	heldWorktreeLocksMu.Lock()
+	heldWorktreeLocks[lockPath] = lockFh
+	heldWorktreeLocksMu.Unlock()
+
 	return nil
+}
+
+// heldWorktreeLocks keeps the worktree lock files this process holds, keyed by
+// lock path, so RemoveWorktreePIDFile can release them.
+var (
+	heldWorktreeLocksMu sync.Mutex
+	heldWorktreeLocks   = map[string]*os.File{}
+)
+
+// releaseWorktreeLock closes the lock file this process holds for lockPath,
+// if any, and reports whether one was held.
+func releaseWorktreeLock(lockPath string) bool {
+	heldWorktreeLocksMu.Lock()
+	lockFh, ok := heldWorktreeLocks[lockPath]
+	delete(heldWorktreeLocks, lockPath)
+	heldWorktreeLocksMu.Unlock()
+	if ok {
+		lockFh.Close()
+	}
+	return ok
 }
 
 // ReadWorktreePIDFile reads the process ID from the worktree PID file.
@@ -389,6 +415,11 @@ func RemoveWorktreePIDFile(logDir, worktreeID string) error {
 	lockPath := pidPath + ".lock"
 
 	_ = os.Remove(lockPath)
+	// Release the lock if this process holds it. Windows cannot delete a file
+	// that is still open, so retry the removal once the handle is closed.
+	if releaseWorktreeLock(lockPath) && runtime.GOOS == "windows" {
+		_ = os.Remove(lockPath)
+	}
 
 	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove PID file: %w", err)

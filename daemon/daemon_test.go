@@ -314,6 +314,36 @@ func TestWorktreePIDLifecycle(t *testing.T) {
 	}
 }
 
+// Regression test for #357: the worktree PID lock must stay held while the
+// daemon runs, so a second daemon for the same worktree fails to start.
+func TestWriteWorktreePIDFileHoldsLockUntilRemoved(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-exclusive"
+
+	if err := WriteWorktreePIDFile(logDir, worktreeID); err != nil {
+		t.Fatalf("WriteWorktreePIDFile() failed: %v", err)
+	}
+	t.Cleanup(func() { _ = RemoveWorktreePIDFile(logDir, worktreeID) })
+
+	// A second writer opens its own handle, like a second daemon process would.
+	if err := WriteWorktreePIDFile(logDir, worktreeID); err == nil {
+		t.Fatal("second WriteWorktreePIDFile() succeeded while the first daemon holds the lock")
+	}
+	pid, err := ReadWorktreePIDFile(logDir, worktreeID)
+	if err != nil || pid != os.Getpid() {
+		t.Fatalf("ReadWorktreePIDFile() = %d, %v; want %d, nil", pid, err, os.Getpid())
+	}
+
+	// Once the owner removes its PID file, the lock is released and a new
+	// daemon can start.
+	if err := RemoveWorktreePIDFile(logDir, worktreeID); err != nil {
+		t.Fatalf("RemoveWorktreePIDFile() failed: %v", err)
+	}
+	if err := WriteWorktreePIDFile(logDir, worktreeID); err != nil {
+		t.Fatalf("WriteWorktreePIDFile() after removal failed: %v", err)
+	}
+}
+
 func TestReadWorktreePIDFileInvalidContent(t *testing.T) {
 	logDir := t.TempDir()
 	worktreeID := "wt-invalid"

@@ -2,9 +2,14 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yoanbernabeu/grepai/daemon"
 )
 
 func TestAbortBackgroundStartStopFailurePreservesMarkers(t *testing.T) {
@@ -75,5 +80,109 @@ func TestAbortBackgroundStartConfirmedExitRemovesMarkers(t *testing.T) {
 	}
 	if !errors.Is(err, primary) || !errors.Is(err, cleanupFailure) {
 		t.Fatalf("abortBackgroundStart() error = %v, want joined primary and cleanup errors", err)
+	}
+}
+
+// Regression test for #357: when two background starts race, the losing child
+// exits because the winner holds the PID lock. Aborting the losing start must
+// not delete the winner's PID and ready markers, or the winner becomes
+// invisible to --status/--stop and a later start spawns a second daemon.
+func TestStartBackgroundWatchAbortKeepsOtherDaemonMarkers(t *testing.T) {
+	for _, worktreeID := range []string{"", "wt-race"} {
+		name := "main"
+		if worktreeID != "" {
+			name = "worktree"
+		}
+		t.Run(name, func(t *testing.T) {
+			logDir := t.TempDir()
+			winnerPID := os.Getpid()
+			const loserPID = 999999
+
+			pidPath := filepath.Join(logDir, "grepai-watch.pid")
+			readyPath := filepath.Join(logDir, "grepai-watch.ready")
+			if worktreeID != "" {
+				pidPath = daemon.GetWorktreePIDFile(logDir, worktreeID)
+				readyPath = daemon.GetWorktreeReadyFile(logDir, worktreeID)
+			}
+
+			// The winner registers itself while our child is starting; our
+			// child then exits because it cannot take the lock.
+			spawn := func(string) (int, <-chan struct{}, error) {
+				if err := os.WriteFile(pidPath, []byte(strconv.Itoa(winnerPID)+"\n"), 0600); err != nil {
+					t.Fatalf("failed to write winner PID file: %v", err)
+				}
+				if err := os.WriteFile(readyPath, []byte("ready\n"+strconv.Itoa(winnerPID)+"\n"), 0600); err != nil {
+					t.Fatalf("failed to write winner ready file: %v", err)
+				}
+				exited := make(chan struct{})
+				close(exited)
+				return loserPID, exited, nil
+			}
+
+			originalSpawn := watchSpawnBackground
+			originalSpawnWorktree := watchSpawnWorktree
+			originalStop := watchStopProcess
+			t.Cleanup(func() {
+				watchSpawnBackground = originalSpawn
+				watchSpawnWorktree = originalSpawnWorktree
+				watchStopProcess = originalStop
+			})
+			watchSpawnBackground = func(dir string, _ []string) (int, <-chan struct{}, error) { return spawn(dir) }
+			watchSpawnWorktree = func(dir, _ string, _ []string) (int, <-chan struct{}, error) { return spawn(dir) }
+			watchStopProcess = func(int) error { return nil }
+
+			if err := startBackgroundWatch(logDir, worktreeID); err == nil {
+				t.Fatal("startBackgroundWatch() succeeded although the child exited")
+			}
+
+			data, err := os.ReadFile(pidPath)
+			if err != nil {
+				t.Fatalf("winner PID file was removed by the aborted start: %v", err)
+			}
+			if got := strings.TrimSpace(string(data)); got != strconv.Itoa(winnerPID) {
+				t.Fatalf("PID file = %q, want winner PID %d", got, winnerPID)
+			}
+			if _, err := os.Stat(readyPath); err != nil {
+				t.Fatalf("winner ready file was removed by the aborted start: %v", err)
+			}
+		})
+	}
+}
+
+// The aborted start still removes the markers its own child left behind.
+func TestStartBackgroundWatchAbortRemovesOwnMarkers(t *testing.T) {
+	logDir := t.TempDir()
+	worktreeID := "wt-own"
+	const childPID = 999998
+	pidPath := daemon.GetWorktreePIDFile(logDir, worktreeID)
+	readyPath := daemon.GetWorktreeReadyFile(logDir, worktreeID)
+
+	originalSpawnWorktree := watchSpawnWorktree
+	originalStop := watchStopProcess
+	t.Cleanup(func() {
+		watchSpawnWorktree = originalSpawnWorktree
+		watchStopProcess = originalStop
+	})
+	watchSpawnWorktree = func(string, string, []string) (int, <-chan struct{}, error) {
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(childPID)+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write child PID file: %v", err)
+		}
+		if err := os.WriteFile(readyPath, []byte("started\n"+strconv.Itoa(childPID)+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write child started file: %v", err)
+		}
+		exited := make(chan struct{})
+		close(exited)
+		return childPID, exited, nil
+	}
+	watchStopProcess = func(int) error { return nil }
+
+	if err := startBackgroundWatch(logDir, worktreeID); err == nil {
+		t.Fatal("startBackgroundWatch() succeeded although the child exited")
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("child PID file still exists after abort: %v", err)
+	}
+	if _, err := os.Stat(readyPath); !os.IsNotExist(err) {
+		t.Fatalf("child ready file still exists after abort: %v", err)
 	}
 }
