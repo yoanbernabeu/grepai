@@ -64,7 +64,7 @@ func (p *VueProcessor) transform(ctx context.Context, filePath, source string) (
 	}
 
 	in, _ := json.Marshal(vueScriptInput{FilePath: filePath, Source: source})
-	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript) //nolint:gosec // nodePath is checked by ValidateNodePath (never a file inside the project); no shell is invoked
+	cmd := exec.CommandContext(ctx, p.nodePath, "--input-type=module", "-e", vueProcessorScript) //nolint:gosec // callers must check nodePath with ValidateNodePath (cli.buildFrameworkRegistry does); no shell is invoked
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

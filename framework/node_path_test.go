@@ -23,7 +23,11 @@ func TestValidateNodePath_Allowed(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "bin", "node")
 	writeExecutable(t, outside)
 
-	for _, nodePath := range []string{"", "node", "nodejs", outside} {
+	allowed := []string{"", "node", "nodejs", "node20", "Node.exe", outside}
+	if runtime.GOOS == "windows" {
+		allowed = append(allowed, `\\?\`+outside)
+	}
+	for _, nodePath := range allowed {
 		got, err := ValidateNodePath(nodePath, root)
 		if err != nil {
 			t.Errorf("ValidateNodePath(%q) unexpected error: %v", nodePath, err)
@@ -62,10 +66,11 @@ func TestValidateNodePath_RejectsProjectControlledPaths(t *testing.T) {
 		}
 	}
 	if runtime.GOOS == "windows" {
-		rejected = append(rejected, `C:evil`, `\\attacker.example\share\node.exe`, `\tools\node`)
+		rejected = append(rejected, `C:evil`, `\\attacker.example\share\node.exe`, `\\?\UNC\attacker.example\share\node.exe`, `\tools\node`)
 	} else {
 		rejected = append(rejected, `C:evil`, `tools\node`)
 	}
+	rejected = append(rejected, "bun", "deno", "sh")
 	for _, nodePath := range rejected {
 		if _, err := ValidateNodePath(nodePath, root); err == nil {
 			t.Errorf("ValidateNodePath(%q) should be rejected", nodePath)

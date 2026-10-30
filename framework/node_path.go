@@ -27,10 +27,15 @@ func ValidateNodePath(nodePath, projectRoot string) (string, error) {
 		// Bare command name: exec resolves it through PATH and refuses
 		// results relative to the current directory (exec.ErrDot). A ':'
 		// is excluded so that a Windows drive-relative value ("C:evil") is
-		// treated as the relative path it is.
+		// treated as the relative path it is. Only Node.js names are
+		// accepted ("node", "nodejs", "node20", "node.exe"): another
+		// runtime could load project files from the current directory.
+		if !strings.HasPrefix(strings.ToLower(nodePath), DefaultNodePath) {
+			return "", fmt.Errorf("framework_processing.node_path %q is not a Node.js command: use \"node\" or an absolute path outside the project", nodePath)
+		}
 		return nodePath, nil
 	}
-	if vol := filepath.VolumeName(nodePath); len(vol) >= 2 && os.IsPathSeparator(vol[0]) && os.IsPathSeparator(vol[1]) {
+	if isNetworkPath(nodePath) {
 		// Windows UNC path: do not run, or even stat, a file on a network share.
 		return "", fmt.Errorf("framework_processing.node_path %q is a network path: use \"node\" or a local absolute path outside the project", nodePath)
 	}
@@ -41,6 +46,19 @@ func ValidateNodePath(nodePath, projectRoot string) (string, error) {
 		return "", fmt.Errorf("framework_processing.node_path %q points inside the project: use \"node\" or an absolute path outside the project", nodePath)
 	}
 	return nodePath, nil
+}
+
+// isNetworkPath reports whether path is a Windows UNC path (\\host\share or
+// \\?\UNC\host\share). Local device paths such as \\?\C:\ are not.
+func isNetworkPath(path string) bool {
+	vol := strings.ToUpper(strings.ReplaceAll(filepath.VolumeName(path), "/", `\`))
+	if !strings.HasPrefix(vol, `\\`) {
+		return false
+	}
+	if strings.HasPrefix(vol, `\\?\UNC\`) || strings.HasPrefix(vol, `\\.\UNC\`) {
+		return true
+	}
+	return !strings.HasPrefix(vol, `\\?\`) && !strings.HasPrefix(vol, `\\.\`)
 }
 
 // isInsideDir reports whether path is dir or below it, comparing both the

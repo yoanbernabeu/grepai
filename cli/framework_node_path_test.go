@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/yoanbernabeu/grepai/config"
@@ -32,12 +35,19 @@ func TestBuildFrameworkRegistry_IgnoresNodePathInsideProject(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.Framework.NodePath = nodePath
 
+			var logs bytes.Buffer
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
 			t.Chdir(root)
 			reg := buildFrameworkRegistry(cfg, root)
 			_, _ = reg.TransformForEmbedding(context.Background(), "App.vue", "<template><div/></template>\n")
 
 			if _, err := os.Stat(marker); err == nil {
 				t.Fatalf("node_path %q inside the project was executed", nodePath)
+			}
+			if out := logs.String(); !strings.Contains(out, "framework_processing.node_path") || !strings.Contains(out, `using "node" instead`) {
+				t.Fatalf("expected a warning about the ignored node_path, got %q", out)
 			}
 		})
 	}
