@@ -53,6 +53,14 @@ func ValidateNodePath(nodePath string, roots ...string) (string, error) {
 	if !filepath.IsAbs(nodePath) {
 		return "", fmt.Errorf("framework_processing.node_path %q is a relative path: use \"node\" or an absolute path outside the project", nodePath)
 	}
+	if clean := filepath.ToSlash(filepath.Clean(nodePath)); strings.HasPrefix(clean, "/proc/") || strings.HasPrefix(clean, "/dev/") {
+		// /proc/self/cwd, /proc/self/fd/N, /dev/fd/N: their target depends on
+		// the process state when node is started, not when it is checked.
+		return "", fmt.Errorf("framework_processing.node_path %q depends on the process state: use \"node\" or a regular absolute path outside the project", nodePath)
+	}
+	if _, err := filepath.EvalSymlinks(nodePath); err != nil {
+		return "", fmt.Errorf("framework_processing.node_path %q cannot be resolved (%v): use \"node\" or an existing absolute path outside the project", nodePath, err)
+	}
 	for _, root := range roots {
 		if isInsideDir(nodePath, root) {
 			return "", fmt.Errorf("framework_processing.node_path %q points inside the project or its repository: use \"node\" or an absolute path outside the project", nodePath)
@@ -110,4 +118,51 @@ func isInsideDir(path, dir string) bool {
 		}
 	}
 	return false
+}
+
+// RepositoryRoots returns the working tree root of the git repository that
+// contains dir, plus the main worktree root when dir is in a linked worktree.
+// It only looks for a ".git" entry in dir and its parents, without running
+// git, so it also works when git is missing or refuses the repository.
+func RepositoryRoots(dir string) []string {
+	for d := filepath.Clean(dir); ; {
+		gitPath := filepath.Join(d, ".git")
+		if info, err := os.Lstat(gitPath); err == nil {
+			roots := []string{d}
+			if info.Mode().IsRegular() {
+				if main := mainWorktreeFromGitFile(gitPath); main != "" && main != d {
+					roots = append(roots, main)
+				}
+			}
+			return roots
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil
+		}
+		d = parent
+	}
+}
+
+// mainWorktreeFromGitFile reads a linked worktree's ".git" file
+// ("gitdir: <main>/.git/worktrees/<name>") and returns <main>.
+func mainWorktreeFromGitFile(gitFile string) string {
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(filepath.Dir(gitFile), gitDir)
+	}
+	sep := string(filepath.Separator)
+	marker := sep + ".git" + sep + "worktrees" + sep
+	if i := strings.LastIndex(filepath.Clean(gitDir), marker); i > 0 {
+		return filepath.Clean(gitDir)[:i]
+	}
+	return ""
 }

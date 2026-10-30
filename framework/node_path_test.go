@@ -71,6 +71,9 @@ func TestValidateNodePath_RejectsProjectControlledPaths(t *testing.T) {
 		rejected = append(rejected, `C:evil`, `tools\node`)
 	}
 	rejected = append(rejected, "bun", "deno", "sh", "nodemon", "node-dev", "nodex")
+	if runtime.GOOS != "windows" {
+		rejected = append(rejected, "/proc/self/cwd/tools/node", "/dev/fd/9", filepath.Join(t.TempDir(), "missing", "node"))
+	}
 	for _, nodePath := range rejected {
 		if _, err := ValidateNodePath(nodePath, root); err == nil {
 			t.Errorf("ValidateNodePath(%q) should be rejected", nodePath)
@@ -125,5 +128,44 @@ func TestValidateNodePath_RejectsOtherRoots(t *testing.T) {
 	}
 	if _, err := ValidateNodePath(script, project, repo); err == nil {
 		t.Fatal("a path inside the repository root should be rejected")
+	}
+}
+
+func TestRepositoryRoots(t *testing.T) {
+	main := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(main, ".git", "worktrees", "wt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(main, "frontend", "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryRoots(sub); len(got) != 1 || got[0] != main {
+		t.Fatalf("RepositoryRoots(sub) = %v, want [%s]", got, main)
+	}
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitFile := "gitdir: " + filepath.Join(main, ".git", "worktrees", "wt") + "\n"
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte(gitFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryRoots(wt); len(got) != 2 || got[0] != wt || got[1] != main {
+		t.Fatalf("RepositoryRoots(worktree) = %v, want [%s %s]", got, wt, main)
+	}
+
+	// A bare repository's worktree must not ban the bare repo's parent.
+	bare := filepath.Join(t.TempDir(), "repo.git")
+	wt2 := filepath.Join(t.TempDir(), "wt2")
+	if err := os.MkdirAll(wt2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt2, ".git"), []byte("gitdir: "+filepath.Join(bare, "worktrees", "wt2")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RepositoryRoots(wt2); len(got) != 1 || got[0] != wt2 {
+		t.Fatalf("RepositoryRoots(bare worktree) = %v, want [%s]", got, wt2)
 	}
 }

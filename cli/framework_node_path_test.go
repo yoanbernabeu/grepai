@@ -53,3 +53,37 @@ func TestBuildFrameworkRegistry_IgnoresNodePathInsideProject(t *testing.T) {
 		})
 	}
 }
+
+// With .grepai/ in a subdirectory, a file elsewhere in the same repository
+// must not be executed either. No git binary is needed for the check.
+func TestBuildFrameworkRegistry_IgnoresNodePathInsideRepository(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script as the fake node binary")
+	}
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(repo, "frontend")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(repo, "MARKER")
+	script := filepath.Join(repo, "tools", "node")
+	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Framework.NodePath = script
+	t.Chdir(project)
+	reg := buildFrameworkRegistry(cfg, project)
+	_, _ = reg.TransformForEmbedding(context.Background(), "App.vue", "<template><div/></template>\n")
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("node_path inside the enclosing repository was executed")
+	}
+}

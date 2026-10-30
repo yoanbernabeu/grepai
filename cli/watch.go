@@ -1079,12 +1079,7 @@ func canonicalPath(path string) string {
 func buildFrameworkRegistry(cfg *config.Config, projectRoot string) *framework.ProcessorRegistry {
 	// node_path comes from the project config, which may ship with a cloned
 	// repository: never execute a file that the repository itself provides.
-	roots := []string{projectRoot}
-	if filepath.IsAbs(cfg.Framework.NodePath) {
-		if info, err := git.Detect(projectRoot); err == nil {
-			roots = append(roots, info.GitRoot, info.MainWorktree)
-		}
-	}
+	roots := append([]string{projectRoot}, framework.RepositoryRoots(projectRoot)...)
 	nodePath, err := framework.ValidateNodePath(cfg.Framework.NodePath, roots...)
 	if err != nil {
 		nodePath = framework.DefaultNodePath
