@@ -208,7 +208,7 @@ func runRefs(symbolName string, readers bool) (refsResult, error) {
 		}
 
 		for _, ref := range refs {
-			sym := resolveRefCallerSymbol(ctx, ss, ref)
+			sym := trace.ResolveCallerSymbol(ctx, ss, ref)
 			usage := refsUsage{
 				Symbol: sym,
 				Access: ref.Kind,
@@ -262,22 +262,6 @@ func compactRefsGraphResult(result refsGraphResult) refsResultCompact {
 		Readers: compactRefsUsages(result.Readers),
 		Writers: compactRefsUsages(result.Writers),
 	}
-}
-
-func resolveRefCallerSymbol(ctx context.Context, ss trace.SymbolStore, ref trace.Reference) trace.Symbol {
-	if ref.CallerName == "" || ref.CallerName == "<top-level>" {
-		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-	}
-
-	candidates, err := ss.LookupSymbol(ctx, ref.CallerName)
-	if err != nil || len(candidates) == 0 {
-		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-	}
-	best := trace.PickSymbolForFile(candidates, ref.CallerFile, ref.CallerLine)
-	if best == nil {
-		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-	}
-	return *best
 }
 
 func outputRefsResult(result refsResult, readers bool) error {

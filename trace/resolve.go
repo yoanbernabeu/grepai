@@ -1,5 +1,7 @@
 package trace
 
+import "context"
+
 // symbolLess orders same-name definitions by file, then line. Trace uses it
 // whenever it must pick one definition, so the choice never depends on the
 // order in which files were indexed (#372, #212).
@@ -75,4 +77,18 @@ func PickSymbolForFile(candidates []Symbol, preferredFile string, preferredLine 
 		return &candidates[best]
 	}
 	return firstSymbol(candidates)
+}
+
+// ResolveCallerSymbol returns the definition of a reference's caller, chosen
+// with PickSymbolForFile, or a symbol built from the reference itself when
+// the caller is top-level or unknown. CLI and MCP share it (#372).
+func ResolveCallerSymbol(ctx context.Context, ss SymbolStore, ref Reference) Symbol {
+	if ref.CallerName == "" || ref.CallerName == "<top-level>" {
+		return Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
+	}
+	candidates, err := ss.LookupSymbol(ctx, ref.CallerName)
+	if err != nil || len(candidates) == 0 {
+		return Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
+	}
+	return *PickSymbolForFile(candidates, ref.CallerFile, ref.CallerLine)
 }

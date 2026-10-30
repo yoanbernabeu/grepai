@@ -152,20 +152,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 				result.Symbol = trace.PickTargetSymbol(symbols, refs)
 			}
 			for _, ref := range refs {
-				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
-				if err != nil {
-					log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
-				}
-				var callerSym trace.Symbol
-				if len(callerSyms) > 0 {
-					if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile, ref.CallerLine); picked != nil {
-						callerSym = *picked
-					} else {
-						callerSym = callerSyms[0]
-					}
-				} else {
-					callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-				}
+				callerSym := trace.ResolveCallerSymbol(ctx, ss, ref)
 				result.Callers = append(result.Callers, trace.CallerInfo{
 					Symbol: callerSym,
 					CallSite: trace.CallSite{
@@ -248,20 +235,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 
 	// Convert refs to CallerInfo
 	for _, ref := range refs {
-		callerSyms, err := symbolStore.LookupSymbol(ctx, ref.CallerName)
-		if err != nil {
-			log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
-		}
-		var callerSym trace.Symbol
-		if len(callerSyms) > 0 {
-			if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile, ref.CallerLine); picked != nil {
-				callerSym = *picked
-			} else {
-				callerSym = callerSyms[0]
-			}
-		} else {
-			callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-		}
+		callerSym := trace.ResolveCallerSymbol(ctx, symbolStore, ref)
 		result.Callers = append(result.Callers, trace.CallerInfo{
 			Symbol: callerSym,
 			CallSite: trace.CallSite{
