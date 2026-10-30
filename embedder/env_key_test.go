@@ -122,20 +122,32 @@ func TestEnvKeyUsedForOfficialEndpoint(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "env-openai")
 
 	oa, err := NewOpenAIEmbedder(WithOpenAIEndpoint(defaultOpenAIEndpoint))
-	if err != nil || oa.apiKey != "env-openai" {
-		t.Fatalf("openai: key=%q err=%v", oa.apiKey, err)
+	if err != nil {
+		t.Fatalf("openai: %v", err)
+	}
+	if oa.apiKey != "env-openai" {
+		t.Fatalf("openai: key=%q", oa.apiKey)
 	}
 	or, err := NewOpenRouterEmbedder(WithOpenRouterEndpoint(defaultOpenRouterEndpoint))
-	if err != nil || or.apiKey != "env-openai" {
-		t.Fatalf("openrouter: err=%v", err)
+	if err != nil {
+		t.Fatalf("openrouter: %v", err)
+	}
+	if or.apiKey != "env-openai" {
+		t.Fatalf("openrouter: key=%q", or.apiKey)
 	}
 	sy, err := NewSyntheticEmbedder(WithSyntheticEndpoint(defaultSyntheticEndpoint + defaultSyntheticPath))
-	if err != nil || sy.apiKey != "env-openai" {
-		t.Fatalf("synthetic: err=%v", err)
+	if err != nil {
+		t.Fatalf("synthetic: %v", err)
+	}
+	if sy.apiKey != "env-openai" {
+		t.Fatalf("synthetic: key=%q", sy.apiKey)
 	}
 	rq, err := NewRequestyEmbedder(WithRequestyEndpoint(defaultRequestyEndpoint))
-	if err != nil || rq.apiKey != "env-openai" {
-		t.Fatalf("requesty: err=%v", err)
+	if err != nil {
+		t.Fatalf("requesty: %v", err)
+	}
+	if rq.apiKey != "env-openai" {
+		t.Fatalf("requesty: key=%q", rq.apiKey)
 	}
 }
 
@@ -159,19 +171,51 @@ func TestEmptyEndpointKeepsDefault(t *testing.T) {
 	t.Setenv("REQUESTY_API_KEY", "")
 
 	oa, err := NewOpenAIEmbedder(WithOpenAIEndpoint(""))
-	if err != nil || oa.endpoint != defaultOpenAIEndpoint {
-		t.Fatalf("openai: endpoint=%q err=%v", oa.endpoint, err)
+	if err != nil {
+		t.Fatalf("openai: %v", err)
+	}
+	if oa.endpoint != defaultOpenAIEndpoint {
+		t.Fatalf("openai: endpoint=%q", oa.endpoint)
 	}
 	or, err := NewOpenRouterEmbedder(WithOpenRouterEndpoint(""))
-	if err != nil || or.endpoint != defaultOpenRouterEndpoint {
-		t.Fatalf("openrouter: err=%v", err)
+	if err != nil {
+		t.Fatalf("openrouter: %v", err)
+	}
+	if or.endpoint != defaultOpenRouterEndpoint {
+		t.Fatalf("openrouter: endpoint=%q", or.endpoint)
 	}
 	sy, err := NewSyntheticEmbedder(WithSyntheticEndpoint(""))
-	if err != nil || sy.endpoint != defaultSyntheticEndpoint+defaultSyntheticPath {
-		t.Fatalf("synthetic: err=%v", err)
+	if err != nil {
+		t.Fatalf("synthetic: %v", err)
+	}
+	if sy.endpoint != defaultSyntheticEndpoint+defaultSyntheticPath {
+		t.Fatalf("synthetic: endpoint=%q", sy.endpoint)
 	}
 	rq, err := NewRequestyEmbedder(WithRequestyEndpoint(""))
-	if err != nil || rq.endpoint != defaultRequestyEndpoint {
-		t.Fatalf("requesty: err=%v", err)
+	if err != nil {
+		t.Fatalf("requesty: %v", err)
+	}
+	if rq.endpoint != defaultRequestyEndpoint {
+		t.Fatalf("requesty: endpoint=%q", rq.endpoint)
+	}
+}
+
+func TestEnvKeyErrorNamesAllVariablesAndRedactsEndpoint(t *testing.T) {
+	t.Setenv("REQUESTY_API_KEY", "env-requesty")
+	t.Setenv("OPENAI_API_KEY", "env-openai")
+	_, err := NewRequestyEmbedder(WithRequestyEndpoint("https://user-token:pw@proxy.example/v1?api-key=query-secret"))
+	if err == nil {
+		t.Fatal("expected an error for a custom endpoint")
+	}
+	msg := err.Error()
+	for _, want := range []string{"REQUESTY_API_KEY", "OPENAI_API_KEY", "https://proxy.example/v1"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q should contain %q", msg, want)
+		}
+	}
+	for _, leak := range []string{"user-token", "pw", "query-secret", "env-requesty", "env-openai"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("error %q leaks %q", msg, leak)
+		}
 	}
 }

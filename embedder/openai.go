@@ -168,7 +168,7 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("OpenAI API key not set (use OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("OpenAI API key not set: set embedder.api_key in the grepai config, or OPENAI_API_KEY when using the official endpoint")
 	}
 
 	// Initialize adaptive rate limiter with configured parallelism

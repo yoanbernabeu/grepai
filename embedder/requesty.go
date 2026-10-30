@@ -106,7 +106,7 @@ func NewRequestyEmbedder(opts ...RequestyOption) (*RequestyEmbedder, error) {
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("requesty API key not set (use REQUESTY_API_KEY or OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("requesty API key not set: set embedder.api_key in the grepai config, or REQUESTY_API_KEY or OPENAI_API_KEY when using the official endpoint")
 	}
 
 	return e, nil

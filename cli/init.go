@@ -380,6 +380,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	switch cfg.Embedder.Provider {
+	case "openai", "synthetic", "openrouter", "requesty":
+		defaultEndpoint := config.DefaultEmbedderForProvider(cfg.Embedder.Provider).Endpoint
+		if cfg.Embedder.APIKey == "" && strings.TrimRight(cfg.Embedder.Endpoint, "/") != defaultEndpoint {
+			fmt.Printf("\nNote: %s is a custom endpoint. Environment API keys are only sent to the\n", cfg.Embedder.Endpoint)
+			fmt.Printf("official endpoint: set embedder.api_key in %s.\n", config.GetConfigPath(cwd))
+		}
+	}
+
 	return nil
 }
 

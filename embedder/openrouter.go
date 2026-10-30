@@ -116,7 +116,7 @@ func NewOpenRouterEmbedder(opts ...OpenRouterOption) (*OpenRouterEmbedder, error
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("openrouter API key not set (use OPENROUTER_API_KEY or OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("openrouter API key not set: set embedder.api_key in the grepai config, or OPENROUTER_API_KEY or OPENAI_API_KEY when using the official endpoint")
 	}
 
 	return e, nil

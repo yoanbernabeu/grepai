@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Environment API Keys Only Sent to Official Endpoints**: when `embedder.api_key` was empty, the `openai`, `openrouter`, `synthetic` and `requesty` embedders sent the key from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SYNTHETIC_API_KEY`, `REQUESTY_API_KEY`) to whatever `embedder.endpoint` the project config named. A `.grepai/config.yaml` committed in a third-party repository could therefore receive the user's key as soon as grepai ran on it (search, index, watch or MCP). grepai now uses an environment key only when the endpoint is the provider's official host over HTTPS. A config without `endpoint` keeps the official endpoint and works as before.
 
-  **Migration (breaking for custom endpoints):** if you use a custom endpoint (Azure, LiteLLM, vLLM, a proxy…) and relied on the environment variable, set the key in `embedder.api_key` of your config (`.grepai/config.yaml` or `~/.grepai/workspace.yaml`). Until then, grepai stops with an error that names the variable and the endpoint; it never sends an unauthenticated request.
+  **Migration (breaking for custom endpoints):** if you use a custom endpoint (Azure, LiteLLM, vLLM, a proxy…) and relied on the environment variable, set the key in `embedder.api_key` of your config (`.grepai/config.yaml` or `~/.grepai/workspace.yaml`). Until then, grepai stops with an error that names the variable and the endpoint; it never sends an unauthenticated request. A keyless local server (vLLM, TEI…) needs a placeholder such as `api_key: unused` when one of these variables is exported.
 
 ## [1.1.0] - 2026-10-26
 

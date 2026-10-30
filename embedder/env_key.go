@@ -16,19 +16,25 @@ import (
 // embedder.api_key, and an error explains it instead of silently sending the
 // environment key to a host the user did not choose.
 func apiKeyFromEnv(endpoint, defaultEndpoint string, names ...string) (string, error) {
+	key := ""
+	var set []string
 	for _, name := range names {
-		key := os.Getenv(name)
-		if key == "" {
-			continue
+		if value := os.Getenv(name); value != "" {
+			if key == "" {
+				key = value
+			}
+			set = append(set, name)
 		}
-		if !isOfficialEndpoint(endpoint, defaultEndpoint) {
-			return "", fmt.Errorf(
-				"%s is only sent to the official endpoint %s, not to the custom endpoint %s: set embedder.api_key in the grepai config to use a key with this endpoint",
-				name, defaultEndpoint, redactEndpoint(endpoint))
-		}
-		return key, nil
 	}
-	return "", nil
+	if key == "" {
+		return "", nil
+	}
+	if !isOfficialEndpoint(endpoint, defaultEndpoint) {
+		return "", fmt.Errorf(
+			"API keys from the environment (%s) are only sent to the official endpoint %s, not to the custom endpoint %s: set embedder.api_key in the grepai config to use a key with this endpoint",
+			strings.Join(set, ", "), defaultEndpoint, redactEndpoint(endpoint))
+	}
+	return key, nil
 }
 
 // isOfficialEndpoint reports whether requests built from endpoint (the
@@ -56,11 +62,12 @@ func normalizeHost(host string) string {
 	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
-// redactEndpoint hides credentials that may be embedded in an endpoint URL.
+// redactEndpoint keeps only the scheme, host and path of an endpoint, so
+// that credentials in the userinfo or the query never reach error messages.
 func redactEndpoint(endpoint string) string {
 	u, err := url.Parse(endpoint)
-	if err != nil {
+	if err != nil || u.Host == "" {
 		return "(invalid URL)"
 	}
-	return u.Redacted()
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }

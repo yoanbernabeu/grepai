@@ -113,7 +113,7 @@ func NewSyntheticEmbedder(opts ...SyntheticOption) (*SyntheticEmbedder, error) {
 	}
 
 	if e.apiKey == "" {
-		return nil, fmt.Errorf("synthetic API key not set (use SYNTHETIC_API_KEY or OPENAI_API_KEY environment variable)")
+		return nil, fmt.Errorf("synthetic API key not set: set embedder.api_key in the grepai config, or SYNTHETIC_API_KEY or OPENAI_API_KEY when using the official endpoint")
 	}
 
 	return e, nil
