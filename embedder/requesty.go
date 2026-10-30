@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -58,7 +57,9 @@ type RequestyOption func(*RequestyEmbedder)
 
 func WithRequestyEndpoint(endpoint string) RequestyOption {
 	return func(e *RequestyEmbedder) {
-		e.endpoint = endpoint
+		if endpoint != "" {
+			e.endpoint = endpoint
+		}
 	}
 }
 
@@ -94,13 +95,14 @@ func NewRequestyEmbedder(opts ...RequestyOption) (*RequestyEmbedder, error) {
 		opt(e)
 	}
 
-	// Try to get API key from environment if not set
+	// Fall back to the environment when no key is configured. The
+	// environment key is only sent to the provider's official endpoint.
 	if e.apiKey == "" {
-		e.apiKey = os.Getenv("REQUESTY_API_KEY")
-	}
-
-	if e.apiKey == "" {
-		e.apiKey = os.Getenv("OPENAI_API_KEY")
+		key, err := apiKeyFromEnv(e.endpoint, defaultRequestyEndpoint, "REQUESTY_API_KEY", "OPENAI_API_KEY")
+		if err != nil {
+			return nil, err
+		}
+		e.apiKey = key
 	}
 
 	if e.apiKey == "" {

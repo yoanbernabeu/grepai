@@ -175,7 +175,7 @@ func TestOpenRouterEmbedder_EndpointVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, err := NewOpenRouterEmbedder(WithOpenRouterEndpoint(tt.endpoint))
+			e, err := NewOpenRouterEmbedder(WithOpenRouterEndpoint(tt.endpoint), WithOpenRouterKey("test-key"))
 			if err != nil {
 				t.Fatalf("failed to create embedder: %v", err)
 			}

@@ -35,7 +35,7 @@ All providers share the same `embedder` keys in `.grepai/config.yaml`:
 | `provider` | all | `ollama`, `lmstudio`, `openai`, `synthetic`, `openrouter` or `requesty` |
 | `model` | all | Model name exactly as the provider expects it |
 | `endpoint` | all | Base URL of the API (each provider has a default) |
-| `api_key` | cloud providers | API key. If empty, grepai reads the provider's environment variable |
+| `api_key` | cloud providers | API key. If empty, grepai reads the provider's environment variable, but only when `endpoint` is the provider's official endpoint. A custom endpoint requires `api_key` |
 | `dimensions` | all | Vector size. See [Changing Embedding Models](#changing-embedding-models) |
 | `request_timeout_seconds` | all except `requesty` | HTTP timeout per request. Default: 60 (90 for `synthetic`) |
 | `parallelism` | `openai` | Concurrent requests. Default: 4 |
@@ -44,6 +44,8 @@ All providers share the same `embedder` keys in `.grepai/config.yaml`:
 | `max_batch_tokens` | `openai` | Maximum estimated tokens per request. Default: 280000 |
 
 > **Note:** grepai does not expand environment variables in `config.yaml`. A value like `api_key: ${OPENAI_API_KEY}` is sent as that literal text. To use an environment variable, leave `api_key` out and export the variable.
+
+> **Custom endpoints need `api_key`:** grepai sends a key read from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SYNTHETIC_API_KEY`, `REQUESTY_API_KEY`) only to the provider's official host over HTTPS: `api.openai.com`, `openrouter.ai`, `api.synthetic.new` or `router.requesty.ai`. A `.grepai/config.yaml` can come with a cloned repository, so its `endpoint` is not trusted with your environment keys. For any other endpoint (Azure, LiteLLM, vLLM, a proxy…), set `api_key` in the config. If you leave it empty while an environment key is set, grepai stops with an error that names the endpoint instead of sending the key.
 
 ## Ollama (Local)
 
@@ -212,7 +214,7 @@ embedder:
 
 ### Azure OpenAI / Microsoft Foundry
 
-Any OpenAI-compatible API works with `provider: openai` and a custom `endpoint`. grepai sends `POST {endpoint}/embeddings` with an `Authorization: Bearer` header.
+Any OpenAI-compatible API works with `provider: openai` and a custom `endpoint`. grepai sends `POST {endpoint}/embeddings` with an `Authorization: Bearer` header. With a custom endpoint, the key must be in `api_key`: `OPENAI_API_KEY` is only sent to `api.openai.com`.
 
 ```yaml
 embedder:

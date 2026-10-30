@@ -234,7 +234,7 @@ embedder:
   dimensions: 1536
 ```
 
-Provide the key with `OPENAI_API_KEY` or `api_key`.
+Provide the key with `api_key`. `OPENAI_API_KEY` is only sent to the official `api.openai.com` endpoint, never to a custom one.
 
 ## Storage Options
 
@@ -431,5 +431,7 @@ grepai does **not** expand variables inside `config.yaml`. A value such as `api_
 export OPENAI_API_KEY="sk-..."
 grepai watch
 ```
+
+These variables are only used when `endpoint` is the provider's official endpoint (`api.openai.com`, `openrouter.ai`, `api.synthetic.new`, `router.requesty.ai`, over HTTPS). With a custom endpoint, set `api_key` in the config: grepai refuses to send an environment key to it and stops with an error.
 
 An `api_key` set in `config.yaml` takes precedence over the environment. Other settings, such as the provider or the backend, cannot be overridden with environment variables: edit `config.yaml` instead.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -55,7 +54,9 @@ type SyntheticOption func(*SyntheticEmbedder)
 
 func WithSyntheticEndpoint(endpoint string) SyntheticOption {
 	return func(e *SyntheticEmbedder) {
-		e.endpoint = endpoint
+		if endpoint != "" {
+			e.endpoint = endpoint
+		}
 	}
 }
 
@@ -101,13 +102,14 @@ func NewSyntheticEmbedder(opts ...SyntheticOption) (*SyntheticEmbedder, error) {
 		opt(e)
 	}
 
-	// Try to get API key from environment if not set
+	// Fall back to the environment when no key is configured. The
+	// environment key is only sent to the provider's official endpoint.
 	if e.apiKey == "" {
-		e.apiKey = os.Getenv("SYNTHETIC_API_KEY")
-	}
-
-	if e.apiKey == "" {
-		e.apiKey = os.Getenv("OPENAI_API_KEY")
+		key, err := apiKeyFromEnv(e.endpoint, defaultSyntheticEndpoint+defaultSyntheticPath, "SYNTHETIC_API_KEY", "OPENAI_API_KEY")
+		if err != nil {
+			return nil, err
+		}
+		e.apiKey = key
 	}
 
 	if e.apiKey == "" {

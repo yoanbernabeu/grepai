@@ -174,7 +174,7 @@ func TestSyntheticEmbedder_EndpointVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, err := NewSyntheticEmbedder(WithSyntheticEndpoint(tt.endpoint))
+			e, err := NewSyntheticEmbedder(WithSyntheticEndpoint(tt.endpoint), WithSyntheticKey("test-key"))
 			if err != nil {
 				t.Fatalf("failed to create embedder: %v", err)
 			}

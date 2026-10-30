@@ -175,7 +175,7 @@ func TestRequestyEmbedder_EndpointVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, err := NewRequestyEmbedder(WithRequestyEndpoint(tt.endpoint))
+			e, err := NewRequestyEmbedder(WithRequestyEndpoint(tt.endpoint), WithRequestyKey("test-key"))
 			if err != nil {
 				t.Fatalf("failed to create embedder: %v", err)
 			}

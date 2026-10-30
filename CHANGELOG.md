@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Renamed Files Kept Their Old Path in Embeddings**: the embedding cache matched chunks by body only, while the embedded text starts with `File: <path>`. A renamed, moved or copied file reused vectors computed under the other path, which skewed search results. Renamed and moved files are now re-embedded; identical files at the same project-relative path (e.g. git worktrees in a workspace) still share vectors, and unchanged chunks of an edited file are still reused. No reindex is forced: vectors reused under an old path by earlier 1.x versions stay until their file changes, and an optional rebuild (clear the project's index, then run `grepai index`) refreshes them. (#366)
 
+### Security
+
+- **Environment API Keys Only Sent to Official Endpoints**: when `embedder.api_key` was empty, the `openai`, `openrouter`, `synthetic` and `requesty` embedders sent the key from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SYNTHETIC_API_KEY`, `REQUESTY_API_KEY`) to whatever `embedder.endpoint` the project config named. A `.grepai/config.yaml` committed in a third-party repository could therefore receive the user's key as soon as grepai ran on it (search, index, watch or MCP). grepai now uses an environment key only when the endpoint is the provider's official host over HTTPS. A config without `endpoint` keeps the official endpoint and works as before.
+
+  **Migration (breaking for custom endpoints):** if you use a custom endpoint (Azure, LiteLLM, vLLM, a proxy…) and relied on the environment variable, set the key in `embedder.api_key` of your config (`.grepai/config.yaml` or `~/.grepai/workspace.yaml`). Until then, grepai stops with an error that names the variable and the endpoint; it never sends an unauthenticated request.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added
