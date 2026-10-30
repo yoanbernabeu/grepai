@@ -406,9 +406,8 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 	return callees, nil
 }
 
-// countCallSites counts the occurrences of name followed by "(" as a whole
-// identifier in line.
-func countCallSites(line, name string) int {
+// countIdentifier counts the whole-identifier occurrences of name in line.
+func countIdentifier(line, name string) int {
 	if name == "" {
 		return 0
 	}
@@ -424,11 +423,16 @@ func countCallSites(line, name string) int {
 		if start > 0 && isIdentByte(line[start-1]) {
 			continue
 		}
-		rest := strings.TrimLeft(line[end:], " \t")
-		if strings.HasPrefix(rest, "(") {
-			count++
+		if end < len(line) && isIdentByte(line[end]) {
+			continue
 		}
+		count++
 	}
+}
+
+// isTruncatedContext reports whether getLineContext cut the line.
+func isTruncatedContext(lineContext string) bool {
+	return len(lineContext) > 200 && strings.HasSuffix(lineContext, "...")
 }
 
 func isIdentByte(b byte) bool {
@@ -492,13 +496,16 @@ func (x *callRefIndex) lookup(edge CallEdge) (Reference, bool) {
 }
 
 // isDeclarationSelfEdgeUnlocked reports whether an edge is a function's own
-// declaration line picked up as a call to itself. A one-line body that calls
-// the same name again (delegation to a same-name method, recursion) keeps its
-// edge: the line then holds the name followed by "(" more than once.
-// lineContext is the source line of the reference, if known. Caller must hold
-// s.mu.
+// declaration line picked up as a call to itself. lineContext is the source
+// line of the reference: when it names the function more than once (one-line
+// delegation to a same-name method, one-line recursion) or was truncated, the
+// edge may be a real call and is kept. An empty lineContext always treats a
+// self edge on a declaration line as the declaration. Caller must hold s.mu.
 func (s *GOBSymbolStore) isDeclarationSelfEdgeUnlocked(edge CallEdge, lineContext string) bool {
-	if edge.Caller != edge.Callee || countCallSites(lineContext, edge.Callee) > 1 {
+	if edge.Caller != edge.Callee {
+		return false
+	}
+	if lineContext != "" && (countIdentifier(lineContext, edge.Callee) > 1 || isTruncatedContext(lineContext)) {
 		return false
 	}
 	for _, sym := range s.index.Symbols[edge.Caller] {

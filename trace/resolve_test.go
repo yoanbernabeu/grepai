@@ -3,6 +3,7 @@ package trace
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -335,7 +336,34 @@ func TestLookupCallees_should_keep_one_line_delegation_and_recursion(t *testing.
 	}
 }
 
-func TestCountCallSites(t *testing.T) {
+// Declarations that are not written "name(" (generics, class fields) with a
+// one-line delegation, and a long line cut by the extractor, keep the call.
+func TestLookupCallees_should_keep_self_call_when_line_may_hold_a_real_call(t *testing.T) {
+	long := "public function execute($a) { " + strings.Repeat("$this->log($a); ", 14) + "return $this->inner->execute($a); }"
+	cases := []struct{ context, name string }{
+		{"execute<T>(x: T) { return this.inner.execute(x); }", "execute"},
+		{"func Map[T any](xs []T) []T { return Map(xs[1:]) }", "Map"},
+		{long[:200] + "...", "execute"},
+	}
+	for _, c := range cases {
+		s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+		ctx := context.Background()
+		if err := s.SaveFile(ctx, "a.ts", []Symbol{{Name: c.name, File: "a.ts", Line: 1}}, []Reference{
+			{SymbolName: c.name, Kind: RefKindCall, File: "a.ts", Line: 1, CallerName: c.name, CallerFile: "a.ts", CallerLine: 1, Context: c.context},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		callees, err := s.LookupCallees(ctx, c.name, "a.ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(callees) != 1 {
+			t.Errorf("%q: expected the self call to be kept, got %+v", c.context, callees)
+		}
+	}
+}
+
+func TestCountIdentifier(t *testing.T) {
 	cases := []struct {
 		line, name string
 		want       int
@@ -343,13 +371,14 @@ func TestCountCallSites(t *testing.T) {
 		{"func (m *MockStore) Close() error {", "Close", 1},
 		{"func (w *W) Save() error { return w.inner.Save() }", "Save", 2},
 		{"public function execute() { return $this->inner->execute (); }", "execute", 2},
-		{"func Saver() { doSave(); Save; }", "Save", 0},
+		{"execute<T>(x: T) { return this.inner.execute(x); }", "execute", 2},
+		{"func Saver() { doSave(); SaveAll() }", "Save", 0},
 		{"", "Save", 0},
 		{"Save()", "", 0},
 	}
 	for _, c := range cases {
-		if got := countCallSites(c.line, c.name); got != c.want {
-			t.Errorf("countCallSites(%q, %q) = %d, want %d", c.line, c.name, got, c.want)
+		if got := countIdentifier(c.line, c.name); got != c.want {
+			t.Errorf("countIdentifier(%q, %q) = %d, want %d", c.line, c.name, got, c.want)
 		}
 	}
 }
