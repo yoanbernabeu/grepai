@@ -40,9 +40,12 @@ type QdrantStore struct {
 	// after the project path: point IDs and payloads exactly as before (#247).
 	namespace string
 	// noLegacyVectors stops the embedding cache from reusing vectors of
-	// points without a namespace, which may come from another model. Set
-	// once the project has namespaced points, or after a model change.
+	// points without a namespace, which carry no model information: the
+	// indexer sets it after its initial scan and after a model change.
 	noLegacyVectors bool
+	// migrating is set when the store opened on a namespace without points:
+	// the project has not been indexed since points got a namespace.
+	migrating bool
 	// readLegacy makes search and status read the points an earlier version
 	// wrote without a namespace, while the project has none of its own yet
 	// (just after upgrading, before it is re-indexed). The indexer never sets
@@ -90,6 +93,7 @@ func QdrantProjectNamespace(configuredCollection, projectRoot string) string {
 		// Refusing to start would break setups that worked before (e.g. a
 		// container running as another user than the repository owner).
 		log.Printf("Warning: cannot identify the git repository of %s (%v): the shared Qdrant collection %q keeps it apart by its path, so grepai processes that can read the repository use another namespace", projectRoot, err, configuredCollection)
+		return namespace // not cached: the next store retries git
 	case ok:
 		namespace = identity
 	}
@@ -172,10 +176,7 @@ func NewQdrantStoreWithNamespace(ctx context.Context, endpoint string, port int,
 			return nil, fmt.Errorf("failed to check project namespace: %w", err)
 		}
 		store.readLegacy = legacyReadFallback && empty
-		// Legacy vectors are only reused to migrate a project that has no
-		// points of its own yet: they carry no model information, so later
-		// runs must not pick up leftovers that may come from another model.
-		store.noLegacyVectors = !empty
+		store.migrating = empty
 	}
 	store.warnLegacyPoints(ctx, legacyReadFallback)
 
@@ -196,30 +197,37 @@ func (s *QdrantStore) warnLegacyPoints(ctx context.Context, readOnly bool) {
 	if _, done := qdrantLegacyWarned.LoadOrStore(key, true); done {
 		return
 	}
-	if s.readLegacy {
-		// The store found legacy points to serve: no need to count them on
-		// every search.
-		log.Printf("Warning: Qdrant collection %q has no points for this project yet: searching the points written by an earlier grepai version until 'grepai index' or 'grepai watch' re-indexes the project (unchanged chunks reuse their vectors).", s.collectionName)
-		return
-	}
 	legacy := &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewIsEmpty(qdrantNamespaceField)}}
-	// Most opens find none: test for one point before counting them all.
+	// Most opens find none: test for one point before saying anything.
 	points, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
 		Filter:         legacy,
 		Limit:          qdrant.PtrOf(uint32(1)),
 	})
-	var count uint64
-	if err == nil && len(points) > 0 {
-		count, err = s.client.Count(ctx, &qdrant.CountPoints{
-			CollectionName: s.collectionName,
-			Filter:         legacy,
-			Exact:          qdrant.PtrOf(true),
-		})
-	}
 	if err != nil {
 		qdrantLegacyWarned.Delete(key)
 		log.Printf("Warning: failed to check Qdrant collection %q for points without a project namespace: %v", s.collectionName, err)
+		return
+	}
+	switch {
+	case len(points) == 0:
+		return
+	case s.readLegacy:
+		log.Printf("Warning: Qdrant collection %q has no points for this project yet: searching the points written by an earlier grepai version until 'grepai index' or 'grepai watch' re-indexes the project (unchanged chunks reuse their vectors).", s.collectionName)
+		return
+	case s.migrating:
+		// Index and watch are about to replace them: nothing is left over yet.
+		log.Printf("Qdrant collection %q has no points for this project yet: indexing replaces the points an earlier grepai version wrote for its files, reusing their vectors for unchanged chunks.", s.collectionName)
+		return
+	}
+	count, err := s.client.Count(ctx, &qdrant.CountPoints{
+		CollectionName: s.collectionName,
+		Filter:         legacy,
+		Exact:          qdrant.PtrOf(true),
+	})
+	if err != nil {
+		qdrantLegacyWarned.Delete(key)
+		log.Printf("Warning: failed to count Qdrant points without a project namespace in collection %q: %v", s.collectionName, err)
 		return
 	}
 	if count > 0 {

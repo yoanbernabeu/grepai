@@ -45,6 +45,14 @@ func TestQdrantProjectNamespace(t *testing.T) {
 	if got := ns("shared", link+string(filepath.Separator)); got != plain {
 		t.Fatalf("symlinked root got namespace %q, want %q", got, plain)
 	}
+	// Without git on PATH, the path is used (git's absence is not fatal).
+	t.Run("git not installed", func(t *testing.T) {
+		t.Setenv("PATH", "")
+		dir := tempDir()
+		if got := ns("shared", dir); got != dir {
+			t.Fatalf("namespace without git = %q, want %q", got, dir)
+		}
+	})
 	// In a repository with an origin remote, the namespace is the repository,
 	// whatever the checkout path, and holds no credential.
 	if _, err := exec.LookPath("git"); err != nil {
@@ -271,13 +279,16 @@ func TestQdrantSharedCollectionIsolation(t *testing.T) {
 	if stats.TotalChunks != 2 || stats.TotalFiles != 2 {
 		t.Fatalf("project A stats = %+v", stats)
 	}
-	// Legacy vectors only serve a project's first, migrating index: once it
-	// has points, leftovers (possibly from another model) are not reused.
-	if _, found, err := open("/work/a").LookupByContentHash(ctx, "ch-gone", "go"); found || err != nil {
-		t.Fatalf("migrated project reused a leftover legacy vector: found=%v err=%v", found, err)
+	// Legacy vectors serve the indexer's initial scan; once it disables the
+	// reuse after that scan, leftovers (possibly from another model) are not
+	// picked up any more.
+	afterScan := open("/work/a")
+	if _, found, err := afterScan.LookupByContentHash(ctx, "ch-gone", "go"); !found || err != nil {
+		t.Fatalf("initial scan did not reuse the legacy vector: found=%v err=%v", found, err)
 	}
-	if _, found, err := open("/work/c").LookupByContentHash(ctx, "ch-gone", "go"); !found || err != nil {
-		t.Fatalf("unmigrated project did not reuse the legacy vector: found=%v err=%v", found, err)
+	afterScan.DisableLegacyVectorReuse()
+	if _, found, err := afterScan.LookupByContentHash(ctx, "ch-gone", "go"); found || err != nil {
+		t.Fatalf("legacy vector reused after the initial scan: found=%v err=%v", found, err)
 	}
 	// Only the legacy point of the file deleted since remains.
 	remaining, err := client.Count(ctx, &qdrant.CountPoints{CollectionName: collection, Exact: qdrant.PtrOf(true),
