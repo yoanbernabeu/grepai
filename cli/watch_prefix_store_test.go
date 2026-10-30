@@ -378,11 +378,11 @@ func TestProjectPrefixStore_PassThroughAndGetChunks(t *testing.T) {
 		t.Errorf("GetChunksForFile(abs) path = %q, want %q", mock.getChunksForFilePath, wantPrefixed)
 	}
 
-	// Relative path should pass through as-is when filepath.Rel fails.
+	// Relative paths (watcher, RPG encoder) get the same prefix (#368).
 	if _, err := wrapped.GetChunksForFile(ctx, "relative.go"); err != nil {
 		t.Fatalf("GetChunksForFile(rel) failed: %v", err)
 	}
-	if mock.getChunksForFilePath != "relative.go" {
-		t.Errorf("GetChunksForFile(rel) path = %q, want %q", mock.getChunksForFilePath, "relative.go")
+	if want := wrapped.getPrefix() + "/relative.go"; mock.getChunksForFilePath != want {
+		t.Errorf("GetChunksForFile(rel) path = %q, want %q", mock.getChunksForFilePath, want)
 	}
 }

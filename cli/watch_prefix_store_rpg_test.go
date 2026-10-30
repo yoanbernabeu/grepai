@@ -1,0 +1,102 @@
+package cli
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/yoanbernabeu/grepai/rpg"
+	"github.com/yoanbernabeu/grepai/store"
+	"github.com/yoanbernabeu/grepai/trace"
+)
+
+// TestProjectPrefixStore_RPGLinksChunksInWorkspace reproduces #368: in a
+// workspace, the RPG encoder asks the prefix store for a file's chunks with the
+// relative paths that ListDocuments and the scanner return. Those lookups must
+// hit the prefixed rows of the shared store, otherwise symbols are never
+// linked to their chunks.
+func TestProjectPrefixStore_RPGLinksChunksInWorkspace(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	shared := store.NewGOBStore(filepath.Join(dir, "index.gob"))
+	wrapped := &projectPrefixStore{
+		store:         shared,
+		workspaceName: "ws",
+		projectName:   "proj",
+		projectPath:   filepath.Join(dir, "proj"),
+	}
+
+	// Another project of the same workspace owns a file with the same
+	// relative path: it must never be returned for this project.
+	other := &projectPrefixStore{store: shared, workspaceName: "ws", projectName: "other", projectPath: filepath.Join(dir, "other")}
+	if err := other.SaveChunks(ctx, []store.Chunk{{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 20, Vector: []float32{1, 0}}}); err != nil {
+		t.Fatalf("SaveChunks(other) failed: %v", err)
+	}
+
+	chunks := []store.Chunk{
+		{ID: "main.go_0", FilePath: "main.go", StartLine: 1, EndLine: 10, Vector: []float32{1, 0}},
+		{ID: "main.go_1", FilePath: "main.go", StartLine: 11, EndLine: 20, Vector: []float32{0, 1}},
+	}
+	if err := wrapped.SaveChunks(ctx, chunks); err != nil {
+		t.Fatalf("SaveChunks failed: %v", err)
+	}
+	if err := wrapped.SaveDocument(ctx, store.Document{Path: "main.go", Hash: "h", ModTime: time.Now(), ChunkIDs: []string{"ws/proj/main.go_0", "ws/proj/main.go_1"}}); err != nil {
+		t.Fatalf("SaveDocument failed: %v", err)
+	}
+
+	got, err := wrapped.GetChunksForFile(ctx, "main.go")
+	if err != nil {
+		t.Fatalf("GetChunksForFile failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetChunksForFile(relative) returned %d chunks, want 2", len(got))
+	}
+	for _, c := range got {
+		if c.FilePath != "main.go" {
+			t.Errorf("chunk %s path = %q, want the project-relative path %q", c.ID, c.FilePath, "main.go")
+		}
+	}
+
+	symbolStore := trace.NewGOBSymbolStore(filepath.Join(dir, "symbols.gob"))
+	if err := symbolStore.SaveFile(ctx, "main.go", []trace.Symbol{{Name: "Foo", Kind: trace.KindFunction, File: "main.go", Line: 1, EndLine: 20, Language: "go"}}, nil); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+	rpgStore := rpg.NewGOBRPGStore(filepath.Join(dir, "rpg.gob"))
+	encoder := rpg.NewRPGEncoder(rpgStore, rpg.NewLocalExtractor(), wrapped.projectPath, rpg.RPGEncoderConfig{DriftThreshold: 0.35})
+
+	// Initial index (BuildFull) and a later watch event (LinkChunksForFile)
+	// must both link the symbol to the two chunks, without accumulating
+	// chunk nodes across events.
+	if err := encoder.BuildFull(ctx, symbolStore, wrapped, nil); err != nil {
+		t.Fatalf("BuildFull failed: %v", err)
+	}
+	assertChunkLinks(t, "BuildFull", rpgStore.GetGraph(), 2)
+
+	for i := 0; i < 2; i++ {
+		linked, err := wrapped.GetChunksForFile(ctx, "main.go")
+		if err != nil {
+			t.Fatalf("GetChunksForFile failed: %v", err)
+		}
+		if err := encoder.LinkChunksForFile(ctx, "main.go", linked); err != nil {
+			t.Fatalf("LinkChunksForFile failed: %v", err)
+		}
+		assertChunkLinks(t, "LinkChunksForFile", rpgStore.GetGraph(), 2)
+	}
+}
+
+func assertChunkLinks(t *testing.T, step string, g *rpg.Graph, want int) {
+	t.Helper()
+	stats := g.Stats()
+	if got := stats.NodesByKind[rpg.KindChunk]; got != want {
+		t.Errorf("%s: %d chunk nodes, want %d", step, got, want)
+	}
+	if got := stats.EdgesByType[rpg.EdgeMapsToChunk]; got != want {
+		t.Errorf("%s: %d maps_to_chunk edges, want %d", step, got, want)
+	}
+	for _, n := range g.GetNodesByKind(rpg.KindChunk) {
+		if n.Path != "main.go" {
+			t.Errorf("%s: chunk node %s path = %q, want %q", step, n.ID, n.Path, "main.go")
+		}
+	}
+}
