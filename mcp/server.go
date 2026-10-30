@@ -1174,8 +1174,7 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot string, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	// Aggregate results across stores
 	var firstSymbol *trace.Symbol
-	var allRefs []trace.Reference
-	var refStores []trace.SymbolStore // store each ref comes from
+	var allCallers []trace.CallerInfo
 
 	for _, ss := range stores {
 		symbols, err := ss.LookupSymbol(ctx, symbolName)
@@ -1191,9 +1190,16 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			sym := *trace.PickTargetSymbol(symbols, refs)
 			firstSymbol = &sym
 		}
-		allRefs = append(allRefs, refs...)
-		for range refs {
-			refStores = append(refStores, ss)
+		for _, ref := range refs {
+			allCallers = append(allCallers, trace.CallerInfo{
+				// Resolve the caller in its own store, like the CLI (#372).
+				Symbol: resolveRefCallerSymbol(ss, ctx, ref),
+				CallSite: trace.CallSite{
+					File:    ref.File,
+					Line:    ref.Line,
+					Context: ref.Context,
+				},
+			})
 		}
 	}
 
@@ -1217,17 +1223,15 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			Query:   symbolName,
 			Mode:    "fast",
 			Symbol:  firstSymbol,
-			Callers: make([]CallerInfoCompact, 0, len(allRefs)),
+			Callers: make([]CallerInfoCompact, 0, len(allCallers)),
 		}
 
-		for i, ref := range allRefs {
-			// Resolve the caller in its own store, like the CLI (#372).
-			callerSym := resolveRefCallerSymbol(refStores[i], ctx, ref)
+		for _, caller := range allCallers {
 			resultCompact.Callers = append(resultCompact.Callers, CallerInfoCompact{
-				Symbol: callerSym,
+				Symbol: caller.Symbol,
 				CallSite: CallSiteCompact{
-					File: ref.File,
-					Line: ref.Line,
+					File: caller.CallSite.File,
+					Line: caller.CallSite.Line,
 				},
 			})
 		}
@@ -1242,21 +1246,10 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 		data = resultCompact
 	} else {
 		result := trace.TraceResult{
-			Query:  symbolName,
-			Mode:   "fast",
-			Symbol: firstSymbol,
-		}
-		for i, ref := range allRefs {
-			// Resolve the caller in its own store, like the CLI (#372).
-			callerSym := resolveRefCallerSymbol(refStores[i], ctx, ref)
-			result.Callers = append(result.Callers, trace.CallerInfo{
-				Symbol: callerSym,
-				CallSite: trace.CallSite{
-					File:    ref.File,
-					Line:    ref.Line,
-					Context: ref.Context,
-				},
-			})
+			Query:   symbolName,
+			Mode:    "fast",
+			Symbol:  firstSymbol,
+			Callers: allCallers,
 		}
 
 		// Enrich with RPG
@@ -1862,7 +1855,7 @@ func resolveRefCallerSymbol(ss trace.SymbolStore, ctx context.Context, ref trace
 	if err != nil || len(candidates) == 0 {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
-	return *trace.PickSymbolForFile(candidates, ref.CallerFile)
+	return *trace.PickSymbolForFile(candidates, ref.CallerFile, ref.CallerLine)
 }
 
 // WorkspaceIndexStatus represents the status of a workspace index.

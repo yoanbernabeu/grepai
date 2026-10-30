@@ -380,50 +380,85 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 	defer s.mu.RUnlock()
 
 	var callees []Reference
-	seen := make(map[string]bool)
+	type calleeKey struct {
+		callee, file string
+		line         int
+	}
+	// Two calls on the same line (e.g. Save(Load())) are distinct callees.
+	seen := make(map[calleeKey]bool)
+	callRefs := s.newCallRefIndexUnlocked()
 
 	for _, edge := range s.index.CallGraph {
 		if edge.Caller != symbolName || s.isDeclarationSelfEdgeUnlocked(edge) {
 			continue
 		}
-		// Two calls on the same line (e.g. Save(Load())) are distinct callees.
-		key := fmt.Sprintf("%s\x00%s:%d", edge.Callee, edge.File, edge.Line)
+		key := calleeKey{edge.Callee, edge.File, edge.Line}
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 
-		if ref, ok := s.callReferenceForEdgeUnlocked(edge); ok {
+		if ref, ok := callRefs.lookup(edge); ok {
 			callees = append(callees, ref)
 		}
 	}
 	return callees, nil
 }
 
-// callReferenceForEdgeUnlocked returns the call reference behind a call-graph
-// edge. Edges are also built for property reads/writes, which are not calls:
-// ok is false for them. An edge without any reference details gets a minimal
-// one. Caller must hold s.mu.
-func (s *GOBSymbolStore) callReferenceForEdgeUnlocked(edge CallEdge) (Reference, bool) {
-	matched := false
-	for _, ref := range s.index.References[edge.Callee] {
-		if ref.CallerName != edge.Caller || ref.File != edge.File || ref.Line != edge.Line {
-			continue
+// callRefIndex finds the call reference behind call-graph edges. Edges are
+// also built for property reads/writes, which are not calls. The references
+// of each callee are indexed once, so popular names stay linear.
+type callRefIndex struct {
+	s      *GOBSymbolStore
+	byEdge map[string]map[edgeRefKey]edgeRef
+}
+
+type edgeRefKey struct {
+	caller, file string
+	line         int
+}
+
+type edgeRef struct {
+	ref    Reference
+	isCall bool
+}
+
+// newCallRefIndexUnlocked returns an empty index. Caller must hold s.mu while
+// using it.
+func (s *GOBSymbolStore) newCallRefIndexUnlocked() *callRefIndex {
+	return &callRefIndex{s: s, byEdge: make(map[string]map[edgeRefKey]edgeRef)}
+}
+
+// lookup returns the call reference of an edge; ok is false for a property
+// read/write edge. An edge without any reference details gets a minimal one.
+func (x *callRefIndex) lookup(edge CallEdge) (Reference, bool) {
+	refs, built := x.byEdge[edge.Callee]
+	if !built {
+		refs = make(map[edgeRefKey]edgeRef)
+		for _, ref := range x.s.index.References[edge.Callee] {
+			key := edgeRefKey{ref.CallerName, ref.File, ref.Line}
+			current, seen := refs[key]
+			switch {
+			case isCallReference(ref):
+				if !seen || !current.isCall {
+					refs[key] = edgeRef{ref: ref, isCall: true}
+				}
+			case !seen:
+				refs[key] = edgeRef{}
+			}
 		}
-		if isCallReference(ref) {
-			return ref, true
-		}
-		matched = true
+		x.byEdge[edge.Callee] = refs
 	}
-	if matched {
-		return Reference{}, false
+	match, found := refs[edgeRefKey{edge.Caller, edge.File, edge.Line}]
+	if !found {
+		return Reference{
+			SymbolName: edge.Callee,
+			File:       edge.File,
+			Line:       edge.Line,
+			CallerName: edge.Caller,
+		}, true
 	}
-	return Reference{
-		SymbolName: edge.Callee,
-		File:       edge.File,
-		Line:       edge.Line,
-		CallerName: edge.Caller,
-	}, true
+	return match.ref, match.isCall
 }
 
 // isDeclarationSelfEdgeUnlocked reports whether an edge is a function's own
@@ -527,24 +562,10 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		return len(symbols) == 1
 	}
 
-	// Edges are also built for property reads/writes; they are not calls.
-	// Index the references of each callee once so popular names stay linear.
-	dataEdgeKeys := make(map[string]map[string]bool)
+	callRefs := s.newCallRefIndexUnlocked()
 	isDataEdge := func(edge CallEdge) bool {
-		keys, ok := dataEdgeKeys[edge.Callee]
-		if !ok {
-			keys = make(map[string]bool)
-			for _, ref := range s.index.References[edge.Callee] {
-				key := fmt.Sprintf("%s\x00%s:%d", ref.CallerName, ref.File, ref.Line)
-				if isCallReference(ref) {
-					keys[key] = false
-				} else if _, seen := keys[key]; !seen {
-					keys[key] = true
-				}
-			}
-			dataEdgeKeys[edge.Callee] = keys
-		}
-		return keys[fmt.Sprintf("%s\x00%s:%d", edge.Caller, edge.File, edge.Line)]
+		_, isCall := callRefs.lookup(edge)
+		return !isCall
 	}
 
 	for len(queue) > 0 {

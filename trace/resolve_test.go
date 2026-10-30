@@ -211,7 +211,7 @@ func TestPickSymbolForFile_prefersCallerFile(t *testing.T) {
 		{Name: "__vue_template_reads__", File: "src/views/Home.vue", Line: 200},
 	}
 
-	picked := PickSymbolForFile(candidates, "src/views/Home.vue")
+	picked := PickSymbolForFile(candidates, "src/views/Home.vue", 0)
 	if picked == nil || picked.File != "src/views/Home.vue" {
 		t.Fatalf("expected Home.vue caller symbol, got %+v", picked)
 	}
@@ -222,14 +222,14 @@ func TestPickSymbolForFile_should_not_depend_on_candidate_order(t *testing.T) {
 	y := Symbol{Name: "handle", File: "m.php", Line: 8}
 	z := Symbol{Name: "handle", File: "m.php", Line: 2}
 	for _, candidates := range [][]Symbol{{x, y, z}, {z, y, x}} {
-		if p := PickSymbolForFile(candidates, "m.php"); p.Line != 2 {
+		if p := PickSymbolForFile(candidates, "m.php", 0); p.Line != 2 {
 			t.Fatalf("expected m.php:2, got %s:%d", p.File, p.Line)
 		}
-		if p := PickSymbolForFile(candidates, "other.php"); p.File != "m.php" || p.Line != 2 {
+		if p := PickSymbolForFile(candidates, "other.php", 0); p.File != "m.php" || p.Line != 2 {
 			t.Fatalf("expected m.php:2 fallback, got %s:%d", p.File, p.Line)
 		}
 	}
-	if PickSymbolForFile(nil, "a.php") != nil {
+	if PickSymbolForFile(nil, "a.php", 0) != nil {
 		t.Fatal("expected nil for no candidates")
 	}
 }
@@ -260,5 +260,53 @@ func TestGetCallGraph_should_skip_property_read_and_write_edges(t *testing.T) {
 	}
 	if _, ok := graph.Nodes["count"]; ok {
 		t.Fatalf("graph walked into a property access: %+v", graph.Nodes)
+	}
+}
+
+// Several same-name definitions in one file (e.g. two PHP classes): the
+// caller's declaration line picks the right one.
+func TestPickSymbolForFile_should_prefer_caller_line(t *testing.T) {
+	candidates := []Symbol{
+		{Name: "handle", File: "x.php", Line: 20},
+		{Name: "handle", File: "x.php", Line: 3},
+		{Name: "handle", File: "a.php", Line: 1},
+	}
+	if p := PickSymbolForFile(candidates, "x.php", 20); p.Line != 20 {
+		t.Fatalf("expected x.php:20, got %s:%d", p.File, p.Line)
+	}
+	if p := PickSymbolForFile(candidates, "x.php", 0); p.Line != 3 {
+		t.Fatalf("expected x.php:3 without caller line, got %s:%d", p.File, p.Line)
+	}
+	if p := PickSymbolForFile(candidates, "x.php", 99); p.Line != 3 {
+		t.Fatalf("expected x.php:3 for an unknown caller line, got %s:%d", p.File, p.Line)
+	}
+}
+
+// The extractor records the caller's declaration line on references, which
+// is what PickSymbolForFile matches against.
+func TestReferenceCallerLine_should_match_caller_declaration(t *testing.T) {
+	const src = `<?php
+class A {
+    public function handle() {
+        return 1;
+    }
+}
+class B {
+    public function handle() {
+        $this->execute();
+    }
+}
+`
+	s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	extractAndSaveForTest(t, s, "x.php", src)
+	ctx := context.Background()
+	refs, _ := s.LookupCallers(ctx, "execute")
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 reference, got %+v", refs)
+	}
+	syms, _ := s.LookupSymbol(ctx, "handle")
+	p := PickSymbolForFile(syms, refs[0].CallerFile, refs[0].CallerLine)
+	if p == nil || p.Line != 8 {
+		t.Fatalf("expected B::handle at line 8, got %+v (caller line %d)", p, refs[0].CallerLine)
 	}
 }

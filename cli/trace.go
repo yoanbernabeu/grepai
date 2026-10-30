@@ -158,7 +158,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 				}
 				var callerSym trace.Symbol
 				if len(callerSyms) > 0 {
-					if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+					if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile, ref.CallerLine); picked != nil {
 						callerSym = *picked
 					} else {
 						callerSym = callerSyms[0]
@@ -254,7 +254,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		}
 		var callerSym trace.Symbol
 		if len(callerSyms) > 0 {
-			if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+			if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile, ref.CallerLine); picked != nil {
 				callerSym = *picked
 			} else {
 				callerSym = callerSyms[0]

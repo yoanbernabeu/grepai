@@ -49,16 +49,24 @@ func PickTargetSymbol(candidates []Symbol, refs []Reference) *Symbol {
 	return &candidates[best]
 }
 
-// PickSymbolForFile chooses the definition declared in preferredFile, or the
-// first one by file then line when none is.
-func PickSymbolForFile(candidates []Symbol, preferredFile string) *Symbol {
+// PickSymbolForFile chooses the definition declared in preferredFile at
+// preferredLine, else the first one declared in preferredFile, else the first
+// one by file then line. A zero preferredLine (older indexes) only matches the
+// file.
+func PickSymbolForFile(candidates []Symbol, preferredFile string, preferredLine int) *Symbol {
 	if len(candidates) == 0 {
 		return nil
 	}
 	best := -1
 	if preferredFile != "" {
 		for i := range candidates {
-			if candidates[i].File == preferredFile && (best < 0 || candidates[i].Line < candidates[best].Line) {
+			if candidates[i].File != preferredFile {
+				continue
+			}
+			if preferredLine > 0 && candidates[i].Line == preferredLine {
+				return &candidates[i]
+			}
+			if best < 0 || candidates[i].Line < candidates[best].Line {
 				best = i
 			}
 		}
