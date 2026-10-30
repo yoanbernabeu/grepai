@@ -310,3 +310,46 @@ class B {
 		t.Fatalf("expected B::handle at line 8, got %+v (caller line %d)", p, refs[0].CallerLine)
 	}
 }
+
+// A one-line method that delegates to a same-name method, or recurses, keeps
+// its callee: only the bare declaration line is dropped.
+func TestLookupCallees_should_keep_one_line_delegation_and_recursion(t *testing.T) {
+	cases := []struct {
+		path, src, name string
+	}{
+		{"w.go", "package w\n\ntype W struct{ inner *W }\n\nfunc (w *W) Save() error { return w.inner.Save() }\n", "Save"},
+		{"Decorator.php", "<?php\nclass Decorator {\n    public function execute() { return $this->inner->execute(); }\n}\n", "execute"},
+		{"fact.go", "package m\n\nfunc fact(n int) int { if n < 2 { return 1 }; return n * fact(n-1) }\n", "fact"},
+	}
+	for _, c := range cases {
+		s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+		extractAndSaveForTest(t, s, c.path, c.src)
+		ctx := context.Background()
+		callees, err := s.LookupCallees(ctx, c.name, c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(callees) != 1 || callees[0].SymbolName != c.name {
+			t.Errorf("%s: expected the same-name call to be kept, got %+v", c.path, callees)
+		}
+	}
+}
+
+func TestCountCallSites(t *testing.T) {
+	cases := []struct {
+		line, name string
+		want       int
+	}{
+		{"func (m *MockStore) Close() error {", "Close", 1},
+		{"func (w *W) Save() error { return w.inner.Save() }", "Save", 2},
+		{"public function execute() { return $this->inner->execute (); }", "execute", 2},
+		{"func Saver() { doSave(); Save; }", "Save", 0},
+		{"", "Save", 0},
+		{"Save()", "", 0},
+	}
+	for _, c := range cases {
+		if got := countCallSites(c.line, c.name); got != c.want {
+			t.Errorf("countCallSites(%q, %q) = %d, want %d", c.line, c.name, got, c.want)
+		}
+	}
+}

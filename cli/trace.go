@@ -223,9 +223,6 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 	}
 
 	target := trace.PickTargetSymbol(symbols, refs)
-	if target == nil {
-		target = &symbols[0]
-	}
 
 	result := trace.TraceResult{
 		Query:  symbolName,
