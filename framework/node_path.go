@@ -4,22 +4,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 // DefaultNodePath is the Node.js command used when node_path is not set.
 const DefaultNodePath = "node"
 
+// nodeCommandName matches the Node.js command names accepted without a path:
+// node, nodejs, node20, node.exe...
+var nodeCommandName = regexp.MustCompile(`(?i)^node(js)?[0-9]*(\.exe)?$`)
+
+// localDeviceVolume matches Windows local device prefixes such as \\?\C:.
+var localDeviceVolume = regexp.MustCompile(`^\\\\[?.]\\[A-Za-z]:$`)
+
 // ValidateNodePath checks a framework_processing.node_path value before
 // grepai executes it.
 //
 // The value comes from the project's .grepai/config.yaml, which can ship
-// with a cloned repository. A path into the project would let that
-// repository make grepai run a file it provides. Allowed values are a bare
-// command name resolved through PATH (such as "node") and an absolute path
-// outside projectRoot. Relative paths and paths that resolve inside
-// projectRoot, including through symlinks, are rejected.
-func ValidateNodePath(nodePath, projectRoot string) (string, error) {
+// with a cloned repository. A path into that repository would let it make
+// grepai run a file it provides. Allowed values are a Node.js command name
+// resolved through PATH (such as "node") and a local absolute path outside
+// every directory in roots (the project root, and the enclosing git
+// repository when known). Relative paths, network paths, other command names
+// and paths that resolve inside one of the roots, including through
+// symlinks, are rejected.
+func ValidateNodePath(nodePath string, roots ...string) (string, error) {
 	if nodePath == "" {
 		return DefaultNodePath, nil
 	}
@@ -29,8 +39,9 @@ func ValidateNodePath(nodePath, projectRoot string) (string, error) {
 		// is excluded so that a Windows drive-relative value ("C:evil") is
 		// treated as the relative path it is. Only Node.js names are
 		// accepted ("node", "nodejs", "node20", "node.exe"): another
-		// runtime could load project files from the current directory.
-		if !strings.HasPrefix(strings.ToLower(nodePath), DefaultNodePath) {
+		// program (bun, nodemon...) could load project files from the
+		// current directory.
+		if !nodeCommandName.MatchString(nodePath) {
 			return "", fmt.Errorf("framework_processing.node_path %q is not a Node.js command: use \"node\" or an absolute path outside the project", nodePath)
 		}
 		return nodePath, nil
@@ -42,23 +53,23 @@ func ValidateNodePath(nodePath, projectRoot string) (string, error) {
 	if !filepath.IsAbs(nodePath) {
 		return "", fmt.Errorf("framework_processing.node_path %q is a relative path: use \"node\" or an absolute path outside the project", nodePath)
 	}
-	if isInsideDir(nodePath, projectRoot) {
-		return "", fmt.Errorf("framework_processing.node_path %q points inside the project: use \"node\" or an absolute path outside the project", nodePath)
+	for _, root := range roots {
+		if isInsideDir(nodePath, root) {
+			return "", fmt.Errorf("framework_processing.node_path %q points inside the project or its repository: use \"node\" or an absolute path outside the project", nodePath)
+		}
 	}
 	return nodePath, nil
 }
 
-// isNetworkPath reports whether path is a Windows UNC path (\\host\share or
-// \\?\UNC\host\share). Local device paths such as \\?\C:\ are not.
+// isNetworkPath reports whether path has a Windows UNC or device volume
+// (\\host\share, \\?\UNC\host\share, \\?\GLOBALROOT...). Only the local drive
+// device forms \\?\C: and \\.\C: are treated as local.
 func isNetworkPath(path string) bool {
-	vol := strings.ToUpper(strings.ReplaceAll(filepath.VolumeName(path), "/", `\`))
-	if !strings.HasPrefix(vol, `\\`) {
+	vol := strings.ReplaceAll(filepath.VolumeName(path), "/", `\`)
+	if !strings.HasPrefix(vol, `\\`) && !strings.HasPrefix(vol, `\??\`) {
 		return false
 	}
-	if strings.HasPrefix(vol, `\\?\UNC\`) || strings.HasPrefix(vol, `\\.\UNC\`) {
-		return true
-	}
-	return !strings.HasPrefix(vol, `\\?\`) && !strings.HasPrefix(vol, `\\.\`)
+	return !localDeviceVolume.MatchString(vol)
 }
 
 // isInsideDir reports whether path is dir or below it, comparing both the

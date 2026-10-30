@@ -66,11 +66,11 @@ func TestValidateNodePath_RejectsProjectControlledPaths(t *testing.T) {
 		}
 	}
 	if runtime.GOOS == "windows" {
-		rejected = append(rejected, `C:evil`, `\\attacker.example\share\node.exe`, `\\?\UNC\attacker.example\share\node.exe`, `\tools\node`)
+		rejected = append(rejected, `C:evil`, `\\attacker.example\share\node.exe`, `\\?\UNC\attacker.example\share\node.exe`, `\\?\GLOBALROOT\Device\Mup\h\s\node.exe`, `\tools\node`)
 	} else {
 		rejected = append(rejected, `C:evil`, `tools\node`)
 	}
-	rejected = append(rejected, "bun", "deno", "sh")
+	rejected = append(rejected, "bun", "deno", "sh", "nodemon", "node-dev", "nodex")
 	for _, nodePath := range rejected {
 		if _, err := ValidateNodePath(nodePath, root); err == nil {
 			t.Errorf("ValidateNodePath(%q) should be rejected", nodePath)
@@ -107,5 +107,23 @@ func TestValidateNodePath_RejectsSymlinkIntoProject(t *testing.T) {
 	}
 	if _, err := ValidateNodePath(inside, rootLink); err == nil {
 		t.Errorf("project root given as a symlink should still contain the path")
+	}
+}
+
+// Paths inside the enclosing repository, outside the grepai project root,
+// are rejected when that root is passed too.
+func TestValidateNodePath_RejectsOtherRoots(t *testing.T) {
+	repo := t.TempDir()
+	project := filepath.Join(repo, "frontend")
+	script := filepath.Join(repo, "tools", "node")
+	writeExecutable(t, script)
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateNodePath(script, project); err != nil {
+		t.Fatalf("outside the project root only: unexpected error %v", err)
+	}
+	if _, err := ValidateNodePath(script, project, repo); err == nil {
+		t.Fatal("a path inside the repository root should be rejected")
 	}
 }

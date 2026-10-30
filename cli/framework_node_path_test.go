@@ -36,8 +36,9 @@ func TestBuildFrameworkRegistry_IgnoresNodePathInsideProject(t *testing.T) {
 			cfg.Framework.NodePath = nodePath
 
 			var logs bytes.Buffer
+			prev := log.Writer()
 			log.SetOutput(&logs)
-			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+			t.Cleanup(func() { log.SetOutput(prev) })
 
 			t.Chdir(root)
 			reg := buildFrameworkRegistry(cfg, root)
