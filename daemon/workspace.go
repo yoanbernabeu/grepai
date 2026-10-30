@@ -70,7 +70,8 @@ func WriteWorkspacePIDFile(logDir, workspaceName string) error {
 		return fmt.Errorf("failed to rename PID file: %w", err)
 	}
 
-	// Keep lock file open and locked for the lifetime of this process
+	// Keep the lock held while this daemon runs (see holdPIDLock).
+	holdPIDLock(lockPath, lockFh)
 	return nil
 }
 
@@ -95,17 +96,11 @@ func ReadWorkspacePIDFile(logDir, workspaceName string) (int, error) {
 	return pid, nil
 }
 
-// RemoveWorkspacePIDFile removes the workspace PID file and its lock file.
+// RemoveWorkspacePIDFile removes the workspace PID file and releases the lock
+// this process holds for it, if any. See releasePIDLock for why the lock file
+// is kept.
 func RemoveWorkspacePIDFile(logDir, workspaceName string) error {
-	pidPath := GetWorkspacePIDFile(logDir, workspaceName)
-	lockPath := pidPath + ".lock"
-
-	_ = os.Remove(lockPath)
-
-	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove PID file: %w", err)
-	}
-	return nil
+	return removePIDFileAndReleaseLock(GetWorkspacePIDFile(logDir, workspaceName))
 }
 
 // GetRunningWorkspacePID returns the PID of the running workspace watcher, or 0 if not running.

@@ -235,8 +235,7 @@ func TestConcurrentPIDAccess(t *testing.T) {
 	}
 }
 
-func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
-	skipIfWindows(t)
+func TestRemovePIDFile_ReleasesLock(t *testing.T) {
 	logDir := t.TempDir()
 
 	// Write PID file (which creates lock file)
@@ -260,12 +259,47 @@ func TestRemovePIDFile_CleansUpLockFile(t *testing.T) {
 		t.Fatalf("RemovePIDFile() failed: %v", err)
 	}
 
-	// Verify both files are gone
+	// The PID file is gone and the lock is released. The lock file is kept on
+	// purpose (see releasePIDLock).
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Error("PID file still exists after removal")
 	}
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Error("Lock file still exists after removal")
+	if err := WritePIDFile(logDir); err != nil {
+		t.Fatalf("WritePIDFile() after removal failed, lock not released: %v", err)
+	}
+	if err := RemovePIDFile(logDir); err != nil {
+		t.Fatalf("RemovePIDFile() failed: %v", err)
+	}
+}
+
+// Regression test for #357: the PID lock must survive garbage collection.
+// An unreferenced *os.File is closed by its finalizer, which used to release
+// the main and workspace locks shortly after the daemon started.
+func TestPIDLocksSurviveGC(t *testing.T) {
+	logDir := t.TempDir()
+	cases := []struct {
+		name   string
+		write  func() error
+		remove func() error
+	}{
+		{"main", func() error { return WritePIDFile(logDir) }, func() error { return RemovePIDFile(logDir) }},
+		{"worktree", func() error { return WriteWorktreePIDFile(logDir, "wt-gc") }, func() error { return RemoveWorktreePIDFile(logDir, "wt-gc") }},
+		{"workspace", func() error { return WriteWorkspacePIDFile(logDir, "ws-gc") }, func() error { return RemoveWorkspacePIDFile(logDir, "ws-gc") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.write(); err != nil {
+				t.Fatalf("first write failed: %v", err)
+			}
+			t.Cleanup(func() { _ = tc.remove() })
+			for i := 0; i < 3; i++ {
+				runtime.GC()
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := tc.write(); err == nil {
+				t.Fatal("second write succeeded after GC: the PID lock was released while the daemon runs")
+			}
+		})
 	}
 }
 

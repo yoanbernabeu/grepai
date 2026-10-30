@@ -106,8 +106,8 @@ func GetDefaultLogDir() (string, error) {
 
 // WritePIDFile writes the current process ID to the PID file.
 // Uses file locking to prevent race conditions when multiple processes
-// attempt to start simultaneously. The lock is held for the lifetime of
-// the process (released by the OS on exit).
+// attempt to start simultaneously. The lock is held while the daemon runs
+// and released by RemovePIDFile, or by the OS on exit.
 //
 // PID file format: single line containing process ID as decimal integer.
 // This format is stable and will not change. If additional metadata is needed
@@ -149,9 +149,8 @@ func WritePIDFile(logDir string) error {
 		return fmt.Errorf("failed to rename PID file: %w", err)
 	}
 
-	// Keep lock file open and locked for the lifetime of this process.
-	// The OS will automatically release the lock when the process exits.
-	// We intentionally don't close lockFh here.
+	// Keep the lock held while this daemon runs (see holdPIDLock).
+	holdPIDLock(lockPath, lockFh)
 
 	return nil
 }
@@ -186,19 +185,11 @@ func ReadPIDFile(logDir string) (int, error) {
 	return pid, nil
 }
 
-// RemovePIDFile removes the PID file and its associated lock file.
+// RemovePIDFile removes the PID file and releases the lock this process
+// holds for it, if any. See releasePIDLock for why the lock file is kept.
 func RemovePIDFile(logDir string) error {
 	pidPath := filepath.Join(logDir, pidFileName)
-	lockPath := pidPath + ".lock"
-
-	// Remove lock file first (best effort, ignore errors)
-	_ = os.Remove(lockPath)
-
-	// Remove PID file
-	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove PID file: %w", err)
-	}
-	return nil
+	return removePIDFileAndReleaseLock(pidPath)
 }
 
 // GetRunningPID returns the PID of the running watcher process, or 0 if not running.
@@ -357,34 +348,55 @@ func WriteWorktreePIDFile(logDir, worktreeID string) error {
 		return fmt.Errorf("failed to rename PID file: %w", err)
 	}
 
-	// Keep the lock held while this daemon runs, like WritePIDFile, so a second
-	// daemon for the same worktree cannot start. This is intentional, not a
-	// handle leak: the lock is released by RemoveWorktreePIDFile on shutdown,
-	// or by the OS when the process exits.
-	heldWorktreeLocksMu.Lock()
-	heldWorktreeLocks[lockPath] = lockFh
-	heldWorktreeLocksMu.Unlock()
+	// Keep the lock held while this daemon runs (see holdPIDLock), so a
+	// second daemon for the same worktree cannot start.
+	holdPIDLock(lockPath, lockFh)
 
 	return nil
 }
 
-// heldWorktreeLocks keeps the worktree lock files this process holds, keyed by
-// lock path, so RemoveWorktreePIDFile can release them.
+// heldPIDLocks keeps the PID lock files this process holds, keyed by lock
+// path. Holding a reference matters: an unreferenced *os.File is closed by
+// its finalizer at the next garbage collection, which would silently release
+// the lock while the daemon is still running.
 var (
-	heldWorktreeLocksMu sync.Mutex
-	heldWorktreeLocks   = map[string]*os.File{}
+	heldPIDLocksMu sync.Mutex
+	heldPIDLocks   = map[string]*os.File{}
 )
 
-// releaseWorktreeLock closes the lock file this process holds for lockPath,
-// if any.
-func releaseWorktreeLock(lockPath string) {
-	heldWorktreeLocksMu.Lock()
-	lockFh, ok := heldWorktreeLocks[lockPath]
-	delete(heldWorktreeLocks, lockPath)
-	heldWorktreeLocksMu.Unlock()
+// holdPIDLock keeps lockFh open and locked until releasePIDLock(lockPath),
+// or until the process exits. This is intentional, not a handle leak.
+func holdPIDLock(lockPath string, lockFh *os.File) {
+	heldPIDLocksMu.Lock()
+	heldPIDLocks[lockPath] = lockFh
+	heldPIDLocksMu.Unlock()
+}
+
+// releasePIDLock closes the lock file this process holds for lockPath, if any.
+//
+// The lock file itself is never deleted: PID files are also removed by other
+// processes (stale-PID cleanup, --stop), and deleting a lock file that a live
+// daemon holds would let a second daemon lock a new file at the same path.
+func releasePIDLock(lockPath string) {
+	heldPIDLocksMu.Lock()
+	lockFh, ok := heldPIDLocks[lockPath]
+	delete(heldPIDLocks, lockPath)
+	heldPIDLocksMu.Unlock()
 	if ok {
 		lockFh.Close()
 	}
+}
+
+// removePIDFileAndReleaseLock removes pidPath, then releases this process's
+// lock on pidPath+".lock". The PID file goes first so that a daemon taking
+// the lock right after the release cannot have its new PID file removed.
+func removePIDFileAndReleaseLock(pidPath string) error {
+	err := os.Remove(pidPath)
+	releasePIDLock(pidPath + ".lock")
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove PID file: %w", err)
+	}
+	return nil
 }
 
 // ReadWorktreePIDFile reads the process ID from the worktree PID file.
@@ -409,19 +421,10 @@ func ReadWorktreePIDFile(logDir, worktreeID string) (int, error) {
 }
 
 // RemoveWorktreePIDFile removes the worktree PID file and releases the lock
-// this process holds for it, if any.
+// this process holds for it, if any. See releasePIDLock for why the lock file
+// is kept.
 func RemoveWorktreePIDFile(logDir, worktreeID string) error {
-	pidPath := GetWorktreePIDFile(logDir, worktreeID)
-	// Release the lock if this process holds it, but keep the lock file:
-	// callers such as stale-PID cleanup run in other processes, and deleting a
-	// lock file that a live daemon holds would let a second daemon lock a new
-	// file at the same path.
-	releaseWorktreeLock(pidPath + ".lock")
-
-	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove PID file: %w", err)
-	}
-	return nil
+	return removePIDFileAndReleaseLock(GetWorktreePIDFile(logDir, worktreeID))
 }
 
 // GetRunningWorktreePID returns the PID of the running worktree watcher, or 0 if not running.
