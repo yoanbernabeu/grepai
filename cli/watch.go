@@ -1076,11 +1076,19 @@ func canonicalPath(path string) string {
 	return filepath.Clean(path)
 }
 
-func buildFrameworkRegistry(cfg *config.Config) *framework.ProcessorRegistry {
+func buildFrameworkRegistry(cfg *config.Config, projectRoot string) *framework.ProcessorRegistry {
+	// node_path comes from the project config, which may ship with a cloned
+	// repository: never execute a file that the project itself provides.
+	nodePath, err := framework.ValidateNodePath(cfg.Framework.NodePath, projectRoot)
+	if err != nil {
+		log.Printf("Warning: %v; using %q instead", err, framework.DefaultNodePath)
+		nodePath = framework.DefaultNodePath
+	}
+
 	regCfg := framework.RegistryConfig{
 		Enabled:      cfg.Framework.Enabled,
 		Mode:         cfg.Framework.Mode,
-		NodePath:     cfg.Framework.NodePath,
+		NodePath:     nodePath,
 		EnableVue:    cfg.Framework.Frameworks.Vue.Enabled,
 		EnableSvelte: cfg.Framework.Frameworks.Svelte.Enabled,
 		EnableAstro:  cfg.Framework.Frameworks.Astro.Enabled,
@@ -1089,7 +1097,7 @@ func buildFrameworkRegistry(cfg *config.Config) *framework.ProcessorRegistry {
 
 	return framework.NewProcessorRegistry(
 		regCfg,
-		framework.NewVueProcessor(cfg.Framework.NodePath),
+		framework.NewVueProcessor(nodePath),
 		&framework.SvelteProcessor{},
 		&framework.AstroProcessor{},
 		&framework.SolidProcessor{},

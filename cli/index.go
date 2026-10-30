@@ -90,7 +90,7 @@ func newProjectIndexRuntime(ctx context.Context, projectRoot string, cfg *config
 		WithCustomExtensions(extraExtensions).
 		WithCustomExtensions(cfg.Chunking.CustomExtensions)
 	chunker := indexer.NewFileChunker(cfg.Chunking.Strategy, cfg.Chunking.Size, cfg.Chunking.Overlap)
-	processor := buildFrameworkRegistry(cfg)
+	processor := buildFrameworkRegistry(cfg, projectRoot)
 	idx := indexer.NewIndexer(projectRoot, vectorStore, emb, chunker, scanner, cfg.Watch.LastIndexTime, processor)
 
 	symbolStore := trace.NewGOBSymbolStore(config.GetSymbolIndexPath(projectRoot))

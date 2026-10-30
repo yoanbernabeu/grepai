@@ -68,7 +68,7 @@ chunking:
 framework_processing:           # pre-processing of framework single-file components
   enabled: true
   mode: auto                    # auto | require | off
-  node_path: node
+  node_path: node               # command in PATH or absolute path outside the project
   frameworks:
     vue:
       enabled: true
