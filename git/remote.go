@@ -26,7 +26,7 @@ func RepoIdentity(path string) (identity string, ok bool, err error) {
 	run := func(args ...string) (string, bool, error) {
 		// #nosec G204 -- fixed git subcommands; path is passed as an argument.
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", path}, args...)...)
-		cmd.Env = append(os.Environ(), "LC_ALL=C") // stable messages to match below
+		cmd.Env = append(gitFreeEnv(), "LC_ALL=C") // stable messages to match below
 		out, err := cmd.Output()
 		if err == nil {
 			return strings.TrimSpace(string(out)), true, nil
@@ -116,4 +116,22 @@ func scpLike(raw string) (host, path string) {
 		return "", ""
 	}
 	return rest[:i], rest[i+1:]
+}
+
+// gitFreeEnv is the environment without the variables git sets for hooks
+// (GIT_DIR, GIT_WORK_TREE, GIT_PREFIX, ...), which would make "git -C path"
+// answer for another repository or prefix than path when grepai runs from a
+// hook.
+func gitFreeEnv() []string {
+	env := os.Environ()
+	kept := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM":
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return kept
 }

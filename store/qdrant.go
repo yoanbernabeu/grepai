@@ -62,13 +62,12 @@ const qdrantNamespaceField = "project_namespace"
 // repository: the normalized origin remote URL (plus the project's directory
 // inside the repository), so that clones on other machines and linked
 // worktrees of one repository still share an index. Without a git repository
-// or a remote that names one, the resolved project root is used. An error
-// means git could not tell (timeout, untrusted repository): guessing would
-// risk reading or writing under another namespace than the other grepai
-// processes of the project.
-func QdrantProjectNamespace(configuredCollection, projectRoot string) (string, error) {
+// or a remote that names one, the resolved project root is used; when git is
+// missing or fails (timeout, untrusted repository) too, with a warning, since
+// processes that can read the repository then use another namespace.
+func QdrantProjectNamespace(configuredCollection, projectRoot string) string {
 	if configuredCollection == "" {
-		return "", nil
+		return ""
 	}
 	if resolved, err := filepath.EvalSymlinks(projectRoot); err == nil {
 		projectRoot = resolved
@@ -79,7 +78,7 @@ func QdrantProjectNamespace(configuredCollection, projectRoot string) (string, e
 	projectRoot = filepath.Clean(projectRoot)
 	if cached, ok := qdrantNamespaces.Load(projectRoot); ok {
 		if namespace, ok := cached.(string); ok {
-			return namespace, nil
+			return namespace
 		}
 	}
 	namespace := projectRoot
@@ -88,12 +87,14 @@ func QdrantProjectNamespace(configuredCollection, projectRoot string) (string, e
 	case errors.Is(err, exec.ErrNotFound):
 		log.Printf("Warning: git is not installed: the shared Qdrant collection %q keeps %s apart by its path, not by its repository", configuredCollection, projectRoot)
 	case err != nil:
-		return "", fmt.Errorf("cannot identify the git repository of %s for the shared Qdrant collection %q: %w", projectRoot, configuredCollection, err)
+		// Refusing to start would break setups that worked before (e.g. a
+		// container running as another user than the repository owner).
+		log.Printf("Warning: cannot identify the git repository of %s (%v): the shared Qdrant collection %q keeps it apart by its path, so grepai processes that can read the repository use another namespace", projectRoot, err, configuredCollection)
 	case ok:
 		namespace = identity
 	}
 	qdrantNamespaces.Store(projectRoot, namespace)
-	return namespace, nil
+	return namespace
 }
 
 // qdrantNamespaceIndexed records the collections whose project_namespace
@@ -195,6 +196,12 @@ func (s *QdrantStore) warnLegacyPoints(ctx context.Context, readOnly bool) {
 	if _, done := qdrantLegacyWarned.LoadOrStore(key, true); done {
 		return
 	}
+	if s.readLegacy {
+		// The store found legacy points to serve: no need to count them on
+		// every search.
+		log.Printf("Warning: Qdrant collection %q has no points for this project yet: searching the points written by an earlier grepai version until 'grepai index' or 'grepai watch' re-indexes the project (unchanged chunks reuse their vectors).", s.collectionName)
+		return
+	}
 	legacy := &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewIsEmpty(qdrantNamespaceField)}}
 	// Most opens find none: test for one point before counting them all.
 	points, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
@@ -215,10 +222,7 @@ func (s *QdrantStore) warnLegacyPoints(ctx context.Context, readOnly bool) {
 		log.Printf("Warning: failed to check Qdrant collection %q for points without a project namespace: %v", s.collectionName, err)
 		return
 	}
-	if count > 0 && s.readLegacy {
-		log.Printf("Warning: Qdrant collection %q holds %d points from an earlier grepai version and none for this project yet; they are searched until 'grepai index' or 'grepai watch' re-indexes the project (unchanged chunks reuse their vectors).",
-			s.collectionName, count)
-	} else if count > 0 {
+	if count > 0 {
 		log.Printf("Warning: Qdrant collection %q holds %d points from an earlier grepai version, which are no longer searched. "+
 			"'grepai index' or 'grepai watch' re-indexes this project and replaces its own (unchanged chunks reuse their vectors); "+
 			"see the Qdrant \"Sharing a Collection\" docs to remove the rest.",

@@ -177,9 +177,7 @@ func (runtime *projectIndexRuntime) resetIndexIfEmbedderChanged(ctx context.Cont
 	log.Printf("Embedding model changed for %s: index built with %s, config uses %s. Rebuilding the index.", runtime.projectRoot, *meta, runtime.embedderMeta)
 	// Vectors kept from before the store's own namespacing (Qdrant, #247) are
 	// not listed below and must not be reused by the rebuild.
-	if legacy, ok := runtime.vectorStore.(interface{ DisableLegacyVectorReuse() }); ok {
-		legacy.DisableLegacyVectorReuse()
-	}
+	disableLegacyVectorReuse(runtime.vectorStore)
 	docs, err := runtime.vectorStore.ListDocuments(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list documents for rebuild: %w", err)
@@ -193,6 +191,14 @@ func (runtime *projectIndexRuntime) resetIndexIfEmbedderChanged(ctx context.Cont
 		}
 	}
 	return nil
+}
+
+// disableLegacyVectorReuse stops a store from reusing vectors of points written
+// before it namespaced them (Qdrant explicit collections, #247).
+func disableLegacyVectorReuse(vectorStore store.VectorStore) {
+	if legacy, ok := vectorStore.(interface{ DisableLegacyVectorReuse() }); ok {
+		legacy.DisableLegacyVectorReuse()
+	}
 }
 
 func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackgroundChild bool, onScan func(current, total int, file string), onEmbed func(info indexer.BatchProgressInfo), onRPG func(step string, current, total int), onStats watchStatsObserver) error {
@@ -209,6 +215,10 @@ func (runtime *projectIndexRuntime) runInitialIndex(ctx context.Context, isBackg
 	if err != nil {
 		return err
 	}
+	// The initial scan migrated what it could; after it, a long-running
+	// watcher must not reuse leftover legacy vectors, which carry no model
+	// information (#247).
+	disableLegacyVectorReuse(runtime.vectorStore)
 	if err := runtime.removeDeletedSymbols(ctx, existingDocuments, stats.ScannedFiles); err != nil {
 		return err
 	}

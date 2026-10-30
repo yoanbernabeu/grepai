@@ -20,11 +20,7 @@ import (
 func TestQdrantProjectNamespace(t *testing.T) {
 	ns := func(collection, root string) string {
 		t.Helper()
-		got, err := QdrantProjectNamespace(collection, root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return got
+		return QdrantProjectNamespace(collection, root)
 	}
 	if got := ns("", "/work/a"); got != "" {
 		t.Fatalf("derived collection got namespace %q, want none", got)

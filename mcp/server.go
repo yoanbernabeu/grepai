@@ -2148,10 +2148,7 @@ func (s *Server) createStore(ctx context.Context, cfg *config.Config) (store.Vec
 		if collectionName == "" {
 			collectionName = store.SanitizeCollectionName(s.projectRoot)
 		}
-		namespace, err := store.QdrantProjectNamespace(cfg.Store.Qdrant.Collection, s.projectRoot)
-		if err != nil {
-			return nil, err
-		}
+		namespace := store.QdrantProjectNamespace(cfg.Store.Qdrant.Collection, s.projectRoot)
 		return store.NewQdrantStoreWithNamespace(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions(), namespace, true)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)
@@ -2177,10 +2174,7 @@ func (s *Server) createStoreForRoot(ctx context.Context, cfg *config.Config, pro
 		if collectionName == "" {
 			collectionName = store.SanitizeCollectionName(projectRoot)
 		}
-		namespace, err := store.QdrantProjectNamespace(cfg.Store.Qdrant.Collection, projectRoot)
-		if err != nil {
-			return nil, err
-		}
+		namespace := store.QdrantProjectNamespace(cfg.Store.Qdrant.Collection, projectRoot)
 		return store.NewQdrantStoreWithNamespace(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions(), namespace, true)
 	default:
 		return nil, fmt.Errorf("unknown storage backend: %s", cfg.Store.Backend)

@@ -88,4 +88,9 @@ func TestRepoIdentity(t *testing.T) {
 	if id, ok, err := RepoIdentity(d); ok || err != nil {
 		t.Fatalf("local remote got identity %q, err %v", id, err)
 	}
+	// Run from a git hook of another repository, the identity is unchanged.
+	t.Setenv("GIT_DIR", filepath.Join(b, ".git"))
+	if id, ok, err := RepoIdentity(sub); !ok || err != nil || id != "github.com/org/app#services/api" {
+		t.Fatalf("subdirectory identity with GIT_DIR set = %q (%v, %v)", id, ok, err)
+	}
 }
