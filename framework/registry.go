@@ -17,7 +17,7 @@ func NewProcessorRegistry(cfg RegistryConfig, processors ...FrameworkProcessor) 
 		cfg.Mode = ModeAuto
 	}
 	if cfg.NodePath == "" {
-		cfg.NodePath = "node"
+		cfg.NodePath = DefaultNodePath
 	}
 	if !cfg.Enabled {
 		cfg.Mode = ModeOff

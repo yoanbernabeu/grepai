@@ -23,10 +23,16 @@ func ValidateNodePath(nodePath, projectRoot string) (string, error) {
 	if nodePath == "" {
 		return DefaultNodePath, nil
 	}
-	if !strings.ContainsAny(nodePath, `/\`) {
+	if !strings.ContainsAny(nodePath, `/\:`) {
 		// Bare command name: exec resolves it through PATH and refuses
-		// results relative to the current directory (exec.ErrDot).
+		// results relative to the current directory (exec.ErrDot). A ':'
+		// is excluded so that a Windows drive-relative value ("C:evil") is
+		// treated as the relative path it is.
 		return nodePath, nil
+	}
+	if vol := filepath.VolumeName(nodePath); len(vol) >= 2 && os.IsPathSeparator(vol[0]) && os.IsPathSeparator(vol[1]) {
+		// Windows UNC path: do not run, or even stat, a file on a network share.
+		return "", fmt.Errorf("framework_processing.node_path %q is a network path: use \"node\" or a local absolute path outside the project", nodePath)
 	}
 	if !filepath.IsAbs(nodePath) {
 		return "", fmt.Errorf("framework_processing.node_path %q is a relative path: use \"node\" or an absolute path outside the project", nodePath)
@@ -56,7 +62,7 @@ func isInsideDir(path, dir string) bool {
 
 	for _, candidate := range candidates {
 		for _, d := range dirs {
-			if rel, err := filepath.Rel(d, candidate); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			if rel, err := filepath.Rel(d, candidate); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return true
 			}
 		}

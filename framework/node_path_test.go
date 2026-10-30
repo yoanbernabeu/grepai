@@ -53,9 +53,18 @@ func TestValidateNodePath_RejectsProjectControlledPaths(t *testing.T) {
 		filepath.Join(root, "tools", "..", "tools", "node"),
 		filepath.Join(root, "does-not-exist", "node"),
 	}
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		// Case-insensitive file systems: a different spelling of the root.
-		rejected = append(rejected, strings.ToUpper(inside))
+	// On a case-insensitive file system, another spelling of the same path.
+	if upper := strings.ToUpper(inside); upper != inside {
+		a, errA := os.Stat(upper)
+		b, errB := os.Stat(inside)
+		if errA == nil && errB == nil && os.SameFile(a, b) {
+			rejected = append(rejected, upper)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		rejected = append(rejected, `C:evil`, `\\attacker.example\share\node.exe`, `\tools\node`)
+	} else {
+		rejected = append(rejected, `C:evil`, `tools\node`)
 	}
 	for _, nodePath := range rejected {
 		if _, err := ValidateNodePath(nodePath, root); err == nil {
