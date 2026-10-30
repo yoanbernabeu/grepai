@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Renamed Files Kept Their Old Path in Embeddings**: the embedding cache matched chunks by body only, while the embedded text starts with `File: <path>`. A renamed, moved or copied file reused vectors computed under the other path, which skewed search results. Renamed and moved files are now re-embedded; identical files at the same project-relative path (e.g. git worktrees in a workspace) still share vectors, and unchanged chunks of an edited file are still reused. No reindex is forced: vectors reused under an old path by earlier 1.x versions stay until their file changes, and an optional rebuild (clear the project's index, then run `grepai index`) refreshes them. (#366)
+
 ## [1.1.0] - 2026-10-26
 
 ### Added
