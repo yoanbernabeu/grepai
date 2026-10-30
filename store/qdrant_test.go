@@ -59,7 +59,10 @@ func (s *fileHashPointsServer) Delete(ctx context.Context, request *qdrant.Delet
 	return s.delete(request)
 }
 
-func (s *fileHashPointsServer) Scroll(_ context.Context, request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+func (s *fileHashPointsServer) Scroll(ctx context.Context, request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+	if s.scroll == nil {
+		return s.UnimplementedPointsServer.Scroll(ctx, request)
+	}
 	return s.scroll(request)
 }
 
@@ -621,7 +624,7 @@ func newFakeQdrantStore(t *testing.T, points *fileHashPointsServer) *QdrantStore
 	qdrant.RegisterPointsServer(server, points)
 	t.Cleanup(server.Stop)
 	go func() {
-		if err := server.Serve(listener); err != nil {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			t.Errorf("serve: %v", err)
 		}
 	}()
