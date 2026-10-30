@@ -169,7 +169,10 @@ func (s *QdrantStore) SaveChunks(ctx context.Context, chunks []Chunk) error {
 
 	_, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{
 		CollectionName: s.collectionName,
-		Points:         points,
+		// Wait until the points are applied, so a read that follows (RPG
+		// chunk linking, document lookup) sees them.
+		Wait:   qdrant.PtrOf(true),
+		Points: points,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upsert points: %w", err)
@@ -246,6 +249,7 @@ func (s *QdrantStore) DeleteByFile(ctx context.Context, filePath string) error {
 
 	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
 		CollectionName: s.collectionName,
+		Wait:           qdrant.PtrOf(true),
 		Points:         qdrant.NewPointsSelectorFilter(filter),
 	})
 	if err != nil {
@@ -294,6 +298,9 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 			if opts.PathPrefix != "" && !strings.HasPrefix(chunk.FilePath, opts.PathPrefix) {
 				continue
 			}
+			// Hybrid search fuses results by chunk ID: use the point ID, as
+			// GetAllChunks does, so results stay distinct and match.
+			chunk.ID = point.GetId().GetUuid()
 			results = append(results, SearchResult{Chunk: *chunk, Score: point.Score})
 			if len(results) >= limit {
 				return results, nil
@@ -534,6 +541,7 @@ func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	}, func(point *qdrant.RetrievedPoint) {
 		chunk := s.parseChunkPayload(point.Payload)
 		chunk.Vector = pointVector(point)
+		chunk.ID = point.GetId().GetUuid()
 		chunks = append(chunks, *chunk)
 	})
 	if err != nil {

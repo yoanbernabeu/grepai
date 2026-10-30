@@ -40,10 +40,25 @@ func TestQdrantFileHashPayload(t *testing.T) {
 type fileHashPointsServer struct {
 	qdrant.UnimplementedPointsServer
 	scroll func(*qdrant.ScrollPoints) (*qdrant.ScrollResponse, error)
+	query  func(*qdrant.QueryPoints) (*qdrant.QueryResponse, error)
+	upsert func(*qdrant.UpsertPoints) (*qdrant.PointsOperationResponse, error)
+	delete func(*qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error)
+}
+
+func (s *fileHashPointsServer) Upsert(_ context.Context, request *qdrant.UpsertPoints) (*qdrant.PointsOperationResponse, error) {
+	return s.upsert(request)
+}
+
+func (s *fileHashPointsServer) Delete(_ context.Context, request *qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error) {
+	return s.delete(request)
 }
 
 func (s *fileHashPointsServer) Scroll(_ context.Context, request *qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
 	return s.scroll(request)
+}
+
+func (s *fileHashPointsServer) Query(_ context.Context, request *qdrant.QueryPoints) (*qdrant.QueryResponse, error) {
+	return s.query(request)
 }
 
 func TestQdrantGetDocumentFileHash(t *testing.T) {
@@ -587,6 +602,121 @@ func TestSaveChunks_EmptySlice(t *testing.T) {
 }
 
 // TestQdrantStore_StructFields verifies struct has all expected fields
+// newFakeQdrantStore serves points from a fake gRPC Points service.
+func newFakeQdrantStore(t *testing.T, points *fileHashPointsServer) *QdrantStore {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	qdrant.RegisterPointsServer(server, points)
+	t.Cleanup(server.Stop)
+	go func() {
+		if err := server.Serve(listener); err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	}()
+	client, err := qdrant.NewClient(&qdrant.Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, SkipCompatibilityCheck: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return &QdrantStore{client: client, collectionName: "test_grepai_ids"}
+}
+
+// TestQdrantSearchAndGetAllChunksSetIDs: Search and GetAllChunks must give
+// each chunk its point ID, the same one for a given point. Hybrid search fuses
+// both lists by chunk ID: with empty IDs every result collapsed into one.
+func TestQdrantSearchAndGetAllChunksSetIDs(t *testing.T) {
+	ids := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	payload := func(i int) map[string]*qdrant.Value {
+		return map[string]*qdrant.Value{
+			"file_path":  mustCreateValue(t, fmt.Sprintf("file%d.go", i)),
+			"start_line": mustCreateValue(t, int64(i+1)),
+			"content":    mustCreateValue(t, "func handler() {}"),
+		}
+	}
+	s := newFakeQdrantStore(t, &fileHashPointsServer{
+		scroll: func(*qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+			points := make([]*qdrant.RetrievedPoint, len(ids))
+			for i, id := range ids {
+				points[i] = &qdrant.RetrievedPoint{Id: qdrant.NewID(id), Payload: payload(i)}
+			}
+			return &qdrant.ScrollResponse{Result: points}, nil
+		},
+		query: func(*qdrant.QueryPoints) (*qdrant.QueryResponse, error) {
+			points := make([]*qdrant.ScoredPoint, len(ids))
+			for i, id := range ids {
+				points[i] = &qdrant.ScoredPoint{Id: qdrant.NewID(id), Payload: payload(i), Score: 1 - float32(i)/10}
+			}
+			return &qdrant.QueryResponse{Result: points}, nil
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results, err := s.Search(ctx, []float32{1, 0}, 10, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != len(ids) {
+		t.Fatalf("Search returned %d results, want %d", len(results), len(ids))
+	}
+	for i, r := range results {
+		if r.Chunk.ID != ids[i] || r.Chunk.FilePath != fmt.Sprintf("file%d.go", i) {
+			t.Errorf("Search result %d = %+v, want ID %s", i, r.Chunk, ids[i])
+		}
+	}
+
+	chunks, err := s.GetAllChunks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != len(ids) {
+		t.Fatalf("GetAllChunks returned %d chunks, want %d", len(chunks), len(ids))
+	}
+	for i, chunk := range chunks {
+		if chunk.ID != ids[i] || chunk.FilePath != fmt.Sprintf("file%d.go", i) {
+			t.Errorf("GetAllChunks chunk %d = %+v, want ID %s", i, chunk, ids[i])
+		}
+	}
+}
+
+// TestQdrantWritesWait: writes must wait until Qdrant has applied them.
+// Otherwise a read right after DeleteByFile + SaveChunks (the watcher links
+// RPG chunks this way) can see the delete but not the new points, and finds
+// no chunks for the file.
+func TestQdrantWritesWait(t *testing.T) {
+	var upsertWait, deleteWait bool
+	ack := &qdrant.PointsOperationResponse{Result: &qdrant.UpdateResult{Status: qdrant.UpdateStatus_Completed}}
+	s := newFakeQdrantStore(t, &fileHashPointsServer{
+		upsert: func(request *qdrant.UpsertPoints) (*qdrant.PointsOperationResponse, error) {
+			upsertWait = request.GetWait()
+			return ack, nil
+		},
+		delete: func(request *qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error) {
+			deleteWait = request.GetWait()
+			return ack, nil
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.DeleteByFile(ctx, "file.go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveChunks(ctx, []Chunk{{ID: "file.go_0", FilePath: "file.go", Vector: []float32{1, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !deleteWait || !upsertWait {
+		t.Fatalf("writes do not wait: delete wait=%v, upsert wait=%v", deleteWait, upsertWait)
+	}
+}
+
 func TestQdrantStore_StructFields(t *testing.T) {
 	store := &QdrantStore{
 		collectionName: "test-collection",
