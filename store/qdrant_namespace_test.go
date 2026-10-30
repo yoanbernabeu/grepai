@@ -275,6 +275,14 @@ func TestQdrantSharedCollectionIsolation(t *testing.T) {
 	if stats.TotalChunks != 2 || stats.TotalFiles != 2 {
 		t.Fatalf("project A stats = %+v", stats)
 	}
+	// Legacy vectors only serve a project's first, migrating index: once it
+	// has points, leftovers (possibly from another model) are not reused.
+	if _, found, err := open("/work/a").LookupByContentHash(ctx, "ch-gone", "go"); found || err != nil {
+		t.Fatalf("migrated project reused a leftover legacy vector: found=%v err=%v", found, err)
+	}
+	if _, found, err := open("/work/c").LookupByContentHash(ctx, "ch-gone", "go"); !found || err != nil {
+		t.Fatalf("unmigrated project did not reuse the legacy vector: found=%v err=%v", found, err)
+	}
 	// Only the legacy point of the file deleted since remains.
 	remaining, err := client.Count(ctx, &qdrant.CountPoints{CollectionName: collection, Exact: qdrant.PtrOf(true),
 		Filter: &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewIsEmpty(qdrantNamespaceField)}}})

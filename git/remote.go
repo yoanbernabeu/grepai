@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -24,13 +25,17 @@ func RepoIdentity(path string) (identity string, ok bool, err error) {
 
 	run := func(args ...string) (string, bool, error) {
 		// #nosec G204 -- fixed git subcommands; path is passed as an argument.
-		out, err := exec.CommandContext(ctx, "git", append([]string{"-C", path}, args...)...).Output()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", path}, args...)...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C") // stable messages to match below
+		out, err := cmd.Output()
 		if err == nil {
 			return strings.TrimSpace(string(out)), true, nil
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && ctx.Err() == nil {
-			if strings.Contains(string(exitErr.Stderr), "dubious ownership") {
+			// Recent git says "dubious ownership", older releases with the
+			// safe.directory backport "unsafe repository".
+			if stderr := string(exitErr.Stderr); strings.Contains(stderr, "dubious ownership") || strings.Contains(stderr, "unsafe repository") {
 				return "", false, fmt.Errorf("git refuses %s: %s", path, strings.TrimSpace(string(exitErr.Stderr)))
 			}
 			return "", false, nil // not a repository, or no origin remote

@@ -40,7 +40,8 @@ type QdrantStore struct {
 	// after the project path: point IDs and payloads exactly as before (#247).
 	namespace string
 	// noLegacyVectors stops the embedding cache from reusing vectors of
-	// points without a namespace, which may come from another model.
+	// points without a namespace, which may come from another model. Set
+	// once the project has namespaced points, or after a model change.
 	noLegacyVectors bool
 	// readLegacy makes search and status read the points an earlier version
 	// wrote without a namespace, while the project has none of its own yet
@@ -94,6 +95,10 @@ func QdrantProjectNamespace(configuredCollection, projectRoot string) (string, e
 	qdrantNamespaces.Store(projectRoot, namespace)
 	return namespace, nil
 }
+
+// qdrantNamespaceIndexed records the collections whose project_namespace
+// payload index this process already requested.
+var qdrantNamespaceIndexed sync.Map
 
 // qdrantNamespaces caches QdrantProjectNamespace per project root, so a
 // long-running process (MCP server) does not run git on every store it opens.
@@ -160,12 +165,16 @@ func NewQdrantStoreWithNamespace(ctx context.Context, endpoint string, port int,
 	if err := store.ensureCollection(ctx); err != nil {
 		return nil, err
 	}
-	if legacyReadFallback && namespace != "" {
+	if namespace != "" {
 		empty, err := store.namespaceEmpty(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check project namespace: %w", err)
 		}
-		store.readLegacy = empty
+		store.readLegacy = legacyReadFallback && empty
+		// Legacy vectors are only reused to migrate a project that has no
+		// points of its own yet: they carry no model information, so later
+		// runs must not pick up leftovers that may come from another model.
+		store.noLegacyVectors = !empty
 	}
 	store.warnLegacyPoints(ctx, legacyReadFallback)
 
@@ -310,11 +319,13 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
 	})
 	if s.namespace != "" {
-		_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
-			CollectionName: s.collectionName,
-			FieldName:      qdrantNamespaceField,
-			FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
-		})
+		if _, done := qdrantNamespaceIndexed.LoadOrStore(s.address+"/"+s.collectionName, true); !done {
+			_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+				CollectionName: s.collectionName,
+				FieldName:      qdrantNamespaceField,
+				FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
+			})
+		}
 	}
 
 	return nil
