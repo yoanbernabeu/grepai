@@ -175,6 +175,11 @@ func (runtime *projectIndexRuntime) resetIndexIfEmbedderChanged(ctx context.Cont
 	}
 
 	log.Printf("Embedding model changed for %s: index built with %s, config uses %s. Rebuilding the index.", runtime.projectRoot, *meta, runtime.embedderMeta)
+	// Vectors kept from before the store's own namespacing (Qdrant, #247) are
+	// not listed below and must not be reused by the rebuild.
+	if legacy, ok := runtime.vectorStore.(interface{ DisableLegacyVectorReuse() }); ok {
+		legacy.DisableLegacyVectorReuse()
+	}
 	docs, err := runtime.vectorStore.ListDocuments(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list documents for rebuild: %w", err)

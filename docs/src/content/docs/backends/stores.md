@@ -197,6 +197,27 @@ store:
 
 When the collection does not exist, grepai creates it with cosine distance and the embedder's dimensions. An existing collection is never resized: after changing to a model with different dimensions, delete the collection (from the dashboard or the Qdrant API) or set a new `collection` name, then run `grepai index` or `grepai watch`.
 
+### Sharing a Collection
+
+When `collection` is set, several projects can point at the same collection. Each point then carries its repository in a `project_namespace` payload field (also part of the point ID), and every search, listing, stats count and deletion is limited to the current repository:
+
+- **Same repository, shared index.** The namespace is the `origin` remote URL, normalized so that `git@github.com:org/app.git`, `ssh://git@github.com/org/app` and `https://github.com/org/app` match (host lowercased; scheme, user, password or token, port and `.git` dropped, so no credential from the URL is stored). Clones on other machines, CI and linked worktrees of one repository share the same points. As before, checkouts on different branches overwrite each other's version of a file, and indexing one removes the files that only exist in the other.
+- **Different repositories, isolated.** Two repositories never see or change each other's points, even with identical file paths. A project in a subdirectory of a repository adds that directory to the namespace (`github.com/org/app#services/api`).
+- **Without a git repository, an `origin` remote, or with a local-path `origin`** (`../app.git`, `file://`), the namespace is the project's absolute path, so the same project at another path is a separate project. grepai also uses the path, with a warning, when `git` is not installed; if `git` fails otherwise (timeout, repository refused as unsafe), grepai stops with an error instead of guessing.
+- **Changing the `origin` URL** (other host or path) changes the namespace. The next `grepai index` or `grepai watch` re-indexes the project and reuses the stored vectors of unchanged chunks; the points under the previous namespace stay in the collection until it is deleted.
+
+Collections named after the project path (`collection` empty) and workspace collections hold a single project and have no namespace.
+
+Collections set explicitly and indexed before this change hold points without a namespace. Until the project has points of its own, `grepai search`, `grepai status` and the MCP tools keep reading those points, as earlier versions did (in a collection shared by several projects, that includes the other projects' old points). The first `grepai index` or `grepai watch` after upgrading re-indexes the project: unchanged chunks reuse the stored vectors, and the old points of each re-indexed file are deleted. grepai warns at startup while old points remain (files deleted since, or other projects sharing the collection). Once every project sharing the collection runs the new version and has been re-indexed, the remaining old points are orphans; remove them with the Qdrant REST API (port 6333):
+
+```bash
+curl -X POST http://localhost:6333/collections/<collection>/points/delete \
+  -H 'Content-Type: application/json' \
+  -d '{"filter": {"must": [{"is_empty": {"key": "project_namespace"}}]}}'
+```
+
+An earlier grepai release ignores the namespace and sees every project's points: while one project sharing the collection still runs it, that project can overwrite or delete the other projects' points, so upgrade every project that uses the collection.
+
 ### Characteristics
 
 - **Dedicated vector database:** search runs inside Qdrant.

@@ -469,8 +469,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		if collectionName == "" {
 			collectionName = store.SanitizeCollectionName(projectRoot)
 		}
-		var err error
-		st, err = store.NewQdrantStore(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions())
+		namespace, err := store.QdrantProjectNamespace(cfg.Store.Qdrant.Collection, projectRoot)
+		if err != nil {
+			return err
+		}
+		st, err = store.NewQdrantStoreWithNamespace(ctx, cfg.Store.Qdrant.Endpoint, cfg.Store.Qdrant.Port, cfg.Store.Qdrant.UseTLS, collectionName, cfg.Store.Qdrant.APIKey, cfg.Embedder.GetDimensions(), namespace, true)
 		if err != nil {
 			return fmt.Errorf("failed to connect to qdrant: %w", err)
 		}

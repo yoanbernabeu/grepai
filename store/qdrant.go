@@ -2,13 +2,19 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
+	"github.com/yoanbernabeu/grepai/git"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,7 +35,74 @@ type QdrantStore struct {
 	dimensions     int
 	apiKey         string
 	address        string // host:port, for error messages
+	// namespace scopes every point to one project inside a collection that
+	// several projects may share. Empty keeps the layout of collections named
+	// after the project path: point IDs and payloads exactly as before (#247).
+	namespace string
+	// noLegacyVectors stops the embedding cache from reusing vectors of
+	// points without a namespace, which may come from another model.
+	noLegacyVectors bool
+	// readLegacy makes search and status read the points an earlier version
+	// wrote without a namespace, while the project has none of its own yet
+	// (just after upgrading, before it is re-indexed). The indexer never sets
+	// it, so it still sees an empty namespace and re-indexes the project.
+	readLegacy bool
 }
+
+// qdrantNamespaceField is the payload field holding a point's project
+// namespace. Points written without a namespace (default collections, or
+// explicit collections indexed before #247) do not have it.
+const qdrantNamespaceField = "project_namespace"
+
+// QdrantProjectNamespace returns the namespace a project uses inside its
+// Qdrant collection. A collection derived from the project path belongs to that
+// project alone and needs none. An explicitly configured collection can be
+// shared by several projects, so their points are kept apart (#247) by
+// repository: the normalized origin remote URL (plus the project's directory
+// inside the repository), so that clones on other machines and linked
+// worktrees of one repository still share an index. Without a git repository
+// or a remote that names one, the resolved project root is used. An error
+// means git could not tell (timeout, untrusted repository): guessing would
+// risk reading or writing under another namespace than the other grepai
+// processes of the project.
+func QdrantProjectNamespace(configuredCollection, projectRoot string) (string, error) {
+	if configuredCollection == "" {
+		return "", nil
+	}
+	if resolved, err := filepath.EvalSymlinks(projectRoot); err == nil {
+		projectRoot = resolved
+	}
+	if abs, err := filepath.Abs(projectRoot); err == nil {
+		projectRoot = abs
+	}
+	projectRoot = filepath.Clean(projectRoot)
+	if cached, ok := qdrantNamespaces.Load(projectRoot); ok {
+		if namespace, ok := cached.(string); ok {
+			return namespace, nil
+		}
+	}
+	namespace := projectRoot
+	identity, ok, err := git.RepoIdentity(projectRoot)
+	switch {
+	case errors.Is(err, exec.ErrNotFound):
+		log.Printf("Warning: git is not installed: the shared Qdrant collection %q keeps %s apart by its path, not by its repository", configuredCollection, projectRoot)
+	case err != nil:
+		return "", fmt.Errorf("cannot identify the git repository of %s for the shared Qdrant collection %q: %w", projectRoot, configuredCollection, err)
+	case ok:
+		namespace = identity
+	}
+	qdrantNamespaces.Store(projectRoot, namespace)
+	return namespace, nil
+}
+
+// qdrantNamespaces caches QdrantProjectNamespace per project root, so a
+// long-running process (MCP server) does not run git on every store it opens.
+var qdrantNamespaces sync.Map
+
+// qdrantLegacyWarned remembers the collections already checked for points
+// without a namespace, so a long-running process (MCP server, watcher) counts
+// and warns once per collection instead of on every store it opens.
+var qdrantLegacyWarned sync.Map
 
 func parseHost(endpoint string) string {
 	host := strings.TrimPrefix(endpoint, "http://")
@@ -47,6 +120,15 @@ func parseHost(endpoint string) string {
 }
 
 func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool, collection, apiKey string, dimensions int) (*QdrantStore, error) {
+	return NewQdrantStoreWithNamespace(ctx, endpoint, port, useTLS, collection, apiKey, dimensions, "", false)
+}
+
+// NewQdrantStoreWithNamespace opens a Qdrant store whose reads and writes are
+// limited to the given project namespace (see QdrantProjectNamespace). An empty
+// namespace behaves exactly like NewQdrantStore. With legacyReadFallback, for
+// stores that only search or report status, a namespace that holds no points
+// yet reads the points written before namespaces existed instead.
+func NewQdrantStoreWithNamespace(ctx context.Context, endpoint string, port int, useTLS bool, collection, apiKey string, dimensions int, namespace string, legacyReadFallback bool) (*QdrantStore, error) {
 	host := parseHost(endpoint)
 
 	if port <= 0 {
@@ -72,13 +154,117 @@ func NewQdrantStore(ctx context.Context, endpoint string, port int, useTLS bool,
 		dimensions:     dimensions,
 		apiKey:         apiKey,
 		address:        fmt.Sprintf("%s:%d", host, port),
+		namespace:      namespace,
 	}
 
 	if err := store.ensureCollection(ctx); err != nil {
 		return nil, err
 	}
+	if legacyReadFallback && namespace != "" {
+		empty, err := store.namespaceEmpty(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check project namespace: %w", err)
+		}
+		store.readLegacy = empty
+	}
+	store.warnLegacyPoints(ctx, legacyReadFallback)
 
 	return store, nil
+}
+
+// warnLegacyPoints tells the user about points written without a project
+// namespace in a namespaced collection. They are no longer searched; indexing
+// replaces the ones whose files belong to this project, and the rest (files
+// deleted since, or other projects sharing the collection) stay until removed.
+func (s *QdrantStore) warnLegacyPoints(ctx context.Context, readOnly bool) {
+	// Search and status only mention old points while they serve them;
+	// leftovers after the migration are reported by index and watch.
+	if s.namespace == "" || (readOnly && !s.readLegacy) {
+		return
+	}
+	key := s.address + "/" + s.collectionName + "\x00" + s.namespace
+	if _, done := qdrantLegacyWarned.LoadOrStore(key, true); done {
+		return
+	}
+	legacy := &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewIsEmpty(qdrantNamespaceField)}}
+	// Most opens find none: test for one point before counting them all.
+	points, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		Filter:         legacy,
+		Limit:          qdrant.PtrOf(uint32(1)),
+	})
+	var count uint64
+	if err == nil && len(points) > 0 {
+		count, err = s.client.Count(ctx, &qdrant.CountPoints{
+			CollectionName: s.collectionName,
+			Filter:         legacy,
+			Exact:          qdrant.PtrOf(true),
+		})
+	}
+	if err != nil {
+		qdrantLegacyWarned.Delete(key)
+		log.Printf("Warning: failed to check Qdrant collection %q for points without a project namespace: %v", s.collectionName, err)
+		return
+	}
+	if count > 0 && s.readLegacy {
+		log.Printf("Warning: Qdrant collection %q holds %d points from an earlier grepai version and none for this project yet; they are searched until 'grepai index' or 'grepai watch' re-indexes the project (unchanged chunks reuse their vectors).",
+			s.collectionName, count)
+	} else if count > 0 {
+		log.Printf("Warning: Qdrant collection %q holds %d points from an earlier grepai version, which are no longer searched. "+
+			"'grepai index' or 'grepai watch' re-indexes this project and replaces its own (unchanged chunks reuse their vectors); "+
+			"see the Qdrant \"Sharing a Collection\" docs to remove the rest.",
+			s.collectionName, count)
+	}
+}
+
+// filter limits conditions to this store's project namespace. It returns nil
+// when there is nothing to filter on.
+func (s *QdrantStore) filter(conditions ...*qdrant.Condition) *qdrant.Filter {
+	if s.namespace != "" {
+		conditions = append(conditions, qdrant.NewMatch(qdrantNamespaceField, s.namespace))
+	}
+	if len(conditions) == 0 {
+		return nil
+	}
+	return &qdrant.Filter{Must: conditions}
+}
+
+// readFilter is the filter of search and status reads: the project's
+// namespace, or the points without a namespace while readLegacy is set.
+func (s *QdrantStore) readFilter(conditions ...*qdrant.Condition) *qdrant.Filter {
+	if s.readLegacy {
+		return &qdrant.Filter{Must: append(conditions, qdrant.NewIsEmpty(qdrantNamespaceField))}
+	}
+	return s.filter(conditions...)
+}
+
+// namespaceEmpty reports whether no point carries this store's namespace yet.
+func (s *QdrantStore) namespaceEmpty(ctx context.Context) (bool, error) {
+	points, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collectionName,
+		Filter:         s.filter(),
+		Limit:          qdrant.PtrOf(uint32(1)),
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(points) == 0, nil
+}
+
+// filterWithLegacy is like filter but also matches points written without a
+// namespace, so that re-indexing a project can reuse and then replace the
+// points an earlier version wrote for it.
+func (s *QdrantStore) filterWithLegacy(conditions ...*qdrant.Condition) *qdrant.Filter {
+	if s.namespace == "" {
+		return &qdrant.Filter{Must: conditions}
+	}
+	return &qdrant.Filter{
+		Must: conditions,
+		Should: []*qdrant.Condition{
+			qdrant.NewMatch(qdrantNamespaceField, s.namespace),
+			qdrant.NewIsEmpty(qdrantNamespaceField),
+		},
+	}
 }
 
 // connectionError explains the most common cause of a failed first call:
@@ -123,6 +309,13 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 		FieldName:      "content_hash",
 		FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
 	})
+	if s.namespace != "" {
+		_, _ = s.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+			CollectionName: s.collectionName,
+			FieldName:      qdrantNamespaceField,
+			FieldType:      qdrant.PtrOf(qdrant.FieldType_FieldTypeKeyword),
+		})
+	}
 
 	return nil
 }
@@ -143,6 +336,11 @@ func SanitizeCollectionName(path string) string {
 
 func (s *QdrantStore) getUUIDForChunk(chunkID string) uuid.UUID {
 	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	if s.namespace != "" {
+		// Chunk IDs are relative paths, identical across projects: without the
+		// project namespace two projects overwrite each other's points (#247).
+		return uuid.NewSHA1(namespace, []byte(s.namespace+"\x00"+chunkID))
+	}
 	return uuid.NewSHA1(namespace, []byte(chunkID))
 }
 
@@ -221,6 +419,14 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 	payload["hash"] = hashVal
 	payload["updated_at"] = updatedAtVal
 
+	if s.namespace != "" {
+		namespaceVal, err := qdrant.NewValue(s.namespace)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create %s value: %w", qdrantNamespaceField, err)
+		}
+		payload[qdrantNamespaceField] = namespaceVal
+	}
+
 	if chunk.FileHash != "" {
 		fileHashVal, err := qdrant.NewValue(chunk.FileHash)
 		if err != nil {
@@ -241,11 +447,10 @@ func (s *QdrantStore) buildChunkPayload(chunk Chunk) (map[string]*qdrant.Value, 
 }
 
 func (s *QdrantStore) DeleteByFile(ctx context.Context, filePath string) error {
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("file_path", filePath),
-		},
-	}
+	// Points an earlier version wrote for this path without a namespace go too:
+	// the file is being re-indexed or removed, and they would otherwise be left
+	// unreachable in the collection.
+	filter := s.filterWithLegacy(qdrant.NewMatch("file_path", filePath))
 
 	_, err := s.client.Delete(ctx, &qdrant.DeletePoints{
 		CollectionName: s.collectionName,
@@ -287,6 +492,7 @@ func (s *QdrantStore) Search(ctx context.Context, queryVector []float32, limit i
 			Query:          qdrant.NewQuery(queryVector...),
 			Limit:          qdrant.PtrOf(uint64(pageSize)),
 			Offset:         qdrant.PtrOf(uint64(offset)),
+			Filter:         s.readFilter(),
 			WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 		})
 		if err != nil {
@@ -388,10 +594,8 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 	doc := &Document{Path: filePath}
 	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Filter: &qdrant.Filter{
-			Must: []*qdrant.Condition{qdrant.NewMatch("file_path", filePath)},
-		},
-		WithPayload: qdrant.NewWithPayloadInclude("file_path", "file_hash"),
+		Filter:         s.filter(qdrant.NewMatch("file_path", filePath)),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "file_hash"),
 	}, func(point *qdrant.RetrievedPoint) {
 		doc.ChunkIDs = append(doc.ChunkIDs, point.GetId().String())
 		if doc.Hash == "" {
@@ -409,6 +613,14 @@ func (s *QdrantStore) GetDocument(ctx context.Context, filePath string) (*Docume
 	return doc, nil
 }
 
+// DisableLegacyVectorReuse stops LookupByContentHash from reusing vectors of
+// points written before namespaces existed. The indexer calls it when the
+// embedding model changed: those points were not removed with the project's
+// namespaced documents and hold vectors of the previous model.
+func (s *QdrantStore) DisableLegacyVectorReuse() {
+	s.noLegacyVectors = true
+}
+
 // SaveDocument is a no-op: document metadata is stored in chunk payloads by SaveChunks.
 func (s *QdrantStore) SaveDocument(ctx context.Context, doc Document) error {
 	return nil
@@ -423,6 +635,7 @@ func (s *QdrantStore) ListDocuments(ctx context.Context) ([]string, error) {
 	pathsMap := make(map[string]bool)
 	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.filter(),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path"),
 	}, func(point *qdrant.RetrievedPoint) {
 		if val, ok := point.Payload["file_path"]; ok {
@@ -453,20 +666,30 @@ func (s *QdrantStore) Close() error {
 }
 
 func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
-	collectionInfo, err := s.client.GetCollectionInfo(ctx, s.collectionName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get collection info: %w", err)
-	}
-
-	pointsCount := *collectionInfo.PointsCount
-	if pointsCount > uint64(^uint(0)>>1) {
-		return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
-	}
-
 	files, err := s.ListFilesWithStats(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	var totalChunks int
+	if s.namespace != "" {
+		// The collection may hold other projects' points: count only ours,
+		// which the namespaced file listing has already scrolled.
+		for _, f := range files {
+			totalChunks += f.ChunkCount
+		}
+	} else {
+		collectionInfo, err := s.client.GetCollectionInfo(ctx, s.collectionName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get collection info: %w", err)
+		}
+		pointsCount := *collectionInfo.PointsCount
+		if pointsCount > uint64(^uint(0)>>1) {
+			return nil, fmt.Errorf("points count %d exceeds maximum int value", pointsCount)
+		}
+		totalChunks = int(pointsCount)
+	}
+
 	var lastUpdated time.Time
 	for _, f := range files {
 		if f.ModTime.After(lastUpdated) {
@@ -476,7 +699,7 @@ func (s *QdrantStore) GetStats(ctx context.Context) (*IndexStats, error) {
 
 	return &IndexStats{
 		TotalFiles:  len(files),
-		TotalChunks: int(pointsCount),
+		TotalChunks: totalChunks,
 		IndexSize:   0, // not exposed by Qdrant
 		LastUpdated: lastUpdated,
 	}, nil
@@ -486,6 +709,7 @@ func (s *QdrantStore) ListFilesWithStats(ctx context.Context) ([]FileStats, erro
 	fileStats := make(map[string]*FileStats)
 	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.readFilter(),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "updated_at"),
 	}, func(point *qdrant.RetrievedPoint) {
 		filePath := point.Payload["file_path"].GetStringValue()
@@ -518,11 +742,9 @@ func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]
 	var chunks []Chunk
 	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
-		Filter: &qdrant.Filter{
-			Must: []*qdrant.Condition{qdrant.NewMatch("file_path", filePath)},
-		},
-		WithPayload: qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
-		WithVectors: qdrant.NewWithVectors(true),
+		Filter:         s.readFilter(qdrant.NewMatch("file_path", filePath)),
+		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
+		WithVectors:    qdrant.NewWithVectors(true),
 	}, func(point *qdrant.RetrievedPoint) {
 		chunk := s.parseChunkPayload(point.Payload)
 		chunk.Vector = pointVector(point)
@@ -541,6 +763,7 @@ func (s *QdrantStore) GetAllChunks(ctx context.Context) ([]Chunk, error) {
 	var chunks []Chunk
 	err := s.scrollEach(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collectionName,
+		Filter:         s.readFilter(),
 		WithPayload:    qdrant.NewWithPayloadInclude("file_path", "start_line", "end_line", "content", "hash", "updated_at"),
 	}, func(point *qdrant.RetrievedPoint) {
 		chunk := s.parseChunkPayload(point.Payload)
@@ -560,10 +783,12 @@ func (s *QdrantStore) LookupByContentHash(ctx context.Context, contentHash, cont
 		return nil, false, nil
 	}
 
-	filter := &qdrant.Filter{
-		Must: []*qdrant.Condition{
-			qdrant.NewMatch("content_hash", contentHash),
-		},
+	// Vectors of points an earlier version wrote without a namespace are
+	// reused too, so moving an explicit collection to namespaced points does
+	// not embed unchanged chunks again.
+	filter := s.filterWithLegacy(qdrant.NewMatch("content_hash", contentHash))
+	if s.noLegacyVectors {
+		filter = s.filter(qdrant.NewMatch("content_hash", contentHash))
 	}
 
 	// Qdrant cannot match a payload prefix without a full-text index: check
