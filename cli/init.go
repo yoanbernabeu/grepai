@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/grepai/config"
+	"github.com/yoanbernabeu/grepai/embedder"
 	"github.com/yoanbernabeu/grepai/git"
 	"github.com/yoanbernabeu/grepai/indexer"
 )
@@ -359,6 +360,30 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nMake sure LM Studio is running with an embedding model loaded.")
 		fmt.Printf("  Model: %s\n", cfg.Embedder.Model)
 		fmt.Printf("  Endpoint: %s\n", cfg.Embedder.Endpoint)
+	case "openai", "synthetic", "openrouter", "requesty":
+		if cfg.Embedder.APIKey == "" && !embedder.UsesOfficialEndpoint(cfg.Embedder.Provider, cfg.Embedder.Endpoint) {
+			fmt.Printf("\n%s is a custom endpoint: environment API keys are only sent to the\n", cfg.Embedder.Endpoint)
+			fmt.Printf("official endpoint. Set embedder.api_key in %s.\n", config.GetConfigPath(cwd))
+			break
+		}
+		printCloudKeyHint(cfg.Embedder.Provider)
+	}
+
+	switch cfg.Embedder.Provider {
+	case "ollama", "lmstudio", "synthetic":
+		if cfg.Embedder.Model != localDefaultModel(cfg.Embedder.Provider) {
+			fmt.Printf("\nNote: embedder.dimensions is %d. If %s produces vectors of another size,\n", cfg.Embedder.GetDimensions(), cfg.Embedder.Model)
+			fmt.Printf("set embedder.dimensions in %s before indexing.\n", config.GetConfigPath(cwd))
+		}
+	}
+
+	return nil
+}
+
+// printCloudKeyHint tells where a cloud provider's API key is read from when
+// the official endpoint is used.
+func printCloudKeyHint(provider string) {
+	switch provider {
 	case "openai":
 		fmt.Println("\nMake sure OPENAI_API_KEY is set in your environment.")
 	case "synthetic":
@@ -371,25 +396,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nMake sure REQUESTY_API_KEY or OPENAI_API_KEY is set in your environment.")
 		fmt.Println("  Get your API key at: https://app.requesty.ai/api-keys")
 	}
-
-	switch cfg.Embedder.Provider {
-	case "ollama", "lmstudio", "synthetic":
-		if cfg.Embedder.Model != localDefaultModel(cfg.Embedder.Provider) {
-			fmt.Printf("\nNote: embedder.dimensions is %d. If %s produces vectors of another size,\n", cfg.Embedder.GetDimensions(), cfg.Embedder.Model)
-			fmt.Printf("set embedder.dimensions in %s before indexing.\n", config.GetConfigPath(cwd))
-		}
-	}
-
-	switch cfg.Embedder.Provider {
-	case "openai", "synthetic", "openrouter", "requesty":
-		defaultEndpoint := config.DefaultEmbedderForProvider(cfg.Embedder.Provider).Endpoint
-		if cfg.Embedder.APIKey == "" && strings.TrimRight(cfg.Embedder.Endpoint, "/") != defaultEndpoint {
-			fmt.Printf("\nNote: %s is a custom endpoint. Environment API keys are only sent to the\n", cfg.Embedder.Endpoint)
-			fmt.Printf("official endpoint: set embedder.api_key in %s.\n", config.GetConfigPath(cwd))
-		}
-	}
-
-	return nil
 }
 
 func shouldPromptInheritChoice(shouldInherit, nonInteractive, uiMode bool) bool {

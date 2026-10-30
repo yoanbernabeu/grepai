@@ -26,6 +26,8 @@ func TestIsOfficialEndpoint(t *testing.T) {
 		{"https://evil.example#@api.openai.com/v1", false},
 		{"https://аpi.openai.com/v1", false}, // Cyrillic "а"
 		{"https://xn--pi-7ld.openai.com/v1", false},
+		{"https://\u212aapi.openai.com/v1", false}, // Kelvin sign lowercases to "k"
+		{"https://api.opena\u0130.com/v1", false},  // "İ" lowercases to "i"
 		{"http://127.0.0.1:8080/v1", false},
 		{"api.openai.com/v1", false},
 		{" https://api.openai.com/v1", false},
@@ -216,6 +218,26 @@ func TestEnvKeyErrorNamesAllVariablesAndRedactsEndpoint(t *testing.T) {
 	for _, leak := range []string{"user-token", "pw", "query-secret", "env-requesty", "env-openai"} {
 		if strings.Contains(msg, leak) {
 			t.Errorf("error %q leaks %q", msg, leak)
+		}
+	}
+}
+
+func TestUsesOfficialEndpoint(t *testing.T) {
+	tests := []struct {
+		provider, endpoint string
+		want               bool
+	}{
+		{"openai", "", true},
+		{"openai", "https://API.openai.com:443/v1/", true},
+		{"openai", "https://myres.openai.azure.com/v1", false},
+		{"synthetic", "https://api.synthetic.new/openai/v1", true},
+		{"openrouter", "https://openrouter.ai/api/v1", true},
+		{"requesty", "http://localhost:8080/v1", false},
+		{"ollama", "http://localhost:11434", false},
+	}
+	for _, tt := range tests {
+		if got := UsesOfficialEndpoint(tt.provider, tt.endpoint); got != tt.want {
+			t.Errorf("UsesOfficialEndpoint(%q, %q) = %v, want %v", tt.provider, tt.endpoint, got, tt.want)
 		}
 	}
 }

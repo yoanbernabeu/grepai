@@ -37,6 +37,27 @@ func apiKeyFromEnv(endpoint, defaultEndpoint string, names ...string) (string, e
 	return key, nil
 }
 
+// UsesOfficialEndpoint reports whether a cloud provider configured with
+// endpoint sends its requests to the provider's official host, where an API
+// key from the environment is used. An empty endpoint means the default one.
+// It returns false for providers that take no API key.
+func UsesOfficialEndpoint(provider, endpoint string) bool {
+	var official string
+	switch provider {
+	case "openai":
+		official = defaultOpenAIEndpoint
+	case "openrouter":
+		official = defaultOpenRouterEndpoint
+	case "synthetic":
+		official = defaultSyntheticEndpoint + defaultSyntheticPath
+	case "requesty":
+		official = defaultRequestyEndpoint
+	default:
+		return false
+	}
+	return endpoint == "" || isOfficialEndpoint(endpoint, official)
+}
+
 // isOfficialEndpoint reports whether requests built from endpoint (the
 // embedders send POST "<endpoint>/embeddings") go to the same host as
 // defaultEndpoint, over HTTPS, on the default port and without userinfo.
@@ -55,10 +76,19 @@ func isOfficialEndpoint(endpoint, defaultEndpoint string) bool {
 	if port := target.Port(); port != "" && port != "443" {
 		return false
 	}
-	return normalizeHost(target.Hostname()) == normalizeHost(official.Hostname())
+	host := normalizeHost(target.Hostname())
+	return host != "" && host == normalizeHost(official.Hostname())
 }
 
+// normalizeHost lowercases an ASCII host name and drops a trailing dot. A
+// non-ASCII host never matches: Unicode case folding can map look-alike
+// characters (such as the Kelvin sign) onto ASCII letters.
 func normalizeHost(host string) string {
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return ""
+		}
+	}
 	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
