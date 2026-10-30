@@ -58,23 +58,36 @@ func TestHandleTraceCallersFromStores_should_resolve_symbols_like_cli(t *testing
 	}
 }
 
-// A caller defined in another workspace store is still resolved, and a
-// caller without any definition keeps the reference location.
-func TestCallerSymbolForRef_fallbacks(t *testing.T) {
+// In a workspace, each caller is resolved in the store its reference comes
+// from, even when another project has the same relative file (#372).
+func TestHandleTraceCallersFromStores_should_resolve_callers_in_their_own_store(t *testing.T) {
 	ctx := context.Background()
-	ss1 := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
-	ss2 := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
-	if err := ss2.SaveFile(ctx, "/p2/x.go", []trace.Symbol{{Name: "Run", File: "/p2/x.go", Line: 4}}, nil); err != nil {
+	api := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	web := trace.NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	if err := web.SaveFile(ctx, "src/main.go", []trace.Symbol{
+		{Name: "handle", Kind: "function", File: "src/main.go", Line: 3, Language: "go"},
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	stores := []trace.SymbolStore{ss1, ss2}
-
-	got := callerSymbolForRef(ctx, stores, trace.Reference{CallerName: "Run", CallerFile: "/p2/x.go", CallerLine: 4})
-	if got.File != "/p2/x.go" || got.Line != 4 {
-		t.Fatalf("expected /p2/x.go:4, got %+v", got)
+	if err := api.SaveFile(ctx, "src/main.go", []trace.Symbol{
+		{Name: "handle", Kind: "function", File: "src/main.go", Line: 40, Language: "go"},
+		{Name: "save", Kind: "function", File: "src/main.go", Line: 60, Language: "go"},
+	}, []trace.Reference{
+		{SymbolName: "save", Kind: "call", File: "src/main.go", Line: 41, CallerName: "handle", CallerFile: "src/main.go", CallerLine: 40},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	got = callerSymbolForRef(ctx, stores, trace.Reference{CallerName: "Missing", CallerFile: "/p1/y.go", CallerLine: 7})
-	if got.Name != "Missing" || got.File != "/p1/y.go" || got.Line != 7 {
-		t.Fatalf("expected synthetic caller symbol, got %+v", got)
+
+	s := &Server{}
+	res, err := s.handleTraceCallersFromStores(ctx, "", "save", false, "json", []trace.SymbolStore{web, api})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out trace.TraceResult
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Callers) != 1 || out.Callers[0].Symbol.Line != 40 {
+		t.Fatalf("expected caller handle at src/main.go:40 from its own store, got %+v", out.Callers)
 	}
 }

@@ -233,3 +233,32 @@ func TestPickSymbolForFile_should_not_depend_on_candidate_order(t *testing.T) {
 		t.Fatal("expected nil for no candidates")
 	}
 }
+
+// trace graph does not show property reads/writes as call edges either.
+func TestGetCallGraph_should_skip_property_read_and_write_edges(t *testing.T) {
+	s := NewGOBSymbolStore(filepath.Join(t.TempDir(), "symbols.gob"))
+	ctx := context.Background()
+	syms := []Symbol{
+		{Name: "Run", Kind: KindFunction, File: "a.go", Line: 1, Language: "go"},
+		{Name: "count", Kind: KindFunction, File: "a.go", Line: 10, Language: "go"},
+	}
+	refs := []Reference{
+		{SymbolName: "count", Kind: RefKindRead, File: "a.go", Line: 2, CallerName: "Run", CallerFile: "a.go", CallerLine: 1},
+		{SymbolName: "Save", Kind: RefKindCall, File: "a.go", Line: 3, CallerName: "Run", CallerFile: "a.go", CallerLine: 1},
+		{SymbolName: "Run", Kind: RefKindWrite, File: "a.go", Line: 11, CallerName: "count", CallerFile: "a.go", CallerLine: 10},
+	}
+	if err := s.SaveFile(ctx, "a.go", syms, refs); err != nil {
+		t.Fatal(err)
+	}
+
+	graph, err := s.GetCallGraph(ctx, "Run", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Edges) != 1 || graph.Edges[0].Callee != "Save" {
+		t.Fatalf("expected only Run->Save, got %+v", graph.Edges)
+	}
+	if _, ok := graph.Nodes["count"]; ok {
+		t.Fatalf("graph walked into a property access: %+v", graph.Nodes)
+	}
+}

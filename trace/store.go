@@ -393,34 +393,37 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 		}
 		seen[key] = true
 
-		// Find reference details. Edges are also built for property
-		// reads/writes, which are not callees.
-		var callRef *Reference
-		matched := false
-		for _, ref := range s.index.References[edge.Callee] {
-			if ref.CallerName != symbolName || ref.File != edge.File || ref.Line != edge.Line {
-				continue
-			}
-			matched = true
-			if isCallReference(ref) {
-				callRef = &ref
-				break
-			}
-		}
-		switch {
-		case callRef != nil:
-			callees = append(callees, *callRef)
-		case !matched:
-			// No reference details for this edge: report a minimal one.
-			callees = append(callees, Reference{
-				SymbolName: edge.Callee,
-				File:       edge.File,
-				Line:       edge.Line,
-				CallerName: symbolName,
-			})
+		if ref, ok := s.callReferenceForEdgeUnlocked(edge); ok {
+			callees = append(callees, ref)
 		}
 	}
 	return callees, nil
+}
+
+// callReferenceForEdgeUnlocked returns the call reference behind a call-graph
+// edge. Edges are also built for property reads/writes, which are not calls:
+// ok is false for them. An edge without any reference details gets a minimal
+// one. Caller must hold s.mu.
+func (s *GOBSymbolStore) callReferenceForEdgeUnlocked(edge CallEdge) (Reference, bool) {
+	matched := false
+	for _, ref := range s.index.References[edge.Callee] {
+		if ref.CallerName != edge.Caller || ref.File != edge.File || ref.Line != edge.Line {
+			continue
+		}
+		if isCallReference(ref) {
+			return ref, true
+		}
+		matched = true
+	}
+	if matched {
+		return Reference{}, false
+	}
+	return Reference{
+		SymbolName: edge.Callee,
+		File:       edge.File,
+		Line:       edge.Line,
+		CallerName: edge.Caller,
+	}, true
 }
 
 // isDeclarationSelfEdgeUnlocked reports whether an edge is a function's own
@@ -523,7 +526,26 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		// Avoid exploding through name-collided symbols (e.g. Load, Init).
 		return len(symbols) == 1
 	}
-	isDeclarationSelfEdge := s.isDeclarationSelfEdgeUnlocked
+
+	// Edges are also built for property reads/writes; they are not calls.
+	// Index the references of each callee once so popular names stay linear.
+	dataEdgeKeys := make(map[string]map[string]bool)
+	isDataEdge := func(edge CallEdge) bool {
+		keys, ok := dataEdgeKeys[edge.Callee]
+		if !ok {
+			keys = make(map[string]bool)
+			for _, ref := range s.index.References[edge.Callee] {
+				key := fmt.Sprintf("%s\x00%s:%d", ref.CallerName, ref.File, ref.Line)
+				if isCallReference(ref) {
+					keys[key] = false
+				} else if _, seen := keys[key]; !seen {
+					keys[key] = true
+				}
+			}
+			dataEdgeKeys[edge.Callee] = keys
+		}
+		return keys[fmt.Sprintf("%s\x00%s:%d", edge.Caller, edge.File, edge.Line)]
+	}
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -542,7 +564,7 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		// Find edges (both callers and callees)
 		for _, edge := range s.index.CallGraph {
 			if edge.Caller == current.name {
-				if isDeclarationSelfEdge(edge) {
+				if s.isDeclarationSelfEdgeUnlocked(edge) || isDataEdge(edge) {
 					continue
 				}
 				edgeKey := fmt.Sprintf("%s->%s", edge.Caller, edge.Callee)
@@ -555,7 +577,7 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 				}
 			}
 			if current.depth == 0 && edge.Callee == current.name {
-				if isDeclarationSelfEdge(edge) {
+				if s.isDeclarationSelfEdgeUnlocked(edge) || isDataEdge(edge) {
 					continue
 				}
 				edgeKey := fmt.Sprintf("%s->%s", edge.Caller, edge.Callee)

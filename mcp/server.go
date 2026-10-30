@@ -1170,38 +1170,12 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 	return s.handleTraceCallersFromStores(ctx, projectRootToUse, symbolName, compact, format, []trace.SymbolStore{symbolStore})
 }
 
-// callerSymbolForRef resolves the definition of ref's caller like the CLI
-// does: the one declared in the caller's file, else the first by file then
-// line (#372).
-func callerSymbolForRef(ctx context.Context, stores []trace.SymbolStore, ref trace.Reference) trace.Symbol {
-	var fallback *trace.Symbol
-	for _, ss := range stores {
-		callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
-		if err != nil {
-			log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
-		}
-		picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile)
-		if picked == nil {
-			continue
-		}
-		if picked.File == ref.CallerFile {
-			return *picked
-		}
-		if fallback == nil {
-			fallback = picked
-		}
-	}
-	if fallback != nil {
-		return *fallback
-	}
-	return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-}
-
 // handleTraceCallersFromStores handles callers lookup across one or more symbol stores.
 func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot string, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	// Aggregate results across stores
 	var firstSymbol *trace.Symbol
 	var allRefs []trace.Reference
+	var refStores []trace.SymbolStore // store each ref comes from
 
 	for _, ss := range stores {
 		symbols, err := ss.LookupSymbol(ctx, symbolName)
@@ -1218,6 +1192,9 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			firstSymbol = &sym
 		}
 		allRefs = append(allRefs, refs...)
+		for range refs {
+			refStores = append(refStores, ss)
+		}
 	}
 
 	if firstSymbol == nil {
@@ -1243,8 +1220,9 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			Callers: make([]CallerInfoCompact, 0, len(allRefs)),
 		}
 
-		for _, ref := range allRefs {
-			callerSym := callerSymbolForRef(ctx, stores, ref)
+		for i, ref := range allRefs {
+			// Resolve the caller in its own store, like the CLI (#372).
+			callerSym := resolveRefCallerSymbol(refStores[i], ctx, ref)
 			resultCompact.Callers = append(resultCompact.Callers, CallerInfoCompact{
 				Symbol: callerSym,
 				CallSite: CallSiteCompact{
@@ -1268,8 +1246,9 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			Mode:   "fast",
 			Symbol: firstSymbol,
 		}
-		for _, ref := range allRefs {
-			callerSym := callerSymbolForRef(ctx, stores, ref)
+		for i, ref := range allRefs {
+			// Resolve the caller in its own store, like the CLI (#372).
+			callerSym := resolveRefCallerSymbol(refStores[i], ctx, ref)
 			result.Callers = append(result.Callers, trace.CallerInfo{
 				Symbol: callerSym,
 				CallSite: trace.CallSite{
@@ -1883,13 +1862,7 @@ func resolveRefCallerSymbol(ss trace.SymbolStore, ctx context.Context, ref trace
 	if err != nil || len(candidates) == 0 {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
-	for _, sym := range candidates {
-		if sym.File == ref.CallerFile {
-			return sym
-		}
-	}
-
-	return candidates[0]
+	return *trace.PickSymbolForFile(candidates, ref.CallerFile)
 }
 
 // WorkspaceIndexStatus represents the status of a workspace index.
