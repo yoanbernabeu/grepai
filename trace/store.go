@@ -407,7 +407,8 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 }
 
 // hasLaterCall reports whether name, after its first whole-identifier
-// occurrence in line (the declaration), appears again followed by "(".
+// occurrence in line (the declaration), appears again followed by "(" or by
+// type arguments.
 func hasLaterCall(line, name string) bool {
 	if name == "" {
 		return false
@@ -431,7 +432,8 @@ func hasLaterCall(line, name string) bool {
 			seenFirst = true
 			continue
 		}
-		if strings.HasPrefix(strings.TrimLeft(line[end:], " \t"), "(") {
+		// "(" or explicit type arguments: Map[T](...), execute<T>(...).
+		if rest := strings.TrimLeft(line[end:], " \t"); rest != "" && strings.ContainsRune("([<", rune(rest[0])) {
 			return true
 		}
 	}
@@ -444,7 +446,7 @@ func isTruncatedContext(lineContext string) bool {
 }
 
 func isIdentByte(b byte) bool {
-	return b == '_' || b == '$' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+	return isIdentPartASCII(b) || b == '$'
 }
 
 // callRefIndex finds the call reference behind call-graph edges. Edges are

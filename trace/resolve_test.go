@@ -375,6 +375,8 @@ func TestHasLaterCall(t *testing.T) {
 		{"func (w *W) Save() error { return w.inner.Save() }", "Save", true},
 		{"public function execute() { return $this->inner->execute (); }", "execute", true},
 		{"execute<T>(x: T) { return this.inner.execute(x); }", "execute", true},
+		{"func Map[T any](xs []T) []T { return Map[T](xs[1:]) }", "Map", true},
+		{"execute<T>(x: T) { return this.inner.execute<T>(x); }", "execute", true},
 		{"func Saver() { doSave(); SaveAll() }", "Save", false},
 		{"", "Save", false},
 		{"Save() Save()", "", false},
