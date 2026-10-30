@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,59 +17,6 @@ import (
 	gstats "github.com/yoanbernabeu/grepai/stats"
 	"github.com/yoanbernabeu/grepai/trace"
 )
-
-func pickBestTargetSymbol(candidates []trace.Symbol, refs []trace.Reference) *trace.Symbol {
-	if len(candidates) == 0 {
-		return nil
-	}
-	if len(candidates) == 1 {
-		return &candidates[0]
-	}
-
-	bestIdx := 0
-	bestScore := -1
-	for i, sym := range candidates {
-		score := 0
-		for _, ref := range refs {
-			// Prefer symbols referenced from their own file first (component-local/private usage).
-			if ref.File == sym.File || ref.CallerFile == sym.File {
-				score++
-			}
-		}
-		if score > bestScore {
-			bestScore = score
-			bestIdx = i
-		}
-	}
-
-	// Deterministic fallback when all scores are equal.
-	if bestScore <= 0 {
-		sorted := append([]trace.Symbol(nil), candidates...)
-		sort.SliceStable(sorted, func(i, j int) bool {
-			if sorted[i].File == sorted[j].File {
-				return sorted[i].Line < sorted[j].Line
-			}
-			return sorted[i].File < sorted[j].File
-		})
-		return &sorted[0]
-	}
-
-	return &candidates[bestIdx]
-}
-
-func pickBestSymbolForFile(candidates []trace.Symbol, preferredFile string) *trace.Symbol {
-	if len(candidates) == 0 {
-		return nil
-	}
-	if preferredFile != "" {
-		for i := range candidates {
-			if candidates[i].File == preferredFile {
-				return &candidates[i]
-			}
-		}
-	}
-	return &candidates[0]
-}
 
 // traceExtractionMode is the only symbol extraction mode the index uses.
 // The --mode flag is kept for compatibility but deprecated: it never changed
@@ -203,7 +149,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 				log.Printf("Warning: failed to lookup symbol %q: %v", symbolName, err)
 			}
 			if len(symbols) > 0 && result.Symbol == nil {
-				result.Symbol = pickBestTargetSymbol(symbols, refs)
+				result.Symbol = trace.PickTargetSymbol(symbols, refs)
 			}
 			for _, ref := range refs {
 				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
@@ -212,7 +158,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 				}
 				var callerSym trace.Symbol
 				if len(callerSyms) > 0 {
-					if picked := pickBestSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+					if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
 						callerSym = *picked
 					} else {
 						callerSym = callerSyms[0]
@@ -289,7 +235,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to lookup callers: %w", err)
 	}
 
-	target := pickBestTargetSymbol(symbols, refs)
+	target := trace.PickTargetSymbol(symbols, refs)
 	if target == nil {
 		target = &symbols[0]
 	}
@@ -308,7 +254,7 @@ func runTraceCallers(cmd *cobra.Command, args []string) error {
 		}
 		var callerSym trace.Symbol
 		if len(callerSyms) > 0 {
-			if picked := pickBestSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
+			if picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile); picked != nil {
 				callerSym = *picked
 			} else {
 				callerSym = callerSyms[0]

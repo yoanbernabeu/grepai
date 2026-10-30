@@ -1170,6 +1170,33 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 	return s.handleTraceCallersFromStores(ctx, projectRootToUse, symbolName, compact, format, []trace.SymbolStore{symbolStore})
 }
 
+// callerSymbolForRef resolves the definition of ref's caller like the CLI
+// does: the one declared in the caller's file, else the first by file then
+// line (#372).
+func callerSymbolForRef(ctx context.Context, stores []trace.SymbolStore, ref trace.Reference) trace.Symbol {
+	var fallback *trace.Symbol
+	for _, ss := range stores {
+		callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
+		if err != nil {
+			log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
+		}
+		picked := trace.PickSymbolForFile(callerSyms, ref.CallerFile)
+		if picked == nil {
+			continue
+		}
+		if picked.File == ref.CallerFile {
+			return *picked
+		}
+		if fallback == nil {
+			fallback = picked
+		}
+	}
+	if fallback != nil {
+		return *fallback
+	}
+	return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
+}
+
 // handleTraceCallersFromStores handles callers lookup across one or more symbol stores.
 func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot string, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	// Aggregate results across stores
@@ -1181,13 +1208,14 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 		if err != nil {
 			log.Printf("Warning: failed to lookup symbol %q: %v", symbolName, err)
 		}
-		if len(symbols) > 0 && firstSymbol == nil {
-			sym := symbols[0]
-			firstSymbol = &sym
-		}
 		refs, err := ss.LookupCallers(ctx, symbolName)
 		if err != nil {
 			log.Printf("Warning: failed to lookup callers of %q: %v", symbolName, err)
+		}
+		if len(symbols) > 0 && firstSymbol == nil {
+			// Same choice as the CLI among same-name definitions (#372).
+			sym := *trace.PickTargetSymbol(symbols, refs)
+			firstSymbol = &sym
 		}
 		allRefs = append(allRefs, refs...)
 	}
@@ -1216,20 +1244,7 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 		}
 
 		for _, ref := range allRefs {
-			var callerSym trace.Symbol
-			for _, ss := range stores {
-				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
-				if err != nil {
-					log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
-				}
-				if len(callerSyms) > 0 {
-					callerSym = callerSyms[0]
-					break
-				}
-			}
-			if callerSym.Name == "" {
-				callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-			}
+			callerSym := callerSymbolForRef(ctx, stores, ref)
 			resultCompact.Callers = append(resultCompact.Callers, CallerInfoCompact{
 				Symbol: callerSym,
 				CallSite: CallSiteCompact{
@@ -1254,20 +1269,7 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, projectRoot s
 			Symbol: firstSymbol,
 		}
 		for _, ref := range allRefs {
-			var callerSym trace.Symbol
-			for _, ss := range stores {
-				callerSyms, err := ss.LookupSymbol(ctx, ref.CallerName)
-				if err != nil {
-					log.Printf("Warning: failed to lookup caller symbol %q: %v", ref.CallerName, err)
-				}
-				if len(callerSyms) > 0 {
-					callerSym = callerSyms[0]
-					break
-				}
-			}
-			if callerSym.Name == "" {
-				callerSym = trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
-			}
+			callerSym := callerSymbolForRef(ctx, stores, ref)
 			result.Callers = append(result.Callers, trace.CallerInfo{
 				Symbol: callerSym,
 				CallSite: trace.CallSite{

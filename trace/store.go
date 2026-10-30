@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -344,7 +345,9 @@ func (s *GOBSymbolStore) deleteFileUnlocked(filePath string) bool {
 	return removed
 }
 
-// LookupSymbol finds symbol definitions by name.
+// LookupSymbol finds symbol definitions by name, ordered by file then line so
+// that callers taking the first one get the same definition whatever the
+// order in which files were indexed.
 func (s *GOBSymbolStore) LookupSymbol(ctx context.Context, name string) ([]Symbol, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -353,7 +356,9 @@ func (s *GOBSymbolStore) LookupSymbol(ctx context.Context, name string) ([]Symbo
 	if symbols == nil {
 		return []Symbol{}, nil
 	}
-	return append([]Symbol(nil), symbols...), nil
+	result := append([]Symbol(nil), symbols...)
+	sort.SliceStable(result, func(i, j int) bool { return symbolLess(result[i], result[j]) })
+	return result, nil
 }
 
 // LookupCallers finds all references/callers of a symbol.
@@ -368,7 +373,8 @@ func (s *GOBSymbolStore) LookupCallers(ctx context.Context, symbolName string) (
 	return filterByReferenceKinds(refs, RefKindCall, ""), nil
 }
 
-// LookupCallees finds all symbols called by a function.
+// LookupCallees finds all symbols called by a function. Callees of every
+// same-name definition are merged.
 func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, file string) ([]Reference, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -377,38 +383,58 @@ func (s *GOBSymbolStore) LookupCallees(ctx context.Context, symbolName string, f
 	seen := make(map[string]bool)
 
 	for _, edge := range s.index.CallGraph {
-		if edge.Caller == symbolName {
-			key := fmt.Sprintf("%s:%d", edge.File, edge.Line)
-			if seen[key] {
+		if edge.Caller != symbolName || s.isDeclarationSelfEdgeUnlocked(edge) {
+			continue
+		}
+		// Two calls on the same line (e.g. Save(Load())) are distinct callees.
+		key := fmt.Sprintf("%s\x00%s:%d", edge.Callee, edge.File, edge.Line)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		// Find reference details. Edges are also built for property
+		// reads/writes, which are not callees.
+		var callRef *Reference
+		matched := false
+		for _, ref := range s.index.References[edge.Callee] {
+			if ref.CallerName != symbolName || ref.File != edge.File || ref.Line != edge.Line {
 				continue
 			}
-			seen[key] = true
-
-			// Find reference details
-			if refs, ok := s.index.References[edge.Callee]; ok {
-				for _, ref := range refs {
-					if !isCallReference(ref) {
-						continue
-					}
-					if ref.CallerName == symbolName && ref.File == edge.File && ref.Line == edge.Line {
-						callees = append(callees, ref)
-						break
-					}
-				}
+			matched = true
+			if isCallReference(ref) {
+				callRef = &ref
+				break
 			}
-
-			// If no reference found, create a minimal one
-			if !seen[key] || len(callees) == 0 {
-				callees = append(callees, Reference{
-					SymbolName: edge.Callee,
-					File:       edge.File,
-					Line:       edge.Line,
-					CallerName: symbolName,
-				})
-			}
+		}
+		switch {
+		case callRef != nil:
+			callees = append(callees, *callRef)
+		case !matched:
+			// No reference details for this edge: report a minimal one.
+			callees = append(callees, Reference{
+				SymbolName: edge.Callee,
+				File:       edge.File,
+				Line:       edge.Line,
+				CallerName: symbolName,
+			})
 		}
 	}
 	return callees, nil
+}
+
+// isDeclarationSelfEdgeUnlocked reports whether an edge is a function's own
+// declaration line picked up as a call to itself. Caller must hold s.mu.
+func (s *GOBSymbolStore) isDeclarationSelfEdgeUnlocked(edge CallEdge) bool {
+	if edge.Caller != edge.Callee {
+		return false
+	}
+	for _, sym := range s.index.Symbols[edge.Caller] {
+		if sym.File == edge.File && sym.Line == edge.Line {
+			return true
+		}
+	}
+	return false
 }
 
 // LookupReaders finds property/data readers for a symbol name.
@@ -497,17 +523,7 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		// Avoid exploding through name-collided symbols (e.g. Load, Init).
 		return len(symbols) == 1
 	}
-	isDeclarationSelfEdge := func(edge CallEdge) bool {
-		if edge.Caller != edge.Callee {
-			return false
-		}
-		for _, sym := range s.index.Symbols[edge.Caller] {
-			if sym.File == edge.File && sym.Line == edge.Line {
-				return true
-			}
-		}
-		return false
-	}
+	isDeclarationSelfEdge := s.isDeclarationSelfEdgeUnlocked
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -519,8 +535,8 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 		visited[current.name] = true
 
 		// Add node
-		if symbols, ok := s.index.Symbols[current.name]; ok && len(symbols) > 0 {
-			graph.Nodes[current.name] = symbols[0]
+		if sym := firstSymbol(s.index.Symbols[current.name]); sym != nil {
+			graph.Nodes[current.name] = *sym
 		}
 
 		// Find edges (both callers and callees)
@@ -549,8 +565,8 @@ func (s *GOBSymbolStore) GetCallGraph(ctx context.Context, symbolName string, de
 				}
 				// Ensure caller node is present in the graph.
 				if _, exists := graph.Nodes[edge.Caller]; !exists {
-					if syms, ok := s.index.Symbols[edge.Caller]; ok && len(syms) > 0 {
-						graph.Nodes[edge.Caller] = syms[0]
+					if sym := firstSymbol(s.index.Symbols[edge.Caller]); sym != nil {
+						graph.Nodes[edge.Caller] = *sym
 					}
 				}
 			}

@@ -273,7 +273,7 @@ func resolveRefCallerSymbol(ctx context.Context, ss trace.SymbolStore, ref trace
 	if err != nil || len(candidates) == 0 {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
-	best := pickBestSymbolForFile(candidates, ref.CallerFile)
+	best := trace.PickSymbolForFile(candidates, ref.CallerFile)
 	if best == nil {
 		return trace.Symbol{Name: ref.CallerName, File: ref.CallerFile, Line: ref.CallerLine}
 	}
