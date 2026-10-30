@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-30
+
+This release only contains fixes, but two of them change behavior: read the **Security** migration if you use a custom embedding endpoint with an API key from the environment, and the Qdrant entry if you set `store.qdrant.collection`.
+
 ### Fixed
 
 - **Renamed Files Kept Their Old Path in Embeddings**: the embedding cache matched chunks by body only, while the embedded text starts with `File: <path>`. A renamed, moved or copied file reused vectors computed under the other path, which skewed search results. Renamed and moved files are now re-embedded; identical files at the same project-relative path (e.g. git worktrees in a workspace) still share vectors, and unchanged chunks of an edited file are still reused. No reindex is forced: vectors reused under an old path by earlier 1.x versions stay until their file changes, and an optional rebuild (clear the project's index, then run `grepai index`) refreshes them. (#366)
 - **Projects Sharing a Qdrant Collection Overwrote Each Other**: when several repositories set the same `store.qdrant.collection`, their chunks got the same point IDs (`README.md_0`), so one overwrote the other's files, and indexing one deleted every file of the other that it did not have. Points in an explicitly named collection now carry the repository's identity (`project_namespace` payload, also part of the point ID): the normalized `origin` remote URL, without any credential it contains, plus the project's subdirectory if any, or the absolute project path when there is no git remote (or a local-path one). Searches, listings, stats and deletions only see the current repository. Clones on other machines and linked worktrees of one repository still share one index; checkouts on different branches still overwrite each other's files, as in 1.1.0. Collections named after the project path (no `collection` key, the default) and workspace collections are unchanged: same point IDs, no re-indexing. (#247)
 
   **Upgrading with an explicit `collection`:** search, status and MCP keep reading the existing points until the project is re-indexed. The first `grepai index` or `grepai watch` re-indexes it: unchanged chunks reuse the vectors already stored, so they are not sent to the embedder again, and the old points of each re-indexed file are deleted. Old points that remain afterwards (files deleted since, or projects not upgraded yet) are reported by a warning at startup; the Qdrant documentation shows how to delete them. Changing the `origin` URL later changes the namespace: the project is re-indexed from scratch, and the points under the previous namespace stay until deleted. **Downgrading, or mixing versions:** an earlier release ignores the namespace, so it sees every project's points again and can still overwrite or delete them as described above; upgrade every project that shares the collection.
+
+- **Changed Files Vanished When Batch Embedding Failed**: with the `openai` provider (and OpenAI-compatible endpoints), `grepai index` and the initial scan of `grepai watch` deleted every changed file's chunks before embedding. A failed or interrupted run (network error, persistent 429, Ctrl+C) left those files out of search until a later successful run, and a one-line edit re-embedded the whole file. Previous chunks are now kept until the new embeddings succeed, and unchanged chunks are reused from the cache. (#353)
+- **Crash Between Delete and Save Hid a File**: if grepai stopped abruptly after deleting a file's chunks but before saving the new ones, the file's document still listed the deleted chunks, so the next start treated it as up to date and the file stayed out of search until it changed. Deleting a file's chunks now also clears its document's chunk list (gob, Postgres). (#356)
+- **Two Watch Daemons Could Run on the Same Index**: the watch PID lock was released right after the PID file was written (git projects and linked worktrees) or dropped by the garbage collector a few seconds later (other projects and workspaces), so a second `grepai watch --background` could start on the same index. When two starts raced, the loser's cleanup also deleted the winner's PID file, making it invisible to `--status` and `--stop`. The lock is now held for the daemon's whole life, and a failed start only cleans up its own files. An empty `*.pid.lock` file now stays in the log directory after a stop. (#357)
+- **Workspace RPG Graph Had No Chunk Links**: in workspace mode, the RPG graph linked no symbol to its chunks, because chunks were looked up without the project prefix. With Qdrant, all chunks of a project also collapsed into a single RPG node, including in single-project mode. Both are fixed; the graph is repaired by the next `grepai index` or `grepai watch`, without re-embedding. (#368)
+- **Trace Picked a Different Definition From Run to Run**: when several symbols share a name, `grepai trace` and the MCP trace tools showed the first definition in index order, which changed as files were re-indexed, and MCP `grepai_trace_callers` did not resolve the target and callers like the CLI. The definition is now chosen deterministically (by file, then line) by shared code for CLI and MCP. `trace callees` no longer lists the symbol's own declaration line or property reads and writes, and lists both calls when two are on one line (`Save(Load())`). Callees of same-name definitions are still merged; `Class::method` scoping is not supported. (#372)
+- **Qdrant Hybrid Search Returned a Single Result**: Qdrant search results had no chunk ID, so hybrid search (`search.hybrid.enabled: true`) merged every result into one. Qdrant writes also returned before being applied, so a read right after a write could miss the file (for example RPG links in `watch`). Results now carry their chunk ID and writes wait until Qdrant applies them. Results with hybrid search disabled are unchanged. (#414)
 
 ### Security
 
@@ -24,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Untrusted Repositories**: `SECURITY.md` and the trace guide now warn that compiling `.vue` files runs the `@vue/compiler-sfc` package from the project's own `node_modules`, so grepai should only index repositories you trust, or run with `framework_processing.frameworks.vue.enabled: false`.
+- **Untrusted Repositories**: `SECURITY.md` and the trace guide now warn that compiling `.vue` files runs the `@vue/compiler-sfc` package from the project's own `node_modules`, so grepai should only index repositories you trust, or run with `framework_processing.frameworks.vue.enabled: false`. (#415)
 
 ## [1.1.0] - 2026-10-26
 
@@ -852,7 +863,8 @@ First stable release. Existing configs and indexes keep working. On first start,
 
 - Initial public release
 
-[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/grepai/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/yoanbernabeu/grepai/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yoanbernabeu/grepai/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yoanbernabeu/grepai/compare/v0.39.0...v1.0.0
 [0.39.0]: https://github.com/yoanbernabeu/grepai/compare/v0.38.0...v0.39.0
