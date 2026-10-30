@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yoanbernabeu/grepai/config"
 	"github.com/yoanbernabeu/grepai/daemon"
 )
 
@@ -184,5 +185,57 @@ func TestStartBackgroundWatchAbortRemovesOwnMarkers(t *testing.T) {
 	}
 	if _, err := os.Stat(readyPath); !os.IsNotExist(err) {
 		t.Fatalf("child ready file still exists after abort: %v", err)
+	}
+}
+
+// Same race for workspace daemons: the aborted start keeps the winner's markers.
+func TestStartBackgroundWorkspaceAbortKeepsOtherDaemonMarkers(t *testing.T) {
+	logDir := t.TempDir()
+	ws := &config.Workspace{Name: "ws-race"}
+	winnerPID := os.Getpid()
+	pidPath := daemon.GetWorkspacePIDFile(logDir, ws.Name)
+	readyPath := daemon.GetWorkspaceReadyFile(logDir, ws.Name)
+
+	originalSpawn := watchSpawnWorkspace
+	originalStop := watchStopProcess
+	t.Cleanup(func() {
+		watchSpawnWorkspace = originalSpawn
+		watchStopProcess = originalStop
+	})
+	watchSpawnWorkspace = func(string, string, []string) (int, <-chan struct{}, error) {
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(winnerPID)+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write winner PID file: %v", err)
+		}
+		if err := os.WriteFile(readyPath, []byte("ready\n"+strconv.Itoa(winnerPID)+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write winner ready file: %v", err)
+		}
+		exited := make(chan struct{})
+		close(exited)
+		return 999997, exited, nil
+	}
+	watchStopProcess = func(int) error { return nil }
+
+	if err := startBackgroundWorkspaceWatch(logDir, ws); err == nil {
+		t.Fatal("startBackgroundWorkspaceWatch() succeeded although the child exited")
+	}
+	if pid, err := daemon.ReadWorkspacePIDFile(logDir, ws.Name); err != nil || pid != winnerPID {
+		t.Fatalf("workspace PID file = %d, %v; want winner PID %d", pid, err, winnerPID)
+	}
+	if !daemon.IsWorkspaceReadyForPID(logDir, ws.Name, winnerPID) {
+		t.Fatal("winner workspace ready file was removed by the aborted start")
+	}
+}
+
+// An unreadable PID file cannot be attributed to the aborted child, so it is kept.
+func TestRemoveDaemonMarkersOwnedByKeepsUnreadablePIDFile(t *testing.T) {
+	removedPID, removedReady := false, false
+	err := removeDaemonMarkersOwnedBy(42,
+		func() (int, error) { return 0, errors.New("permission denied") },
+		func() error { removedPID = true; return nil },
+		func() bool { return false },
+		func() error { removedReady = true; return nil },
+	)
+	if err != nil || removedPID || removedReady {
+		t.Fatalf("removeDaemonMarkersOwnedBy() err=%v removedPID=%v removedReady=%v, want nothing removed", err, removedPID, removedReady)
 	}
 }

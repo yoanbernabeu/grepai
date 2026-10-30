@@ -2817,12 +2817,7 @@ func startBackgroundWorkspaceWatch(logDir string, ws *config.Workspace) error {
 		}) {
 			primary := fmt.Errorf("workspace background process failed to become ready: %w (check logs at %s)", err, wsLogFile)
 			return abortBackgroundStart(primary, childPID, exitCh, func() error {
-				return removeDaemonMarkersOwnedBy(childPID,
-					func() (int, error) { return daemon.ReadWorkspacePIDFile(logDir, ws.Name) },
-					func() error { return daemon.RemoveWorkspacePIDFile(logDir, ws.Name) },
-					daemon.IsWorkspaceStartedForPID(logDir, ws.Name, childPID),
-					func() error { return daemon.RemoveWorkspaceReadyFile(logDir, ws.Name) },
-				)
+				return removeWorkspaceDaemonMarkers(logDir, ws.Name, childPID)
 			})
 		}
 		fmt.Printf("Workspace watcher %s started (PID %d), initial indexing still in progress\n", ws.Name, childPID)

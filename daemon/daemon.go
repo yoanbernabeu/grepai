@@ -376,8 +376,8 @@ var (
 )
 
 // releaseWorktreeLock closes the lock file this process holds for lockPath,
-// if any, and reports whether one was held.
-func releaseWorktreeLock(lockPath string) bool {
+// if any.
+func releaseWorktreeLock(lockPath string) {
 	heldWorktreeLocksMu.Lock()
 	lockFh, ok := heldWorktreeLocks[lockPath]
 	delete(heldWorktreeLocks, lockPath)
@@ -385,7 +385,6 @@ func releaseWorktreeLock(lockPath string) bool {
 	if ok {
 		lockFh.Close()
 	}
-	return ok
 }
 
 // ReadWorktreePIDFile reads the process ID from the worktree PID file.
@@ -409,17 +408,15 @@ func ReadWorktreePIDFile(logDir, worktreeID string) (int, error) {
 	return pid, nil
 }
 
-// RemoveWorktreePIDFile removes the worktree PID file and its lock file.
+// RemoveWorktreePIDFile removes the worktree PID file and releases the lock
+// this process holds for it, if any.
 func RemoveWorktreePIDFile(logDir, worktreeID string) error {
 	pidPath := GetWorktreePIDFile(logDir, worktreeID)
-	lockPath := pidPath + ".lock"
-
-	_ = os.Remove(lockPath)
-	// Release the lock if this process holds it. Windows cannot delete a file
-	// that is still open, so retry the removal once the handle is closed.
-	if releaseWorktreeLock(lockPath) && runtime.GOOS == "windows" {
-		_ = os.Remove(lockPath)
-	}
+	// Release the lock if this process holds it, but keep the lock file:
+	// callers such as stale-PID cleanup run in other processes, and deleting a
+	// lock file that a live daemon holds would let a second daemon lock a new
+	// file at the same path.
+	releaseWorktreeLock(pidPath + ".lock")
 
 	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove PID file: %w", err)
