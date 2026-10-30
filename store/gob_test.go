@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// The indexer finds the embedding cache through a type assertion: a backend
+// with a stale LookupByContentHash signature would silently lose it.
+var (
+	_ EmbeddingCache = (*GOBStore)(nil)
+	_ EmbeddingCache = (*PostgresStore)(nil)
+	_ EmbeddingCache = (*QdrantStore)(nil)
+)
+
 func TestGOBStore_FileHashCompatibility(t *testing.T) {
 	// Encode the old on-disk shape, deliberately without a FileHash field.
 	type legacyChunk struct {
