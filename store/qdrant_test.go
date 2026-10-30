@@ -45,11 +45,17 @@ type fileHashPointsServer struct {
 	delete func(*qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error)
 }
 
-func (s *fileHashPointsServer) Upsert(_ context.Context, request *qdrant.UpsertPoints) (*qdrant.PointsOperationResponse, error) {
+func (s *fileHashPointsServer) Upsert(ctx context.Context, request *qdrant.UpsertPoints) (*qdrant.PointsOperationResponse, error) {
+	if s.upsert == nil {
+		return s.UnimplementedPointsServer.Upsert(ctx, request)
+	}
 	return s.upsert(request)
 }
 
-func (s *fileHashPointsServer) Delete(_ context.Context, request *qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error) {
+func (s *fileHashPointsServer) Delete(ctx context.Context, request *qdrant.DeletePoints) (*qdrant.PointsOperationResponse, error) {
+	if s.delete == nil {
+		return s.UnimplementedPointsServer.Delete(ctx, request)
+	}
 	return s.delete(request)
 }
 
@@ -57,7 +63,10 @@ func (s *fileHashPointsServer) Scroll(_ context.Context, request *qdrant.ScrollP
 	return s.scroll(request)
 }
 
-func (s *fileHashPointsServer) Query(_ context.Context, request *qdrant.QueryPoints) (*qdrant.QueryResponse, error) {
+func (s *fileHashPointsServer) Query(ctx context.Context, request *qdrant.QueryPoints) (*qdrant.QueryResponse, error) {
+	if s.query == nil {
+		return s.UnimplementedPointsServer.Query(ctx, request)
+	}
 	return s.query(request)
 }
 
@@ -601,7 +610,6 @@ func TestSaveChunks_EmptySlice(t *testing.T) {
 	}
 }
 
-// TestQdrantStore_StructFields verifies struct has all expected fields
 // newFakeQdrantStore serves points from a fake gRPC Points service.
 func newFakeQdrantStore(t *testing.T, points *fileHashPointsServer) *QdrantStore {
 	t.Helper()
@@ -717,6 +725,7 @@ func TestQdrantWritesWait(t *testing.T) {
 	}
 }
 
+// TestQdrantStore_StructFields verifies struct has all expected fields
 func TestQdrantStore_StructFields(t *testing.T) {
 	store := &QdrantStore{
 		collectionName: "test-collection",
