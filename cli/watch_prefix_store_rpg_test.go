@@ -52,9 +52,9 @@ func TestProjectPrefixStore_RPGLinksChunksInWorkspace(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("GetChunksForFile(relative) returned %d chunks, want 2", len(got))
 	}
-	for _, c := range got {
-		if c.FilePath != "main.go" {
-			t.Errorf("chunk %s path = %q, want the project-relative path %q", c.ID, c.FilePath, "main.go")
+	for i, c := range got {
+		if c.FilePath != "main.go" || c.ID != chunks[i].ID {
+			t.Errorf("chunk %d = (%q, %q), want the project-relative (%q, %q)", i, c.ID, c.FilePath, chunks[i].ID, "main.go")
 		}
 	}
 
@@ -94,9 +94,10 @@ func assertChunkLinks(t *testing.T, step string, g *rpg.Graph, want int) {
 	if got := stats.EdgesByType[rpg.EdgeMapsToChunk]; got != want {
 		t.Errorf("%s: %d maps_to_chunk edges, want %d", step, got, want)
 	}
-	for _, n := range g.GetNodesByKind(rpg.KindChunk) {
-		if n.Path != "main.go" {
-			t.Errorf("%s: chunk node %s path = %q, want %q", step, n.ID, n.Path, "main.go")
+	for _, id := range []string{"main.go_0", "main.go_1"} {
+		n := g.GetNode(rpg.MakeNodeID(rpg.KindChunk, id))
+		if n == nil || n.Path != "main.go" {
+			t.Errorf("%s: chunk node %s = %+v, want path %q", step, id, n, "main.go")
 		}
 	}
 }

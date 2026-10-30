@@ -515,6 +515,9 @@ func (s *QdrantStore) GetChunksForFile(ctx context.Context, filePath string) ([]
 	}, func(point *qdrant.RetrievedPoint) {
 		chunk := s.parseChunkPayload(point.Payload)
 		chunk.Vector = pointVector(point)
+		// The payload has no chunk ID: use the point ID, so each chunk keeps a
+		// distinct ID (RPG chunk nodes are keyed by it).
+		chunk.ID = point.GetId().GetUuid()
 		chunks = append(chunks, *chunk)
 	})
 	if err != nil {

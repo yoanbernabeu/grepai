@@ -129,6 +129,58 @@ func TestQdrantGetDocumentFileHash(t *testing.T) {
 	}
 }
 
+// TestQdrantGetChunksForFileSetsIDs: the payload holds no chunk ID, so each
+// chunk must take its point ID. Empty IDs collapse every chunk of a project
+// into a single RPG chunk node (#368).
+func TestQdrantGetChunksForFileSetsIDs(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{uuid.NewString(), uuid.NewString()}
+	server := grpc.NewServer()
+	qdrant.RegisterPointsServer(server, &fileHashPointsServer{scroll: func(*qdrant.ScrollPoints) (*qdrant.ScrollResponse, error) {
+		points := make([]*qdrant.RetrievedPoint, len(ids))
+		for i, id := range ids {
+			points[i] = &qdrant.RetrievedPoint{Id: qdrant.NewID(id), Payload: map[string]*qdrant.Value{
+				"file_path":  mustCreateValue(t, "file.go"),
+				"start_line": mustCreateValue(t, int64(i*10+1)),
+			}}
+		}
+		return &qdrant.ScrollResponse{Result: points}, nil
+	}})
+	t.Cleanup(server.Stop)
+	go func() {
+		if err := server.Serve(listener); err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	}()
+	client, err := qdrant.NewClient(&qdrant.Config{Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, SkipCompatibilityCheck: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	s := &QdrantStore{client: client, collectionName: "test_grepai_chunks"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	chunks, err := s.GetChunksForFile(ctx, "file.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != len(ids) {
+		t.Fatalf("got %d chunks, want %d", len(chunks), len(ids))
+	}
+	for i, chunk := range chunks {
+		if chunk.ID != ids[i] || chunk.FilePath != "file.go" || chunk.StartLine != i*10+1 {
+			t.Errorf("chunk %d = %+v, want ID %s", i, chunk, ids[i])
+		}
+	}
+}
+
 func TestQdrantFileHashIntegration(t *testing.T) {
 	conn, err := net.DialTimeout("tcp", "127.0.0.1:6333", time.Second)
 	if err != nil {

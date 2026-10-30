@@ -3308,8 +3308,9 @@ func (p *projectPrefixStore) ListFilesWithStats(ctx context.Context) ([]store.Fi
 
 // GetChunksForFile maps the path like the other per-file methods, so the
 // relative paths used by the watcher and the RPG encoder find this project's
-// chunks (#368). Returned chunks carry the project-relative path, as from
-// ListDocuments, so RPG chunk nodes share the path of their file node.
+// chunks (#368). The prefix is stripped from the returned paths and IDs, as
+// in ListDocuments and the reverse of SaveChunks, so RPG chunk nodes share the
+// path of their file node, as in a single project.
 func (p *projectPrefixStore) GetChunksForFile(ctx context.Context, filePath string) ([]store.Chunk, error) {
 	prefix := p.getPrefix() + "/"
 	chunks, err := p.store.GetChunksForFile(ctx, prefix+p.toRelSlash(filePath))
@@ -3318,6 +3319,7 @@ func (p *projectPrefixStore) GetChunksForFile(ctx context.Context, filePath stri
 	}
 	for i := range chunks {
 		chunks[i].FilePath = strings.TrimPrefix(chunks[i].FilePath, prefix)
+		chunks[i].ID = strings.TrimPrefix(chunks[i].ID, prefix)
 	}
 	return chunks, nil
 }
