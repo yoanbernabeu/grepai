@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Project Config Can No Longer Run a Project File as Node.js**: grepai executed `framework_processing.node_path` as is to process `.vue` files. A `.grepai/config.yaml` committed in a third-party repository could point it at a file in that repository, which grepai then ran during `index` or `watch`. grepai now accepts only a Node.js command name resolved through `PATH` (`node`, the default, `nodejs`, `node20`, `node.exe`) or a local absolute path outside the project and its git repository. A relative path, a path that resolves inside the project or its git repository (including through symlinks), a missing path, a `/proc` or `/dev` path, a network path or another command name is ignored with a warning and grepai uses `node` instead. Configs with the default value, a Node.js command name or an absolute path outside the project and its repository are unchanged. A Node.js installed inside the project or its repository (for example by frontend-maven-plugin or `./node_modules/.bin/node`) is no longer used: grepai logs a warning and uses `node` from `PATH`; set `node_path` to an absolute path outside the project to choose another one.
 
+### Documentation
+
+- **Untrusted Repositories**: `SECURITY.md` and the trace guide now warn that compiling `.vue` files runs the `@vue/compiler-sfc` package from the project's own `node_modules`, so grepai should only index repositories you trust, or run with `framework_processing.frameworks.vue.enabled: false`.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added

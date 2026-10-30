@@ -71,3 +71,7 @@ We will not pursue civil or criminal action against researchers who:
    - Use strong passwords
    - Enable SSL
    - Implement proper access controls
+
+4. **Untrusted Repositories**: Run grepai only on code you trust, as you would `npm install`
+   - To compile `.vue` files, grepai runs Node.js with the `@vue/compiler-sfc` package found in the project's own `node_modules`. A repository that ships its own copy of that package can run code on your machine during `index`, `watch` or MCP indexing
+   - Disable the Vue processor (`framework_processing.frameworks.vue.enabled: false`) before indexing a repository you do not trust
